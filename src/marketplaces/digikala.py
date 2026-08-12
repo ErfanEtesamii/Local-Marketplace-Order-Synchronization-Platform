@@ -1,0 +1,169 @@
+"""
+Digikala adapter.
+
+Based on the official Open API (seller.digikala.com/open-api/v1/doc):
+  - GET /open-api/v1/orders/history  -> paginated order *item* rows, with
+    precise date-range filtering (order_created_at_from / _to)
+
+IMPORTANT: this endpoint returns one row per order line item, not one row
+per order - a 3-item order produces 3 rows sharing the same order_id. This
+adapter groups rows by order_id before producing NormalizedOrder objects.
+
+Per project decision, customer contact details are not required for this
+source and are not requested - customer_full_name / customer_mobile are
+always None here (see src/didar/contact_client.py for the synthetic
+CustomerCode strategy this implies).
+"""
+from __future__ import annotations
+
+from collections import defaultdict
+from datetime import datetime, timezone
+from decimal import Decimal, InvalidOperation
+
+import httpx
+from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
+
+from src.config import DigikalaConfig, settings
+from src.logger import get_logger
+from src.marketplaces.base import MarketplaceAdapter, NormalizedOrder, OrderItem
+
+log = get_logger(__name__)
+
+
+def _retryable_status(exc: BaseException) -> bool:
+    if isinstance(exc, httpx.HTTPStatusError):
+        return exc.response.status_code >= 500 or exc.response.status_code == 429
+    return isinstance(exc, httpx.TransportError)
+
+
+def _to_decimal(value) -> Decimal:
+    try:
+        return Decimal(str(value))
+    except (InvalidOperation, TypeError):
+        return Decimal("0")
+
+
+class DigikalaAdapter(MarketplaceAdapter):
+    name = "digikala"
+
+    def __init__(self, config: DigikalaConfig | None = None) -> None:
+        self._config = config or settings.digikala
+        self._client = httpx.Client(
+            base_url=self._config.base_url,
+            headers={
+                "content-type": "application/json",
+                "Authorization": f"Bearer {self._config.access_token}",
+            },
+            timeout=30.0,
+        )
+
+    @retry(
+        reraise=True,
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=1, max=10),
+        retry=retry_if_exception_type((httpx.TransportError, httpx.HTTPStatusError)),
+    )
+    def _get(self, path: str, params: dict) -> dict:
+        resp = self._client.get(path, params=params)
+        resp.raise_for_status()
+        return resp.json()
+
+    def fetch_new_orders(self, since: datetime) -> list[NormalizedOrder]:
+        rows = self._fetch_history_rows(
+            order_created_at_from=since,
+            order_created_at_to=datetime.now(timezone.utc),
+        )
+        orders = self._group_rows_into_orders(rows)
+        log.info("digikala: fetched %d new orders since %s", len(orders), since.isoformat())
+        return orders
+
+    def fetch_order_detail(self, source_order_id: str) -> NormalizedOrder:
+        # The history endpoint has no direct order_id filter, but search_text_all
+        # matches serial / order_shipment_id / product identifiers - order_id
+        # search is supported by the vendor's own UI via this same param.
+        rows = self._fetch_history_rows(search_text_all=source_order_id)
+        rows = [r for r in rows if str(r.get("order_id")) == str(source_order_id)]
+        orders = self._group_rows_into_orders(rows)
+        if not orders:
+            raise ValueError(f"digikala: order {source_order_id} not found in history")
+        return orders[0]
+
+    def _fetch_history_rows(
+        self,
+        order_created_at_from: datetime | None = None,
+        order_created_at_to: datetime | None = None,
+        search_text_all: str | None = None,
+    ) -> list[dict]:
+        rows: list[dict] = []
+        page = 1
+        size = 50
+        total_pages = None
+
+        while total_pages is None or page <= total_pages:
+            params = {"page": page, "size": size, "sort": "id", "order": "asc"}
+            if order_created_at_from:
+                params["order_created_at_from"] = _fmt(order_created_at_from)
+            if order_created_at_to:
+                params["order_created_at_to"] = _fmt(order_created_at_to)
+            if search_text_all:
+                params["search_text_all"] = search_text_all
+
+            payload = self._get("/open-api/v1/orders/history", params=params)
+            data = payload.get("data", {})
+            rows.extend(data.get("items", []))
+
+            pager = data.get("pager", {})
+            total_pages = pager.get("total_pages", 0)
+            if not data.get("items"):
+                break
+            page += 1
+
+        return rows
+
+    def _group_rows_into_orders(self, rows: list[dict]) -> list[NormalizedOrder]:
+        grouped: dict[str, list[dict]] = defaultdict(list)
+        for row in rows:
+            grouped[str(row.get("order_id"))].append(row)
+
+        orders: list[NormalizedOrder] = []
+        for order_id, item_rows in grouped.items():
+            first = item_rows[0]
+            items = [
+                OrderItem(
+                    sku=str(r.get("product_supplier_code", r.get("product_id", ""))),
+                    title=str(r.get("product_variant_title", "")),
+                    quantity=int(r.get("quantity", 1)),
+                    unit_price=_to_decimal(r.get("unit_price")),
+                    final_price=_to_decimal(r.get("total_price")),
+                )
+                for r in item_rows
+            ]
+            status = first.get("order_status", {})
+            orders.append(
+                NormalizedOrder(
+                    source=self.name,
+                    source_order_id=order_id,
+                    order_number=order_id,
+                    created_at=_parse_date(first.get("order_created_at")),
+                    total_price=sum((i.final_price for i in items), Decimal("0")),
+                    status=str(status.get("title") or status.get("key") or "unknown"),
+                    items=items,
+                    customer_full_name=None,  # not requested for this project - see module docstring
+                    customer_mobile=None,
+                )
+            )
+        return orders
+
+
+def _fmt(dt: datetime) -> str:
+    # Digikala's documented format: Y-m-d\TH:i:s.v\Z
+    return dt.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.") + f"{dt.microsecond // 1000:03d}Z"
+
+
+def _parse_date(value: str | None) -> datetime:
+    if not value:
+        return datetime.now(timezone.utc)
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return datetime.now(timezone.utc)
