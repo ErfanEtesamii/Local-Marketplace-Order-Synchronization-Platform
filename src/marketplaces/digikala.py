@@ -21,7 +21,7 @@ from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
 
 import httpx
-from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
+from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception
 
 from src.config import DigikalaConfig, settings
 from src.logger import get_logger
@@ -61,7 +61,7 @@ class DigikalaAdapter(MarketplaceAdapter):
         reraise=True,
         stop=stop_after_attempt(3),
         wait=wait_exponential(multiplier=1, min=1, max=10),
-        retry=retry_if_exception_type((httpx.TransportError, httpx.HTTPStatusError)),
+        retry=retry_if_exception(_retryable_status),
     )
     def _get(self, path: str, params: dict) -> dict:
         resp = self._client.get(path, params=params)
@@ -97,9 +97,8 @@ class DigikalaAdapter(MarketplaceAdapter):
         rows: list[dict] = []
         page = 1
         size = 50
-        total_pages = None
 
-        while total_pages is None or page <= total_pages:
+        while True:
             params = {"page": page, "size": size, "sort": "id", "order": "asc"}
             if order_created_at_from:
                 params["order_created_at_from"] = _fmt(order_created_at_from)
@@ -110,11 +109,21 @@ class DigikalaAdapter(MarketplaceAdapter):
 
             payload = self._get("/open-api/v1/orders/history", params=params)
             data = payload.get("data", {})
-            rows.extend(data.get("items", []))
+            items = data.get("items", [])
+            rows.extend(items)
 
             pager = data.get("pager", {})
             total_pages = pager.get("total_pages", 0)
-            if not data.get("items"):
+
+            # Don't rely on total_pages alone - if the API ever reports it
+            # incorrectly (seen as 0 even with items present in the docs'
+            # own example response), a page full of items is itself a sign
+            # more may follow. Stopping only requires BOTH signals to agree
+            # there's nothing left, so a bad total_pages value can't cause
+            # silently-dropped orders.
+            got_full_page = len(items) == size
+            more_by_pager = page < total_pages
+            if not items or not (got_full_page or more_by_pager):
                 break
             page += 1
 

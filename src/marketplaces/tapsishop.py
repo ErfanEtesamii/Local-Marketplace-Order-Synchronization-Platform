@@ -21,15 +21,13 @@ from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
 
 import httpx
-from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
+from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception
 
 from src.config import TapsiShopConfig, settings
 from src.logger import get_logger
 from src.marketplaces.base import MarketplaceAdapter, NormalizedOrder, OrderItem
 
 log = get_logger(__name__)
-
-_RETRYABLE = (httpx.TransportError, httpx.HTTPStatusError)
 
 
 def _retryable_status(exc: BaseException) -> bool:
@@ -65,7 +63,7 @@ class TapsiShopAdapter(MarketplaceAdapter):
         reraise=True,
         stop=stop_after_attempt(3),
         wait=wait_exponential(multiplier=1, min=1, max=10),
-        retry=retry_if_exception_type(_RETRYABLE),
+        retry=retry_if_exception(_retryable_status),
     )
     def _post(self, path: str, json: dict) -> dict:
         resp = self._client.post(path, json=json)
@@ -76,7 +74,7 @@ class TapsiShopAdapter(MarketplaceAdapter):
         reraise=True,
         stop=stop_after_attempt(3),
         wait=wait_exponential(multiplier=1, min=1, max=10),
-        retry=retry_if_exception_type(_RETRYABLE),
+        retry=retry_if_exception(_retryable_status),
     )
     def _get(self, path: str) -> dict:
         resp = self._client.get(path)
@@ -87,9 +85,8 @@ class TapsiShopAdapter(MarketplaceAdapter):
         orders: list[NormalizedOrder] = []
         page = 0
         page_size = 50
-        total_items = None
 
-        while total_items is None or page * page_size < total_items:
+        while True:
             body = {
                 "pageNumber": page,
                 "pageSize": page_size,
@@ -104,7 +101,12 @@ class TapsiShopAdapter(MarketplaceAdapter):
             for raw in items:
                 orders.append(self._normalize_list_item(raw))
 
-            if not items:
+            # Same defense as the Digikala adapter: don't trust totalItems
+            # alone. A full page is itself a signal there may be more,
+            # regardless of what totalItems claims.
+            got_full_page = len(items) == page_size
+            more_by_total = (page + 1) * page_size < total_items
+            if not items or not (got_full_page or more_by_total):
                 break
             page += 1
 
