@@ -37,7 +37,7 @@ from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
 
 import httpx
-from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception
+from src.http_utils import default_retry
 
 from src.config import BasalamConfig, settings
 from src.logger import get_logger
@@ -56,11 +56,6 @@ def _to_decimal(value) -> Decimal:
     except (InvalidOperation, TypeError):
         return Decimal("0")
 
-
-def _retryable_status(exc: BaseException) -> bool:
-    if isinstance(exc, httpx.HTTPStatusError):
-        return exc.response.status_code >= 500 or exc.response.status_code == 429
-    return isinstance(exc, httpx.TransportError)
 
 
 class BasalamAuthError(RuntimeError):
@@ -85,12 +80,7 @@ class BasalamAdapter(MarketplaceAdapter):
             timeout=30.0,
         )
 
-    @retry(
-        reraise=True,
-        stop=stop_after_attempt(3),
-        wait=wait_exponential(multiplier=1, min=1, max=10),
-        retry=retry_if_exception(_retryable_status),
-    )
+    @default_retry()
     def _get(self, path: str, params: dict | None = None) -> dict:
         resp = self._client.get(path, params=params or {})
         if resp.status_code == 401:
