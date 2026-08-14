@@ -43,14 +43,14 @@ class DigikalaConfig:
 class SnappShopConfig:
     base_url: str = field(default_factory=lambda: _get("SNAPPSHOP_BASE_URL"))
     auth_token: str = field(default_factory=lambda: _get("SNAPPSHOP_AUTH_TOKEN"))
+    agent_user: str = field(default_factory=lambda: _get("SNAPPSHOP_AGENT_USER"))
+    vendor_id: str = field(default_factory=lambda: _get("SNAPPSHOP_VENDOR_ID"))
 
 
 @dataclass(frozen=True)
 class BasalamConfig:
     base_url: str = field(default_factory=lambda: _get("BASALAM_BASE_URL"))
     access_token: str = field(default_factory=lambda: _get("BASALAM_ACCESS_TOKEN"))
-    refresh_token: str = field(default_factory=lambda: _get("BASALAM_REFRESH_TOKEN"))
-    device_id: str = field(default_factory=lambda: _get("BASALAM_DEVICE_ID"))
 
 
 @dataclass(frozen=True)
