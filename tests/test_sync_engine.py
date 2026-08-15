@@ -1,4 +1,3 @@
-import tempfile
 from datetime import datetime, timezone, timedelta
 from decimal import Decimal
 
@@ -63,9 +62,14 @@ class FakeDidarService:
 
 
 @pytest.fixture
-def repo():
-    with tempfile.NamedTemporaryFile(suffix=".db") as f:
-        yield Repository(db_path=f.name)
+def repo(tmp_path):
+    # tmp_path (pytest's built-in fixture) rather than
+    # tempfile.NamedTemporaryFile: the latter keeps its own file handle
+    # open, which blocks sqlite3.connect() from opening the same file on
+    # Windows (works fine on Linux/macOS, which allow concurrent opens -
+    # this was failing only in Windows CI runs).
+    db_path = tmp_path / "test_sync.db"
+    return Repository(db_path=str(db_path))
 
 
 def test_new_order_gets_synced_and_marked(repo):
