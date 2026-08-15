@@ -54,6 +54,13 @@ class BasalamConfig:
 
 
 @dataclass(frozen=True)
+class FarazHonarConfig:
+    base_url: str = field(default_factory=lambda: _get("FARAZHONAR_BASE_URL"))
+    consumer_key: str = field(default_factory=lambda: _get("FARAZHONAR_CONSUMER_KEY"))
+    consumer_secret: str = field(default_factory=lambda: _get("FARAZHONAR_CONSUMER_SECRET"))
+
+
+@dataclass(frozen=True)
 class DidarConfig:
     base_url: str = field(default_factory=lambda: _get("DIDAR_BASE_URL"))
     api_key: str = field(default_factory=lambda: _get("DIDAR_API_KEY"))
@@ -72,6 +79,7 @@ class Settings:
     digikala: DigikalaConfig = field(default_factory=DigikalaConfig)
     snappshop: SnappShopConfig = field(default_factory=SnappShopConfig)
     basalam: BasalamConfig = field(default_factory=BasalamConfig)
+    farazhonar: FarazHonarConfig = field(default_factory=FarazHonarConfig)
     didar: DidarConfig = field(default_factory=DidarConfig)
 
 
