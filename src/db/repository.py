@@ -37,6 +37,11 @@ CREATE TABLE IF NOT EXISTS sync_failures (
     last_attempt_at TEXT NOT NULL,
     PRIMARY KEY (source, source_order_id)
 );
+
+CREATE TABLE IF NOT EXISTS sync_state (
+    source          TEXT PRIMARY KEY,
+    last_synced_at  TEXT NOT NULL
+);
 """
 
 
@@ -115,3 +120,25 @@ class Repository:
                 (max_attempts,),
             ).fetchall()
         return [SyncFailure(*row) for row in rows]
+
+    # --- per-source sync watermark ------------------------------------
+
+    def get_last_sync_time(self, source: str) -> datetime | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT last_synced_at FROM sync_state WHERE source = ?", (source,)
+            ).fetchone()
+        if row is None:
+            return None
+        return datetime.fromisoformat(row[0])
+
+    def set_last_sync_time(self, source: str, when: datetime) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO sync_state (source, last_synced_at)
+                VALUES (?, ?)
+                ON CONFLICT(source) DO UPDATE SET last_synced_at = excluded.last_synced_at
+                """,
+                (source, when.isoformat()),
+            )
