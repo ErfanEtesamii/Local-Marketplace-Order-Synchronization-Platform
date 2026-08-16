@@ -55,7 +55,13 @@ class DidarDealClient:
             "Deal": {
                 "Title": f"{order.order_number} - {order.source}",
                 "BizdomainId": self._config.bizdomain_id,
-                "ContactId": contact_id,
+                # Confirmed via live testing against the real API: Didar's
+                # Deal.save expects "PersonId", not "ContactId" - sending
+                # ContactId alone fails with "person and company both are
+                # empty", since Didar apparently treats a Deal's linked
+                # Contact as either a Person or a Company under separate
+                # field names, and our contacts are always people.
+                "PersonId": contact_id,
                 "PipelineStageId": self._config.pipeline_stage_id,
                 "Description": _build_description(order),
             }

@@ -40,6 +40,7 @@ def test_create_deal_includes_pipeline_stage_and_contact():
     body = route.calls[0].request.content
     assert b"stage-1" in body
     assert b"c-1" in body
+    assert b'"PersonId":"c-1"' in body  # regression test - Didar expects PersonId, not ContactId
     assert b"ORD-999" in body
 
 
