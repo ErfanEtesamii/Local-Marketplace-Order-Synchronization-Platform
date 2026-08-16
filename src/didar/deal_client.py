@@ -54,6 +54,7 @@ class DidarDealClient:
         body = {
             "Deal": {
                 "Title": f"{order.order_number} - {order.source}",
+                "BizdomainId": self._config.bizdomain_id,
                 "ContactId": contact_id,
                 "PipelineStageId": self._config.pipeline_stage_id,
                 "Description": _build_description(order),

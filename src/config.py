@@ -64,6 +64,8 @@ class FarazHonarConfig:
 class DidarConfig:
     base_url: str = field(default_factory=lambda: _get("DIDAR_BASE_URL"))
     api_key: str = field(default_factory=lambda: _get("DIDAR_API_KEY"))
+    api_id: str = field(default_factory=lambda: _get("DIDAR_API_ID"))  # not confirmed to be needed in requests - kept for reference/future use
+    bizdomain_id: str = field(default_factory=lambda: _get("DIDAR_BIZDOMAIN_ID"))
     pipeline_id: str = field(default_factory=lambda: _get("DIDAR_PIPELINE_ID"))
     pipeline_stage_id: str = field(default_factory=lambda: _get("DIDAR_PIPELINE_STAGE_ID"))
 
