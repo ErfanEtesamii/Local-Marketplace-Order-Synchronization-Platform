@@ -44,7 +44,7 @@ from decimal import Decimal, InvalidOperation
 import httpx
 
 from src.config import FarazHonarConfig, settings
-from src.http_utils import default_retry
+from src.http_utils import default_retry, raise_for_status_with_body
 from src.logger import get_logger
 from src.marketplaces.base import MarketplaceAdapter, NormalizedOrder, OrderItem
 
@@ -72,7 +72,7 @@ class FarazHonarAdapter(MarketplaceAdapter):
     @default_retry()
     def _get(self, path: str, params: dict | None = None) -> httpx.Response:
         resp = self._client.get(path, params=params or {})
-        resp.raise_for_status()
+        raise_for_status_with_body(resp)
         return resp
 
     def fetch_new_orders(self, since: datetime) -> list[NormalizedOrder]:

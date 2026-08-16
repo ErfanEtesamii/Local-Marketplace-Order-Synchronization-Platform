@@ -25,6 +25,22 @@ def is_retryable_http_error(exc: BaseException) -> bool:
     return isinstance(exc, httpx.TransportError)
 
 
+def raise_for_status_with_body(resp: httpx.Response) -> None:
+    """
+    Like httpx.Response.raise_for_status(), but includes the response
+    body in the raised exception's message. httpx's default leaves the
+    body out, which meant a real 400 from Didar (e.g. "MobilePhone
+    format invalid") only showed a bare status code in the traceback -
+    the actual reason had to be reproduced manually to see at all.
+    """
+    if resp.is_success:
+        return
+    message = (
+        f"{resp.status_code} {resp.reason_phrase} for url '{resp.url}': {resp.text}"
+    )
+    raise httpx.HTTPStatusError(message, request=resp.request, response=resp)
+
+
 def default_retry():
     """
     Standard retry decorator used by every external API client here:

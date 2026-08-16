@@ -32,7 +32,7 @@ import httpx
 
 from src.config import DidarConfig, settings
 from src.didar.contact_client import DidarApiError
-from src.http_utils import default_retry
+from src.http_utils import default_retry, raise_for_status_with_body
 from src.logger import get_logger
 from src.marketplaces.base import NormalizedOrder
 
@@ -47,7 +47,7 @@ class DidarDealClient:
     @default_retry()
     def _post(self, path: str, json: dict) -> dict:
         resp = self._client.post(path, params={"apikey": self._config.api_key}, json=json)
-        resp.raise_for_status()
+        raise_for_status_with_body(resp)
         return resp.json()
 
     def create_deal(self, contact_id: str, order: NormalizedOrder) -> str:

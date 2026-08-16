@@ -37,7 +37,7 @@ from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
 
 import httpx
-from src.http_utils import default_retry
+from src.http_utils import default_retry, raise_for_status_with_body
 
 from src.config import BasalamConfig, settings
 from src.logger import get_logger
@@ -88,7 +88,7 @@ class BasalamAdapter(MarketplaceAdapter):
                 "Basalam access token rejected (401). Issue a fresh Personal Access "
                 "Token from developers.basalam.com/panel and update .env."
             )
-        resp.raise_for_status()
+        raise_for_status_with_body(resp)
         return resp.json()
 
     def fetch_new_orders(self, since: datetime) -> list[NormalizedOrder]:

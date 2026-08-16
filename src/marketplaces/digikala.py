@@ -21,7 +21,7 @@ from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
 
 import httpx
-from src.http_utils import default_retry
+from src.http_utils import default_retry, raise_for_status_with_body
 
 from src.config import DigikalaConfig, settings
 from src.logger import get_logger
@@ -55,7 +55,7 @@ class DigikalaAdapter(MarketplaceAdapter):
     @default_retry()
     def _get(self, path: str, params: dict) -> dict:
         resp = self._client.get(path, params=params)
-        resp.raise_for_status()
+        raise_for_status_with_body(resp)
         return resp.json()
 
     def fetch_new_orders(self, since: datetime) -> list[NormalizedOrder]:

@@ -31,7 +31,7 @@ from __future__ import annotations
 import httpx
 
 from src.config import DidarConfig, settings
-from src.http_utils import default_retry
+from src.http_utils import default_retry, raise_for_status_with_body
 from src.logger import get_logger
 
 log = get_logger(__name__)
@@ -50,7 +50,7 @@ class DidarContactClient:
     @default_retry()
     def _post(self, path: str, json: dict) -> dict:
         resp = self._client.post(path, params={"apikey": self._config.api_key}, json=json)
-        resp.raise_for_status()
+        raise_for_status_with_body(resp)
         return resp.json()
 
     def upsert_contact(

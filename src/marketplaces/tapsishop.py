@@ -21,7 +21,7 @@ from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
 
 import httpx
-from src.http_utils import default_retry
+from src.http_utils import default_retry, raise_for_status_with_body
 
 from src.config import TapsiShopConfig, settings
 from src.logger import get_logger
@@ -56,13 +56,13 @@ class TapsiShopAdapter(MarketplaceAdapter):
     @default_retry()
     def _post(self, path: str, json: dict) -> dict:
         resp = self._client.post(path, json=json)
-        resp.raise_for_status()
+        raise_for_status_with_body(resp)
         return resp.json()
 
     @default_retry()
     def _get(self, path: str) -> dict:
         resp = self._client.get(path)
-        resp.raise_for_status()
+        raise_for_status_with_body(resp)
         return resp.json()
 
     def fetch_new_orders(self, since: datetime) -> list[NormalizedOrder]:
