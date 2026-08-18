@@ -16,6 +16,9 @@ venv/
 logs/
 *.log
 
+# Third-party binary the installer downloads separately - see docs/installation.md
+deploy/nssm.exe
+
 # OS
 .DS_Store
 Thumbs.db
