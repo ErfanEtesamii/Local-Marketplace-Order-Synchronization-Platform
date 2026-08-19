@@ -64,6 +64,17 @@ class DidarContactClient:
         Didar Contact Id (needed for Deal.ContactId).
         """
         first_name, last_name = _split_name(full_name)
+        if not last_name:
+            # Confirmed via a live 400 ("LastName can not be empty"):
+            # Didar requires a non-empty LastName. Sources that don't
+            # provide a customer name at all (Tapsi Shop, Digikala - see
+            # their adapters' module docstrings) would otherwise send
+            # both fields empty; a single-word name (e.g. "Ali") hits
+            # the same problem since _split_name leaves last_name "".
+            # customer_code is always non-empty and unique per order,
+            # so it's a safe, still-identifiable fallback.
+            first_name = first_name or "مشتری"
+            last_name = customer_code
 
         body = {
             "Contact": {
