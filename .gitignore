@@ -5,6 +5,7 @@
 *.db
 *.sqlite3
 data/
+reports/
 
 # Python
 __pycache__/

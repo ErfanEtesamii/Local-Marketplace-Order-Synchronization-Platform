@@ -50,6 +50,10 @@ class SyncEngine:
         self._repo = repository or Repository()
         self._didar = didar_service or DidarSyncService()
 
+    @property
+    def adapter_names(self) -> list[str]:
+        return list(self._adapters.keys())
+
     def run_once(self) -> None:
         """One full poll cycle: every source, then a retry pass over
         previously-failed orders."""

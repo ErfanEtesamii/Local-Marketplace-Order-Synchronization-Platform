@@ -142,3 +142,20 @@ class Repository:
                 """,
                 (source, when.isoformat()),
             )
+
+    # --- reporting / health check -----------------------------------
+
+    def count_synced_since(self, source: str, since: datetime) -> int:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT COUNT(*) FROM synced_orders WHERE source = ? AND synced_at >= ?",
+                (source, since.isoformat()),
+            ).fetchone()
+        return row[0] if row else 0
+
+    def count_pending_failures(self, source: str) -> int:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT COUNT(*) FROM sync_failures WHERE source = ?", (source,)
+            ).fetchone()
+        return row[0] if row else 0
