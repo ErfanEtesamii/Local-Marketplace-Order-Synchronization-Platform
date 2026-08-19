@@ -1,13 +1,31 @@
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+from unittest.mock import patch
 
 import respx
 import httpx
+import pytest
 
 from src.config import TapsiShopConfig
 from src.marketplaces.tapsishop import TapsiShopAdapter
-import pytest
 
 _CFG = TapsiShopConfig(base_url="https://vendorgw.tapsi.shop", auth_token="test-token")
+
+
+@pytest.fixture(autouse=True)
+def _no_real_sleep(monkeypatch):
+    """
+    _throttle() calls time.sleep() to respect Tapsi Shop's confirmed
+    5-second rate limit. Without this, the suite would take minutes -
+    the throttle logic itself is verified separately below, with
+    mocked timing.
+    """
+    monkeypatch.setattr("src.marketplaces.tapsishop.time.sleep", lambda seconds: None)
+
+
+def _recent_since(**kwargs) -> datetime:
+    """A `since` that's always well within the confirmed 7-day window
+    cap, regardless of when the suite actually runs."""
+    return datetime.now(timezone.utc) - timedelta(**(kwargs or {"hours": 1}))
 
 
 @respx.mock
@@ -36,7 +54,7 @@ def test_fetch_new_orders_paginates_and_normalizes():
     )
 
     adapter = TapsiShopAdapter(config=_CFG)
-    orders = adapter.fetch_new_orders(since=datetime(2026, 8, 1, tzinfo=timezone.utc))
+    orders = adapter.fetch_new_orders(since=_recent_since())
 
     assert len(orders) == 1
     o = orders[0]
@@ -44,6 +62,24 @@ def test_fetch_new_orders_paginates_and_normalizes():
     assert o.source_order_id == "111"
     assert o.total_price == 250000
     assert o.items == []  # list endpoint has no line items by design
+
+
+@respx.mock
+def test_request_body_includes_confirmed_date_filter_type():
+    """
+    Regression test: dateFilterTypeCode is required whenever fromDate/
+    toDate are sent (confirmed via a live 400 without it) - the PDF's
+    example value of 0 was just a placeholder, not valid. 1 is confirmed
+    to work.
+    """
+    route = respx.post("https://vendorgw.tapsi.shop/Web/Hub/vendors/v1/orders").mock(
+        return_value=httpx.Response(200, json={"data": {"totalItems": 0, "items": []}})
+    )
+
+    adapter = TapsiShopAdapter(config=_CFG)
+    adapter.fetch_new_orders(since=_recent_since())
+
+    assert b'"dateFilterTypeCode":1' in route.calls[0].request.content
 
 
 @respx.mock
@@ -92,7 +128,7 @@ def test_client_errors_are_not_retried():
 
     adapter = TapsiShopAdapter(config=_CFG)
     with pytest.raises(httpx.HTTPStatusError):
-        adapter.fetch_new_orders(since=datetime(2026, 8, 1, tzinfo=timezone.utc))
+        adapter.fetch_new_orders(since=_recent_since())
 
     assert route.call_count == 1  # no retries for a 4xx client error
 
@@ -105,7 +141,7 @@ def test_server_errors_are_retried():
 
     adapter = TapsiShopAdapter(config=_CFG)
     with pytest.raises(httpx.HTTPStatusError):
-        adapter.fetch_new_orders(since=datetime(2026, 8, 1, tzinfo=timezone.utc))
+        adapter.fetch_new_orders(since=_recent_since())
 
     assert route.call_count == 3  # stop_after_attempt(3)
 
@@ -129,7 +165,37 @@ def test_pagination_continues_even_when_total_items_is_wrong():
     )
 
     adapter = TapsiShopAdapter(config=_CFG)
-    orders = adapter.fetch_new_orders(since=datetime(2026, 8, 1, tzinfo=timezone.utc))
+    orders = adapter.fetch_new_orders(since=_recent_since())
 
     assert route.call_count == 2
     assert len(orders) == 51
+
+
+@respx.mock
+def test_long_date_range_is_split_into_7_day_windows():
+    """
+    Regression test: the vendor API rejects any [fromDate, toDate] span
+    longer than 7 days with a 400. A 20-day lookback must therefore
+    fan out into multiple <=7-day requests rather than one big one.
+    """
+    route = respx.post("https://vendorgw.tapsi.shop/Web/Hub/vendors/v1/orders").mock(
+        return_value=httpx.Response(200, json={"data": {"totalItems": 0, "items": []}})
+    )
+
+    adapter = TapsiShopAdapter(config=_CFG)
+    adapter.fetch_new_orders(since=_recent_since(days=20))
+
+    # ceil(20 / 7) = 3 separate windows
+    assert route.call_count == 3
+
+
+@patch("src.marketplaces.tapsishop.time.sleep")
+@patch("src.marketplaces.tapsishop.time.monotonic")
+def test_throttle_enforces_minimum_interval_between_requests(mock_monotonic, mock_sleep):
+    mock_monotonic.side_effect = [100.0, 100.0, 101.0, 106.0]
+
+    adapter = TapsiShopAdapter(config=_CFG)
+    adapter._throttle()  # first call: nothing to wait for yet
+    adapter._throttle()  # second call: only 1s elapsed, must wait out the remaining 4.5s
+
+    mock_sleep.assert_called_once_with(4.5)

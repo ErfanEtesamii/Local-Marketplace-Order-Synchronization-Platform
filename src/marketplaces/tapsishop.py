@@ -14,21 +14,39 @@ assuming `CustomerCode = customer mobile number` for this source, that
 is not available via polling. Until/unless we revisit the webhook
 decision, Tapsi Shop orders use the same synthetic-CustomerCode strategy
 as Digikala (see src/didar/contact_client.py).
+
+TWO MORE CONSTRAINTS CONFIRMED VIA LIVE TESTING (undocumented in the PDF):
+  1. dateFilterTypeCode is required whenever fromDate/toDate are sent -
+     the PDF's example value of 0 was just a placeholder, not a valid
+     value. 1 is confirmed to work (meaning unconfirmed, but presumably
+     "filter by order creation date").
+  2. The [fromDate, toDate] window is capped at 7 days - a longer span
+     is rejected outright with a 400. fetch_new_orders therefore chunks
+     any longer requested range into <=7-day windows and fans out one
+     request per window, aggregating the results.
+  3. Rate limit: the vendor gateway allows only one call per 5 seconds
+     (confirmed via a live 429). _throttle() enforces a minimum gap
+     between every request this adapter makes, proactively rather than
+     relying on retry-after-a-429, since the chunking above means a
+     large backfill can trigger dozens of sequential calls.
 """
 from __future__ import annotations
 
-from datetime import datetime, timezone
+import time
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 
 import httpx
-from src.http_utils import default_retry, raise_for_status_with_body
 
 from src.config import TapsiShopConfig, settings
+from src.http_utils import default_retry, raise_for_status_with_body
 from src.logger import get_logger
 from src.marketplaces.base import MarketplaceAdapter, NormalizedOrder, OrderItem
 
 log = get_logger(__name__)
 
+_MAX_WINDOW = timedelta(days=7) - timedelta(minutes=1)  # small safety margin under the confirmed 7-day cap
+_MIN_REQUEST_INTERVAL_SECONDS = 5.5  # confirmed limit is 5s flat - small margin added
 
 
 def _to_decimal(value) -> Decimal:
@@ -52,20 +70,47 @@ class TapsiShopAdapter(MarketplaceAdapter):
             },
             timeout=30.0,
         )
+        self._last_request_at: float | None = None
+
+    def _throttle(self) -> None:
+        now = time.monotonic()
+        if self._last_request_at is not None:
+            elapsed = now - self._last_request_at
+            remaining = _MIN_REQUEST_INTERVAL_SECONDS - elapsed
+            if remaining > 0:
+                time.sleep(remaining)
+        self._last_request_at = time.monotonic()
 
     @default_retry()
     def _post(self, path: str, json: dict) -> dict:
+        self._throttle()
         resp = self._client.post(path, json=json)
         raise_for_status_with_body(resp)
         return resp.json()
 
     @default_retry()
     def _get(self, path: str) -> dict:
+        self._throttle()
         resp = self._client.get(path)
         raise_for_status_with_body(resp)
         return resp.json()
 
     def fetch_new_orders(self, since: datetime) -> list[NormalizedOrder]:
+        orders: list[NormalizedOrder] = []
+        now = datetime.now(timezone.utc)
+        window_start = since.astimezone(timezone.utc)
+
+        while window_start < now:
+            window_end = min(window_start + _MAX_WINDOW, now)
+            orders.extend(self._fetch_orders_in_window(window_start, window_end))
+            window_start = window_end
+
+        log.info("tapsishop: fetched %d new orders since %s", len(orders), since.isoformat())
+        return orders
+
+    def _fetch_orders_in_window(
+        self, window_start: datetime, window_end: datetime
+    ) -> list[NormalizedOrder]:
         orders: list[NormalizedOrder] = []
         page = 0
         page_size = 50
@@ -74,8 +119,9 @@ class TapsiShopAdapter(MarketplaceAdapter):
             body = {
                 "pageNumber": page,
                 "pageSize": page_size,
-                "fromDate": since.astimezone(timezone.utc).isoformat(),
-                "toDate": datetime.now(timezone.utc).isoformat(),
+                "dateFilterTypeCode": 1,
+                "fromDate": window_start.isoformat(),
+                "toDate": window_end.isoformat(),
             }
             payload = self._post("/Web/Hub/vendors/v1/orders", json=body)
             data = payload.get("data", {})
@@ -94,7 +140,6 @@ class TapsiShopAdapter(MarketplaceAdapter):
                 break
             page += 1
 
-        log.info("tapsishop: fetched %d new orders since %s", len(orders), since.isoformat())
         return orders
 
     def fetch_order_detail(self, source_order_id: str) -> NormalizedOrder:
