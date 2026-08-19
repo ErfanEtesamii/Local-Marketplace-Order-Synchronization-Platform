@@ -13,22 +13,61 @@ Per project decision, customer contact details are not required for this
 source and are not requested - customer_full_name / customer_mobile are
 always None here (see src/didar/contact_client.py for the synthetic
 CustomerCode strategy this implies).
+
+TOKEN LIFECYCLE (confirmed via a real /auth/token exchange):
+  - access_token: short-lived, ~24 hours
+  - refresh_token: long-lived, ~1 year - matches the ~360-day validity
+    shown in the seller panel's own "توکن اختصاصی" screen, which
+    reflects the client/refresh-token grant, not the short-lived
+    access_token used on every request
+
+There are two SEPARATE processes here, easy to conflate:
+
+  1. Getting the INITIAL access_token/refresh_token pair (manual,
+     one-time, or roughly once a year when refresh_token expires):
+     the seller panel issues an RSA-encrypted authorization_code,
+     which is decrypted locally with a private key (openssl pkeyutl),
+     then exchanged via POST /auth/token. This requires the private
+     key and is NOT something this service does - it's a manual step
+     whose *result* (the two tokens) gets seeded into .env once.
+
+  2. Renewing the access_token day-to-day (automatic, done by THIS
+     adapter): POST /auth/refresh-token using only the refresh_token -
+     no private key, no manual step, no authorization_code involved.
+     This is what keeps the service running for the ~1 year the
+     refresh_token stays valid.
+
+The private key used in step 1 should never be placed on the server -
+this service only ever needs the refresh_token for step 2. Roughly
+once a year (when refresh_token approaches its own expiry), step 1
+needs to be repeated manually and the new tokens re-seeded into .env
+(or directly into data/digikala_tokens.json).
+
+Since this service runs continuously, it cannot rely on a static
+access_token from .env - it will expire within about a day. Instead,
+this adapter refreshes reactively (on a 401) via
+POST /open-api/v1/auth/refresh-token, and persists the new
+access_token/refresh_token pair to a local JSON file
+(data/digikala_tokens.json) so a service restart doesn't need a fresh
+manual authorization - only the *initial* tokens in .env are ever used
+as a one-time seed.
 """
 from __future__ import annotations
 
+import json
 from collections import defaultdict
 from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
+from pathlib import Path
 
 import httpx
-from src.http_utils import default_retry, raise_for_status_with_body
 
 from src.config import DigikalaConfig, settings
+from src.http_utils import default_retry, raise_for_status_with_body
 from src.logger import get_logger
 from src.marketplaces.base import MarketplaceAdapter, NormalizedOrder, OrderItem
 
 log = get_logger(__name__)
-
 
 
 def _to_decimal(value) -> Decimal:
@@ -43,18 +82,60 @@ class DigikalaAdapter(MarketplaceAdapter):
 
     def __init__(self, config: DigikalaConfig | None = None) -> None:
         self._config = config or settings.digikala
+        self._token_cache_path = Path(settings.db_path).resolve().parent / "digikala_tokens.json"
+        self._access_token, self._refresh_token = self._load_tokens()
         self._client = httpx.Client(
             base_url=self._config.base_url,
-            headers={
-                "content-type": "application/json",
-                "Authorization": f"Bearer {self._config.access_token}",
-            },
+            headers={"content-type": "application/json"},
             timeout=30.0,
         )
 
+    def _load_tokens(self) -> tuple[str, str]:
+        """Prefer a previously-refreshed pair over the static .env seed,
+        since refresh_token rotates and .env is not rewritten at runtime."""
+        if self._token_cache_path.exists():
+            try:
+                cached = json.loads(self._token_cache_path.read_text())
+                return cached["access_token"], cached["refresh_token"]
+            except (json.JSONDecodeError, KeyError, OSError):
+                log.warning(
+                    "digikala: failed to read cached tokens at %s, falling back to .env",
+                    self._token_cache_path,
+                )
+        return self._config.access_token, self._config.refresh_token
+
+    def _save_tokens(self) -> None:
+        self._token_cache_path.parent.mkdir(parents=True, exist_ok=True)
+        self._token_cache_path.write_text(
+            json.dumps({"access_token": self._access_token, "refresh_token": self._refresh_token})
+        )
+
     @default_retry()
-    def _get(self, path: str, params: dict) -> dict:
-        resp = self._client.get(path, params=params)
+    def _refresh_access_token(self) -> None:
+        resp = self._client.post(
+            "/open-api/v1/auth/refresh-token", json={"refresh_token": self._refresh_token}
+        )
+        raise_for_status_with_body(resp)
+        data = resp.json().get("data", {})
+        self._access_token = data["access_token"]
+        # Digikala may or may not rotate the refresh_token on each use -
+        # keep the old one only if a new one wasn't actually returned.
+        self._refresh_token = data.get("refresh_token", self._refresh_token)
+        self._save_tokens()
+        log.info(
+            "digikala: access token refreshed, new expiry=%s",
+            data.get("access_token_expires_at", {}).get("date"),
+        )
+
+    @default_retry()
+    def _get(self, path: str, params: dict, _already_refreshed: bool = False) -> dict:
+        resp = self._client.get(
+            path, params=params, headers={"Authorization": f"Bearer {self._access_token}"}
+        )
+        if resp.status_code == 401 and not _already_refreshed:
+            log.info("digikala: access token expired (401), refreshing")
+            self._refresh_access_token()
+            return self._get(path, params, _already_refreshed=True)
         raise_for_status_with_body(resp)
         return resp.json()
 

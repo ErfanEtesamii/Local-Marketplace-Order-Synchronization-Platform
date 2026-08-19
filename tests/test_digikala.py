@@ -107,3 +107,71 @@ def test_pagination_continues_even_when_total_pages_is_wrong():
 
     assert route.call_count == 2
     assert len(orders) == 51  # all orders across both pages recovered
+
+
+@respx.mock
+def test_expired_access_token_triggers_refresh_and_retry(tmp_path):
+    """
+    Regression test for the real discovery: access_token expires in
+    ~24 hours (refresh_token lasts ~1 year). A 401 on the actual request
+    must trigger POST /auth/refresh-token and then retry once, rather
+    than failing outright.
+    """
+    cfg = DigikalaConfig(
+        base_url="https://seller.digikala.com",
+        access_token="stale-token",
+        refresh_token="my-refresh-token",
+    )
+    adapter = DigikalaAdapter(config=cfg)
+    adapter._token_cache_path = tmp_path / "digikala_tokens.json"  # isolate from real cache
+
+    history_route = respx.get("https://seller.digikala.com/open-api/v1/orders/history")
+    history_route.mock(
+        side_effect=[
+            httpx.Response(401, json={"status": "error", "message": "token expired"}),
+            httpx.Response(200, json={"data": {"pager": {"total_pages": 1}, "items": []}}),
+        ]
+    )
+    refresh_route = respx.post("https://seller.digikala.com/open-api/v1/auth/refresh-token").mock(
+        return_value=httpx.Response(200, json={
+            "status": "ok",
+            "data": {
+                "access_token": "fresh-token",
+                "refresh_token": "new-refresh-token",
+                "access_token_expires_at": {"date": "2026-08-19 00:00:00"},
+            },
+        })
+    )
+
+    orders = adapter.fetch_new_orders(since=datetime(2026, 8, 1, tzinfo=timezone.utc))
+
+    assert orders == []
+    assert refresh_route.called
+    assert history_route.call_count == 2
+    # The retried request must use the freshly refreshed token, not the stale one.
+    assert history_route.calls[1].request.headers["Authorization"] == "Bearer fresh-token"
+
+
+def test_refreshed_tokens_are_persisted_and_reused_on_restart(tmp_path):
+    """
+    A rotating refresh_token must survive a service restart - otherwise
+    the *static* .env value goes stale after the first refresh and every
+    future restart breaks auth permanently.
+    """
+    cache_path = tmp_path / "digikala_tokens.json"
+    cfg = DigikalaConfig(base_url="https://seller.digikala.com",
+                          access_token="seed-access", refresh_token="seed-refresh")
+
+    adapter = DigikalaAdapter(config=cfg)
+    adapter._token_cache_path = cache_path
+    adapter._access_token = "fresh-token"
+    adapter._refresh_token = "rotated-refresh-token"
+    adapter._save_tokens()
+
+    # Simulate a restart: a brand new adapter instance pointed at the same cache file.
+    restarted = DigikalaAdapter(config=cfg)
+    restarted._token_cache_path = cache_path
+    access_token, refresh_token = restarted._load_tokens()
+
+    assert access_token == "fresh-token"
+    assert refresh_token == "rotated-refresh-token"

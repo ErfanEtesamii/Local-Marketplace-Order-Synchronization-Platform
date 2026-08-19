@@ -60,3 +60,37 @@ def test_upsert_contact_raises_clear_error_on_unrecognized_shape():
     client = DidarContactClient(config=_CFG)
     with pytest.raises(DidarApiError):
         client.upsert_contact(customer_code="x")
+
+
+@respx.mock
+def test_missing_full_name_falls_back_to_customer_code_as_lastname():
+    """
+    Regression test: Didar rejects an empty LastName with a 400
+    ("LastName can not be empty"). Tapsi Shop and Digikala never
+    provide a customer name at all (see their adapters' docstrings),
+    so full_name=None must not result in an empty Lastname.
+    """
+    route = respx.post("https://app.didar.me/api/contact/save").mock(
+        return_value=httpx.Response(200, json={"Response": {"Contact": {"Id": "c-1"}}})
+    )
+    client = DidarContactClient(config=_CFG)
+    client.upsert_contact(customer_code="tapsishop-999")
+
+    body = route.calls[0].request.content
+    assert b'"Lastname":"tapsishop-999"' in body
+    assert b'"FirstName":"' in body and b'""FirstName":""' not in body  # non-empty placeholder
+
+
+@respx.mock
+def test_single_word_full_name_also_falls_back_to_customer_code_as_lastname():
+    """Same problem, different trigger: a one-word name (no space) also
+    leaves _split_name's last_name empty."""
+    route = respx.post("https://app.didar.me/api/contact/save").mock(
+        return_value=httpx.Response(200, json={"Response": {"Contact": {"Id": "c-1"}}})
+    )
+    client = DidarContactClient(config=_CFG)
+    client.upsert_contact(customer_code="basalam-42", full_name="Cher")
+
+    body = route.calls[0].request.content
+    assert b'"FirstName":"Cher"' in body
+    assert b'"Lastname":"basalam-42"' in body
