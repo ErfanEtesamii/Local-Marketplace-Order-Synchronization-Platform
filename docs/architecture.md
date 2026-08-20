@@ -132,10 +132,18 @@ that was fixed).
 - Auth: Bearer Personal Access Token (scope `vendor.parcel.read`) from
   `developers.basalam.com/panel`. No confirmed refresh-token endpoint
   for this project yet - a 401 requires manually issuing a fresh PAT.
-- `CustomerResponse`'s exact field names weren't in the schema excerpt
-  captured during development - `_normalize_detail()` uses defensive
-  `.get()` fallbacks for customer name/mobile; verify against a real
-  populated response.
+- Customer name/mobile came back empty on the real orders tested so
+  far - `order.customer` exists in the schema but wasn't populated in
+  practice. Orders from this source currently fall back to the same
+  synthetic `CustomerCode` (`basalam-{parcel_id}`) as Tapsi Shop and
+  Digikala; revisit if a populated example ever turns up.
+- **Confirmed via live testing, undocumented:**
+  - `per_page` max is **30**, not the 50 assumed from other adapters -
+    rejected with a 422 otherwise.
+  - `sort` only accepts `estimate_send_at:desc` (the documented
+    default) - `created_at:desc` and `id:desc` are both rejected with a
+    422 ("مرتب سازی معتبر نمی باشد"). Date-based order discovery still
+    works via the `created_at[gte]` filter, which the API does accept.
 
 ### SnappShop (`marketplaces/snappshop.py`)
 

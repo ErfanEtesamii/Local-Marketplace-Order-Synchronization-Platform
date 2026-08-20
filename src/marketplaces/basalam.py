@@ -98,8 +98,17 @@ class BasalamAdapter(MarketplaceAdapter):
         while True:
             params = {
                 "created_at[gte]": since.astimezone(timezone.utc).isoformat(),
-                "sort": "created_at:desc",
-                "per_page": 50,
+                # Confirmed via live 422s ("مرتب سازی معتبر نمی باشد"):
+                # created_at:desc and id:desc are both rejected. Only
+                # estimate_send_at:desc (the documented default) works -
+                # order discovery still relies on created_at[gte] below,
+                # which the API does accept as a filter, just not as a
+                # sort key.
+                "sort": "estimate_send_at:desc",
+                # Confirmed via a live 422 ("Input should be less than or
+                # equal to 30"): 50 (an assumption from earlier adapters)
+                # is rejected. 30 is the confirmed maximum.
+                "per_page": 30,
             }
             if cursor:
                 params["cursor"] = cursor
@@ -161,9 +170,11 @@ class BasalamAdapter(MarketplaceAdapter):
             total_price=_to_decimal(raw.get("total_items_price")),
             status=str(status.get("title", "unknown")),
             items=items,
-            # CustomerResponse's exact field names weren't in the schema
-            # excerpt we captured - defensive lookups with common variants,
-            # to confirm/correct once a populated response is inspected.
+            # Confirmed via live testing: customer name/mobile came back
+            # empty on real orders (order.customer exists in the schema
+            # but wasn't populated in practice). Falls back to a
+            # synthetic CustomerCode (basalam-{parcel_id}) via
+            # src/didar/service.py, same as Tapsi Shop and Digikala.
             customer_full_name=customer.get("name") or customer.get("title"),
             customer_mobile=customer.get("mobile") or customer.get("phone_number"),
         )
