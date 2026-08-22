@@ -30,15 +30,17 @@ class DidarSyncService:
         duplicate-prevention bookkeeping).
         """
         customer_code = _customer_code_for(order)
-        contact_id = self._contacts.upsert_contact(
+        contact = self._contacts.upsert_contact(
             customer_code=customer_code,
             mobile_phone=order.customer_mobile,
             full_name=order.customer_full_name,
         )
-        deal_id = self._deals.create_deal(contact_id=contact_id, order=order)
+        deal_id = self._deals.create_deal(
+            contact_id=contact.id, display_name=contact.display_name, order=order
+        )
         log.info(
             "didar: synced %s order %s -> contact=%s deal=%s",
-            order.source, order.source_order_id, contact_id, deal_id,
+            order.source, order.source_order_id, contact.id, deal_id,
         )
         return deal_id
 

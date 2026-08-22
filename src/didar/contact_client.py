@@ -13,20 +13,21 @@ Authentication: confirmed from didar.me/api-help itself - the API key is
 passed as a QUERY STRING parameter on every call, not an Authorization
 header.
 
-Upsert behavior: per the Postman docs captured earlier in this project,
-if CustomerCode matches an existing Contact, Didar updates it; otherwise
+Upsert behavior: confirmed both from docs and live testing - if
+CustomerCode matches an existing Contact, Didar updates it; otherwise
 it creates a new one. This is what lets every marketplace adapter just
 call upsert_contact() on every order without a separate "does this
 customer already exist" lookup.
 
-NOT YET CONFIRMED: the exact shape of the response envelope (which key
-the new/updated Contact's Id is nested under). _extract_contact_id()
-below tries several plausible shapes defensively and logs a loud error
-with the raw payload if none match, rather than guessing silently -
-this must be verified against a real API call once DIDAR_API_KEY is
-available.
+Response envelope ({"Response": {"Contact": {...}}}) is confirmed via
+live testing. upsert_contact() returns a ContactResult carrying both
+the Id (needed for Deal.PersonId) and the DisplayName Didar computed
+(needed for Deal.Title = "معامله {display_name}", matching Didar's own
+default naming convention for manually-created deals).
 """
 from __future__ import annotations
+
+from dataclasses import dataclass
 
 import httpx
 
@@ -40,6 +41,12 @@ log = get_logger(__name__)
 class DidarApiError(RuntimeError):
     """Raised when Didar's response doesn't indicate success, or its
     shape doesn't match any of the expected patterns."""
+
+
+@dataclass(frozen=True)
+class ContactResult:
+    id: str
+    display_name: str
 
 
 class DidarContactClient:
@@ -58,10 +65,10 @@ class DidarContactClient:
         customer_code: str,
         mobile_phone: str | None = None,
         full_name: str | None = None,
-    ) -> str:
+    ) -> ContactResult:
         """
         Create-or-update a Contact keyed on customer_code, returning its
-        Didar Contact Id (needed for Deal.ContactId).
+        Didar Contact Id and DisplayName.
         """
         first_name, last_name = _split_name(full_name)
         if not last_name:
@@ -85,9 +92,9 @@ class DidarContactClient:
             }
         }
         payload = self._post("/contact/save", json=body)
-        contact_id = _extract_contact_id(payload)
-        log.info("didar: upserted contact CustomerCode=%s -> Id=%s", customer_code, contact_id)
-        return contact_id
+        result = _extract_contact_result(payload)
+        log.info("didar: upserted contact CustomerCode=%s -> Id=%s", customer_code, result.id)
+        return result
 
 
 def _split_name(full_name: str | None) -> tuple[str, str]:
@@ -99,25 +106,27 @@ def _split_name(full_name: str | None) -> tuple[str, str]:
     return parts[0], parts[1]
 
 
-def _extract_contact_id(payload: dict) -> str:
-    # Try the plausible response shapes, most-likely first. See module
-    # docstring - this is the one piece that needs live-token verification.
+def _extract_contact_result(payload: dict) -> ContactResult:
+    # Confirmed shape (see module docstring); a couple of flatter
+    # fallbacks kept as a safety net only.
     candidates = [
-        lambda p: p.get("Response", {}).get("Contact", {}).get("Id"),
-        lambda p: p.get("Response", {}).get("Id"),
-        lambda p: p.get("Contact", {}).get("Id"),
-        lambda p: p.get("Id"),
+        lambda p: p.get("Response", {}).get("Contact", {}),
+        lambda p: p.get("Response", {}),
+        lambda p: p.get("Contact", {}),
+        lambda p: p,
     ]
     for get in candidates:
         try:
-            value = get(payload)
+            contact = get(payload)
         except AttributeError:
             continue
-        if value:
-            return str(value)
+        contact_id = contact.get("Id") if isinstance(contact, dict) else None
+        if contact_id:
+            display_name = contact.get("DisplayName") or ""
+            return ContactResult(id=str(contact_id), display_name=display_name)
 
     raise DidarApiError(
         f"didar: could not find Contact Id in response - shape is unconfirmed, "
-        f"update _extract_contact_id() once a real payload has been inspected. "
+        f"update _extract_contact_result() once a real payload has been inspected. "
         f"Raw response: {payload!r}"
     )

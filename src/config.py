@@ -68,6 +68,24 @@ class DidarConfig:
     bizdomain_id: str = field(default_factory=lambda: _get("DIDAR_BIZDOMAIN_ID"))
     pipeline_id: str = field(default_factory=lambda: _get("DIDAR_PIPELINE_ID"))
     pipeline_stage_id: str = field(default_factory=lambda: _get("DIDAR_PIPELINE_STAGE_ID"))
+    # Label (Tag) GUIDs, one per marketplace source - see docs/architecture.md
+    # for how to fetch these via GET /Tag/GetTagList. Any left blank simply
+    # means that source's Deals won't carry a LabelId (not an error).
+    label_tapsishop: str = field(default_factory=lambda: _get("DIDAR_LABEL_TAPSISHOP"))
+    label_digikala: str = field(default_factory=lambda: _get("DIDAR_LABEL_DIGIKALA"))
+    label_basalam: str = field(default_factory=lambda: _get("DIDAR_LABEL_BASALAM"))
+    label_snappshop: str = field(default_factory=lambda: _get("DIDAR_LABEL_SNAPPSHOP"))
+    label_farazhonar: str = field(default_factory=lambda: _get("DIDAR_LABEL_FARAZHONAR"))
+
+    @property
+    def label_by_source(self) -> dict[str, str]:
+        return {
+            "tapsishop": self.label_tapsishop,
+            "digikala": self.label_digikala,
+            "basalam": self.label_basalam,
+            "snappshop": self.label_snappshop,
+            "farazhonar": self.label_farazhonar,
+        }
 
 
 @dataclass(frozen=True)

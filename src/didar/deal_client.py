@@ -1,30 +1,29 @@
 """
 Didar CRM - Deal client.
 
-Endpoint confirmed the same way as the Contact client:
+Rewritten per the project's structured-data decision: every piece of
+order data goes into its own proper Didar field, not into a single
+Description text blob. Specifically:
 
-    POST {DIDAR_BASE_URL}/deal/save?apikey={API_KEY}
-    body: {"Deal": {"Title": ..., "ContactId": ..., "PipelineStageId": ...,
-                     "Status": ..., "Description": ..., "InvoiceId": ...}}
+  - Amount            -> DealItems[].UnitPrice (not text)
+  - Customer name      -> already handled via Contact/PersonId
+  - Product name        -> DealItems[].ProductId, linked to a real
+                           catalog Product (auto-created if no match -
+                           see product_client.py)
+  - Order source (site) -> Deal.LabelId (a Tag), not a text field
+  - Title                -> "معامله {display_name}", matching Didar's
+                           own default naming convention for manually
+                           created deals - NOT "{order_number} - {source}"
+                           as originally implemented
 
-NOT YET CONFIRMED - line item mapping:
-The Deal object takes an InvoiceId, not an embedded Items[] array as this
-project's proposal originally assumed. Didar appears to model priced line
-items through a separate "Product" entity (POST /product/save, confirmed
-to exist with UnitPrice/Quantity/FinalPrice fields) that presumably then
-gets linked into an Invoice - but the exact Invoice-creation endpoint and
-how it ties Products to a Deal has not been confirmed yet.
+Endpoint: POST {DIDAR_BASE_URL}/deal/save?apikey={API_KEY}
+Confirmed via live testing: Deal.save expects PersonId (not ContactId).
 
-Until that's confirmed (needs a real DIDAR_API_KEY + a look at the
-Postman docs' Invoice/Product sections), this client takes the safe,
-guaranteed-to-work path: it writes a clear, itemized summary of the
-order into the Deal's Description field, so no financial detail is lost
-even though it isn't yet structured data on the Didar side. total_price
-uses whatever numeric field the Deal API turns out to expect once that's
-confirmed - currently omitted rather than guessed into the wrong field.
-
-TODO(didar-invoice): replace the Description-based summary with proper
-Product + Invoice creation once the endpoints are confirmed.
+NOT YET CONFIRMED (pending a live test of this rewrite):
+  - Whether DealItems is a top-level sibling key alongside "Deal" in
+    the request body (assumed here) or nested inside the Deal object.
+  - The exact DealItems field names beyond ProductId/Quantity/UnitPrice/
+    Discount, which are confirmed from the API docs.
 """
 from __future__ import annotations
 
@@ -32,6 +31,7 @@ import httpx
 
 from src.config import DidarConfig, settings
 from src.didar.contact_client import DidarApiError
+from src.didar.product_client import DidarProductClient
 from src.http_utils import default_retry, raise_for_status_with_body
 from src.logger import get_logger
 from src.marketplaces.base import NormalizedOrder
@@ -40,8 +40,13 @@ log = get_logger(__name__)
 
 
 class DidarDealClient:
-    def __init__(self, config: DidarConfig | None = None) -> None:
+    def __init__(
+        self,
+        config: DidarConfig | None = None,
+        product_client: DidarProductClient | None = None,
+    ) -> None:
         self._config = config or settings.didar
+        self._products = product_client or DidarProductClient(config=self._config)
         self._client = httpx.Client(base_url=self._config.base_url, timeout=30.0)
 
     @default_retry()
@@ -50,21 +55,20 @@ class DidarDealClient:
         raise_for_status_with_body(resp)
         return resp.json()
 
-    def create_deal(self, contact_id: str, order: NormalizedOrder) -> str:
+    def create_deal(self, contact_id: str, display_name: str, order: NormalizedOrder) -> str:
+        deal_body = {
+            "Title": f"معامله {display_name}".strip(),
+            "BizdomainId": self._config.bizdomain_id,
+            "PersonId": contact_id,
+            "PipelineStageId": self._config.pipeline_stage_id,
+        }
+        label_id = self._config.label_by_source.get(order.source)
+        if label_id:
+            deal_body["LabelId"] = label_id
+
         body = {
-            "Deal": {
-                "Title": f"{order.order_number} - {order.source}",
-                "BizdomainId": self._config.bizdomain_id,
-                # Confirmed via live testing against the real API: Didar's
-                # Deal.save expects "PersonId", not "ContactId" - sending
-                # ContactId alone fails with "person and company both are
-                # empty", since Didar apparently treats a Deal's linked
-                # Contact as either a Person or a Company under separate
-                # field names, and our contacts are always people.
-                "PersonId": contact_id,
-                "PipelineStageId": self._config.pipeline_stage_id,
-                "Description": _build_description(order),
-            }
+            "Deal": deal_body,
+            "DealItems": [self._build_deal_item(item) for item in order.items],
         }
         payload = self._post("/deal/save", json=body)
         deal_id = _extract_deal_id(payload)
@@ -74,20 +78,17 @@ class DidarDealClient:
         )
         return deal_id
 
-
-def _build_description(order: NormalizedOrder) -> str:
-    lines = [
-        f"Source: {order.source}",
-        f"Marketplace order id: {order.source_order_id}",
-        f"Status: {order.status}",
-        f"Total: {order.total_price}",
-        "Items:",
-    ]
-    for item in order.items:
-        lines.append(f"  - {item.title} (sku={item.sku}) x{item.quantity} = {item.final_price}")
-    if not order.items:
-        lines.append("  (no line items available)")
-    return "\n".join(lines)
+    def _build_deal_item(self, item) -> dict:
+        # SKU is the natural upsert key; falls back to the item title
+        # for the (rare) case a source provides no SKU, so at least
+        # same-titled items resolve to the same product within a run.
+        product_id = self._products.upsert_product(code=item.sku or item.title, title=item.title)
+        return {
+            "ProductId": product_id,
+            "Quantity": item.quantity,
+            "UnitPrice": int(item.unit_price),
+            "Discount": 0,
+        }
 
 
 def _extract_deal_id(payload: dict) -> str:

@@ -181,20 +181,47 @@ that was fixed).
 
 ## 4. Didar CRM integration
 
-Two-step process per order (`src/didar/service.py`):
+Three-step process per order (`src/didar/service.py`):
 
 1. **Upsert Contact** (`src/didar/contact_client.py`) - keyed on
    `CustomerCode`. Didar finds-and-updates if a match exists,
    otherwise creates. `CustomerCode` is the customer's mobile number
-   when the source provides one (Basalam; not Tapsi Shop or Digikala -
-   see Section 3), otherwise a synthetic `{source}-{order_id}`.
-2. **Create Deal** (`src/didar/deal_client.py`) - linked to the
-   Contact, placed in the confirmed `PipelineStageId` (currently:
-   pipeline "سفارشات", stage "مشتری جدید").
+   when the source provides one, otherwise a synthetic
+   `{source}-{order_id}`. Returns both the Contact's `Id` and the
+   `DisplayName` Didar computed - the latter feeds the Deal's Title.
+2. **Upsert one Product per order line item** (`src/didar/product_client.py`)
+   - keyed on `Code` (the marketplace SKU, or the item title as a
+   fallback). The existing Didar catalog uses internal manual codes
+   unrelated to marketplace SKUs, so matching by SKU would almost
+   never hit - instead, a product is auto-created with the exact
+   marketplace title whenever no match exists, mirroring the same
+   upsert-by-code pattern already proven for Contact.
+3. **Create Deal** (`src/didar/deal_client.py`) - linked to the
+   Contact via `PersonId`, placed in the confirmed `PipelineStageId`
+   (pipeline "سفارشات", stage "مشتری جدید"), with structured
+   `DealItems` (`ProductId`, `Quantity`, `UnitPrice`, `Discount`) - not
+   text. `Title` follows Didar's own default convention for
+   manually-created deals: `"معامله {display_name}"`. `LabelId` is set
+   per source (see the table below) so the originating marketplace
+   shows as a proper Didar Tag, not a text field.
 
-Both use `POST .../contact/save` / `POST .../deal/save` with the API
-key as a **query parameter** (`?apikey=...`), confirmed from
+Both `contact/save`, `product/save`, and `deal/save` use `POST` with
+the API key as a **query parameter** (`?apikey=...`), confirmed from
 `didar.me/api-help` - not an `Authorization` header.
+
+**Source → Label (Tag) mapping**, configured via `.env`
+(`DIDAR_LABEL_*`), GUIDs fetched from `GET /Tag/GetTagList`:
+
+| Source | Didar Tag |
+|---|---|
+| Tapsi Shop | تپسی |
+| Digikala | دیجی کالا |
+| SnappShop | اسنپ |
+| Basalam | باسلام |
+| Faraz Honar | سایت فرازهنر |
+
+A source with no configured Label GUID simply omits `LabelId` from the
+request rather than failing - partial rollout is safe.
 
 **Confirmed the hard way, via live 400s:**
 
@@ -210,22 +237,24 @@ key as a **query parameter** (`?apikey=...`), confirmed from
   such orders land in `sync_failures` for manual review rather than
   silently succeeding or crashing the whole cycle.
 
-**Known gap - line items:** `Deal` takes an `InvoiceId`, not an
-embedded item list, as the original proposal assumed. Didar appears to
-model priced line items through a separate `Product` entity, but the
-exact `Invoice`-creation endpoint and how it links `Product`s to a
-`Deal` were never confirmed (would need a live token + reading the
-Postman docs' Invoice/Product sections). Until then,
-`deal_client.py::_build_description()` writes an itemized, human-
-readable summary into the Deal's `Description` field - no financial
-detail is lost, it just isn't structured data on the Didar side yet.
-Tracked as `TODO(didar-invoice)` in the code.
+**NOT YET CONFIRMED (pending a live test of the DealItems rewrite):**
+
+- Whether `product/save` actually upserts by `Code` the same way
+  `contact/save` upserts by `CustomerCode` - assumed by analogy, not
+  yet directly observed. If it instead always creates a new product,
+  re-syncing the same SKU across runs will accumulate duplicate
+  catalog products - the first thing to check if the Didar product
+  catalog looks cluttered after go-live.
+- Whether `DealItems` is a top-level key sibling to `"Deal"` in the
+  request body (assumed) or nested some other way.
 
 **Response envelope:** Contact.save's shape
-(`{"Response": {"Contact": {"Id": ...}}}`) is confirmed correct via
-live testing. `_extract_contact_id`/`_extract_deal_id` still try
-several shapes defensively as a safety net, but the primary shape is
-no longer a guess.
+(`{"Response": {"Contact": {"Id": ..., "DisplayName": ...}}}`) is
+confirmed correct via live testing; Product.save and Deal.save are
+assumed to follow the same shape pending live confirmation of this
+rewrite specifically (the underlying save/response pattern was already
+confirmed for Deal in the prior PersonId fix, just not with DealItems
+attached).
 
 ## 5. Sync Engine (`src/sync_engine.py`)
 
@@ -329,7 +358,7 @@ Also listed in `README.md`; repeated here with more context:
 | Limitation | Where | Impact |
 |---|---|---|
 | SnappShop order field names unconfirmed | `snappshop.py` | Sync may silently produce incomplete `NormalizedOrder`s until verified against real data |
-| Didar Deal has no structured line items | `deal_client.py` | Order items land in `Description` text, not queryable/reportable fields in Didar |
+| Product upsert-by-Code behavior unconfirmed | `product_client.py` | If `product/save` doesn't upsert by `Code` in practice, duplicate catalog products may accumulate on re-sync |
 | Basalam has no confirmed token-refresh endpoint | `basalam.py` | A 401 needs a manual PAT renewal from the developer panel |
 | Digikala `refresh_token` needs yearly manual renewal | `digikala.py` | Requires the private-key bootstrap process, off-server |
 | Duplicate-mobile-number Contacts aren't auto-resolved | `contact_client.py` / Didar | Such orders land in `sync_failures` for manual handling |

@@ -10,17 +10,21 @@ _CFG = DidarConfig(base_url="https://app.didar.me/api", api_key="test-key",
 
 
 @respx.mock
-def test_upsert_contact_sends_apikey_as_query_param_not_header():
+def test_upsert_contact_returns_id_and_display_name():
     route = respx.post("https://app.didar.me/api/contact/save").mock(
-        return_value=httpx.Response(200, json={"Response": {"Contact": {"Id": "c-123"}}})
+        return_value=httpx.Response(
+            200,
+            json={"Response": {"Contact": {"Id": "c-123", "DisplayName": "علی رضایی"}}},
+        )
     )
 
     client = DidarContactClient(config=_CFG)
-    contact_id = client.upsert_contact(
+    result = client.upsert_contact(
         customer_code="tapsishop-999", mobile_phone="09121234567", full_name="علی رضایی"
     )
 
-    assert contact_id == "c-123"
+    assert result.id == "c-123"
+    assert result.display_name == "علی رضایی"
     request = route.calls[0].request
     assert request.url.params["apikey"] == "test-key"
     body = request.content
@@ -29,27 +33,20 @@ def test_upsert_contact_sends_apikey_as_query_param_not_header():
 
 
 @respx.mock
-def test_upsert_contact_splits_full_name():
-    respx.post("https://app.didar.me/api/contact/save").mock(
-        return_value=httpx.Response(200, json={"Response": {"Contact": {"Id": "c-1"}}})
-    )
-    client = DidarContactClient(config=_CFG)
-    client.upsert_contact(customer_code="x", full_name="علی رضایی")
-    # (functional check is on request body content, done via requests below)
-
-
-@respx.mock
 def test_upsert_contact_handles_alternate_response_shape():
     """
-    Response envelope shape is explicitly unconfirmed (see module
-    docstring) - this test locks in that a flatter shape is also handled,
-    without needing to guess which one Didar actually returns.
+    Response envelope shape has a confirmed primary shape, but this
+    locks in that a flatter shape is also handled defensively as a
+    safety net, without needing to guess which one Didar actually
+    returns in every edge case.
     """
     respx.post("https://app.didar.me/api/contact/save").mock(
-        return_value=httpx.Response(200, json={"Id": "c-flat"})
+        return_value=httpx.Response(200, json={"Id": "c-flat", "DisplayName": "Flat Name"})
     )
     client = DidarContactClient(config=_CFG)
-    assert client.upsert_contact(customer_code="x") == "c-flat"
+    result = client.upsert_contact(customer_code="x")
+    assert result.id == "c-flat"
+    assert result.display_name == "Flat Name"
 
 
 @respx.mock
