@@ -89,6 +89,35 @@ server once during setup and confirm the service comes back up and
 resumes polling on its own. This is one of the project's acceptance
 criteria.
 
+## Stopping the service
+
+```powershell
+nssm.exe stop OrderSyncPlatform
+```
+
+⚠️ **This only stops the currently running process.** Because the
+service is registered with startup type **Automatic** (deliberately,
+so it survives a server reboot per the project's requirements), it
+will start again on its own the next time the server restarts - for
+any reason, including Windows Update or a power blip - even though you
+stopped it manually beforehand. A stopped state does not persist
+across a reboot; that's standard Windows Service behavior, not a bug.
+
+If you need it to **stay off** even across a reboot, change the
+startup type to Manual first:
+
+```powershell
+nssm.exe stop OrderSyncPlatform
+nssm.exe set OrderSyncPlatform Start SERVICE_DEMAND_START
+```
+
+To resume normal always-on operation later:
+
+```powershell
+nssm.exe set OrderSyncPlatform Start SERVICE_AUTO_START
+nssm.exe start OrderSyncPlatform
+```
+
 ## Updating the service later
 
 After pulling new code or editing `.env`:

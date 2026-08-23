@@ -89,6 +89,46 @@ def test_create_deal_omits_label_when_source_not_mapped():
 
 
 @respx.mock
+def test_description_includes_source_label_and_panel_link_for_marketplaces():
+    respx.post("https://app.didar.me/api/product/save").mock(
+        return_value=httpx.Response(200, json={"Response": {"Product": {"Id": "p-1"}}})
+    )
+    route = respx.post("https://app.didar.me/api/deal/save").mock(
+        return_value=httpx.Response(200, json={"Response": {"Deal": {"Id": "d-1"}}})
+    )
+
+    client = DidarDealClient(config=_CFG)
+    client.create_deal(contact_id="c-1", display_name="Someone", order=_ORDER)
+
+    body = route.calls[0].request.content
+    assert "تپسی‌شاپ".encode() in body
+    assert b"ORD-999" in body
+    assert b"vendor.tapsi.shop" in body
+
+
+@respx.mock
+def test_description_includes_direct_order_link_for_farazhonar():
+    """
+    Faraz Honar is the one source with a confirmed real per-order deep
+    link (standard WooCommerce wp-admin URL), unlike the four
+    marketplaces which only get a link to the vendor panel's home page.
+    """
+    faraz_order = NormalizedOrder(**{**_ORDER.__dict__, "source": "farazhonar", "source_order_id": "555"})
+    respx.post("https://app.didar.me/api/product/save").mock(
+        return_value=httpx.Response(200, json={"Response": {"Product": {"Id": "p-1"}}})
+    )
+    route = respx.post("https://app.didar.me/api/deal/save").mock(
+        return_value=httpx.Response(200, json={"Response": {"Deal": {"Id": "d-1"}}})
+    )
+
+    client = DidarDealClient(config=_CFG)
+    client.create_deal(contact_id="c-1", display_name="Someone", order=faraz_order)
+
+    body = route.calls[0].request.content
+    assert b"post=555&action=edit" in body
+
+
+@respx.mock
 def test_create_deal_builds_structured_deal_items_not_description_text():
     """
     Regression test for the core requirement of this rewrite: line

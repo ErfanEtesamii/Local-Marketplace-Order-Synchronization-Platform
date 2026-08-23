@@ -23,6 +23,14 @@ Design choices worth calling out:
 - Failed Didar syncs are recorded via Repository.record_failure() rather
   than just logged and dropped, so retry_pending_failures() can give them
   another attempt on a later run without re-fetching the entire source.
+- FIRST RUN NEVER BACKFILLS HISTORY: per an explicit client requirement,
+  orders that existed before the service's very first run must never be
+  touched - many of them were already handled manually in Didar before
+  this project existed. When a source has no prior watermark, "since"
+  defaults to the moment this poll cycle started, not some lookback
+  window into the past. This used to default to "now - 1 day", which is
+  exactly what caused a flood of already-completed historical orders to
+  get synced on the very first production run (see git history).
 """
 from __future__ import annotations
 
@@ -35,7 +43,6 @@ from src.marketplaces.base import MarketplaceAdapter, NormalizedOrder
 
 log = get_logger(__name__)
 
-DEFAULT_LOOKBACK = timedelta(days=1)     # used only when a source has no prior sync_state
 WATERMARK_OVERLAP = timedelta(minutes=10)  # safety margin - see module docstring
 
 
@@ -62,10 +69,12 @@ class SyncEngine:
         self.retry_pending_failures()
 
     def _sync_source(self, adapter: MarketplaceAdapter) -> None:
-        since = self._repo.get_last_sync_time(adapter.name) or (
-            datetime.now(timezone.utc) - DEFAULT_LOOKBACK
-        )
         cycle_started_at = datetime.now(timezone.utc)
+        # No lookback fallback on purpose - see module docstring. A
+        # source with no watermark yet starts counting from right now,
+        # so nothing that existed before this service's first run is
+        # ever fetched, regardless of its status on the marketplace.
+        since = self._repo.get_last_sync_time(adapter.name) or cycle_started_at
 
         try:
             orders = adapter.fetch_new_orders(since)

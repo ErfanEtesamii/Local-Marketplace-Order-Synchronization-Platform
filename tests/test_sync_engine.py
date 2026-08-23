@@ -32,9 +32,11 @@ class FakeAdapter(MarketplaceAdapter):
         self._fail_fetch = fail_fetch
         self.fetch_new_orders_calls = 0
         self.fetch_order_detail_calls = 0
+        self.received_since_values = []
 
     def fetch_new_orders(self, since):
         self.fetch_new_orders_calls += 1
+        self.received_since_values.append(since)
         if self._fail_fetch:
             raise RuntimeError(f"{self.name}: simulated fetch failure")
         return self._list_orders
@@ -176,3 +178,26 @@ def test_watermark_advances_with_overlap_margin(repo):
     assert watermark is not None
     # Watermark should be "now" minus the overlap margin, not exactly "now".
     assert before - timedelta(minutes=11) <= watermark <= after - timedelta(minutes=9)
+
+
+def test_first_run_never_backfills_history(repo):
+    """
+    Regression test for a real production incident: a source with no
+    prior watermark used to default to "now - 1 day", which flooded
+    Didar with historical (already-completed, already-handled-manually)
+    orders on the very first run. The 'since' passed to fetch_new_orders
+    on a first run must be ~now, not some lookback window into the past.
+    """
+    adapter = FakeAdapter("fake1", list_orders=[])
+    engine = SyncEngine(adapters=[adapter], repository=repo, didar_service=FakeDidarService())
+
+    before = datetime.now(timezone.utc)
+    engine.run_once()
+    after = datetime.now(timezone.utc)
+
+    assert adapter.fetch_new_orders_calls == 1
+    received_since = adapter.received_since_values[0]
+    assert before <= received_since <= after  # no artificial lookback applied
+
+    watermark = repo.get_last_sync_time("fake1")
+    assert watermark >= before - timedelta(minutes=11)

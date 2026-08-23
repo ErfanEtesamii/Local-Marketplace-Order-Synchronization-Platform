@@ -84,6 +84,10 @@ that was fixed).
     requested range into ≤7-day windows automatically.
   - Rate limit: **1 request per 5 seconds**, confirmed via a live 429.
     `_throttle()` enforces this proactively before every request.
+  - `orderStatusId: [4]` filter (client requirement) - only fetches
+    orders with status 4 (تایید سفارش), excluding 6 (لغو سفارش) and 9
+    (تحویل کامل). Already-delivered orders were previously handled
+    manually in Didar and must not be re-created by this sync.
 - Customer name/mobile are **not** present in either REST response -
   only in the webhook payload (see Section 2). Orders from this source
   therefore use a synthetic Didar `CustomerCode`
@@ -223,6 +227,17 @@ the API key as a **query parameter** (`?apikey=...`), confirmed from
 A source with no configured Label GUID simply omits `LabelId` from the
 request rather than failing - partial rollout is safe.
 
+**Description** also carries the source label (Persian display name)
+and an order link, per a later client request - separate from the
+pricing/product data that moved to structured fields above. Only Faraz
+Honar gets a real per-order deep link (standard WooCommerce
+`wp-admin` edit-order URL); the four marketplaces link to their vendor
+panel's home page only (confirmed URLs, from the original proposal),
+since none of them has a confirmed per-order URL pattern - inventing
+one risked a broken/misleading link. See `deal_client.py`'s
+`_order_link()` / `_PANEL_URLS` if a real per-order pattern is ever
+confirmed for one of the four.
+
 **Confirmed the hard way, via live 400s:**
 
 - `Deal.save` expects **`PersonId`**, not `ContactId` - sending
@@ -262,7 +277,7 @@ One `run_once()` call = one full poll cycle:
 
 ```
 for each adapter:
-    since = repository.get_last_sync_time(source) or (now - 1 day)
+    since = repository.get_last_sync_time(source) or cycle_started_at
     try: orders = adapter.fetch_new_orders(since)
     except: log + skip this source this cycle, watermark NOT advanced
     for each order:
@@ -277,6 +292,15 @@ retry_pending_failures()  # runs every cycle too - see below
 Key properties, each backed by a dedicated test in
 `tests/test_sync_engine.py`:
 
+- **First run never backfills history**: a source with no prior
+  watermark starts counting from the moment the poll cycle began, not
+  some lookback window into the past. This used to default to
+  `now - 1 day`, which caused a real production incident: the first
+  time the service ran on the client's server, it flooded Didar with
+  every order created in the prior 24 hours regardless of status -
+  including ones already fully delivered and already entered into
+  Didar manually beforehand. Fixed by removing the lookback fallback
+  entirely (see git history: `fix: first run should never backfill...`).
 - **Isolation**: one source failing to fetch does not block the
   others, and does *not* advance that source's watermark - the full
   window is retried next cycle rather than silently skipped.

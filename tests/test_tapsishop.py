@@ -83,6 +83,24 @@ def test_request_body_includes_confirmed_date_filter_type():
 
 
 @respx.mock
+def test_request_body_filters_to_active_orders_only():
+    """
+    Regression test for a real production incident: previously-completed
+    orders (already handled manually in Didar) were being re-synced.
+    Only orderStatusId=4 (تایید سفارش - still active) should be
+    requested, excluding 6 (cancelled) and 9 (delivered).
+    """
+    route = respx.post("https://vendorgw.tapsi.shop/Web/Hub/vendors/v1/orders").mock(
+        return_value=httpx.Response(200, json={"data": {"totalItems": 0, "items": []}})
+    )
+
+    adapter = TapsiShopAdapter(config=_CFG)
+    adapter.fetch_new_orders(since=_recent_since())
+
+    assert b'"orderStatusId":[4]' in route.calls[0].request.content
+
+
+@respx.mock
 def test_fetch_order_detail_includes_items():
     respx.get("https://vendorgw.tapsi.shop/Web/Hub/vendors/v1/orders/111").mock(
         return_value=httpx.Response(

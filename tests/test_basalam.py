@@ -77,6 +77,40 @@ def test_fetch_order_detail_includes_items_and_customer():
 
 
 @respx.mock
+def test_fetch_new_orders_uses_confirmed_max_per_page():
+    """
+    Regression test: per_page=50 (an assumption carried over from other
+    adapters) is rejected with a live 422 ("Input should be less than
+    or equal to 30"). 30 is the confirmed maximum.
+    """
+    route = respx.get("https://order-processing.basalam.com/v3/vendor-parcels").mock(
+        return_value=httpx.Response(200, json={"data": [], "next_cursor": None})
+    )
+
+    adapter = BasalamAdapter(config=_CFG)
+    adapter.fetch_new_orders(since=datetime(2026, 8, 1, tzinfo=timezone.utc))
+
+    assert route.calls[0].request.url.params["per_page"] == "30"
+
+
+@respx.mock
+def test_fetch_new_orders_uses_confirmed_valid_sort_value():
+    """
+    Regression test: created_at:desc and id:desc are both rejected with
+    a live 422 ("مرتب سازی معتبر نمی باشد"). Only estimate_send_at:desc
+    (the documented default) is confirmed valid.
+    """
+    route = respx.get("https://order-processing.basalam.com/v3/vendor-parcels").mock(
+        return_value=httpx.Response(200, json={"data": [], "next_cursor": None})
+    )
+
+    adapter = BasalamAdapter(config=_CFG)
+    adapter.fetch_new_orders(since=datetime(2026, 8, 1, tzinfo=timezone.utc))
+
+    assert route.calls[0].request.url.params["sort"] == "estimate_send_at:desc"
+
+
+@respx.mock
 def test_expired_token_raises_clear_auth_error():
     respx.get("https://order-processing.basalam.com/v3/vendor-parcels").mock(
         return_value=httpx.Response(401, json={"detail": "unauthorized"})

@@ -1,16 +1,19 @@
 """
 Didar CRM - Deal client.
 
-Rewritten per the project's structured-data decision: every piece of
-order data goes into its own proper Didar field, not into a single
-Description text blob. Specifically:
+Rewritten per the project's structured-data decision: pricing and
+product data go into their own proper Didar fields, not a text blob.
+Specifically:
 
   - Amount            -> DealItems[].UnitPrice (not text)
   - Customer name      -> already handled via Contact/PersonId
   - Product name        -> DealItems[].ProductId, linked to a real
                            catalog Product (auto-created if no match -
                            see product_client.py)
-  - Order source (site) -> Deal.LabelId (a Tag), not a text field
+  - Order source (site) -> Deal.LabelId (a Tag) AND, per a later client
+                           request, also written as readable text in
+                           Description alongside a link back to the
+                           order on its origin platform - see below
   - Title                -> "معامله {display_name}", matching Didar's
                            own default naming convention for manually
                            created deals - NOT "{order_number} - {source}"
@@ -19,7 +22,18 @@ Description text blob. Specifically:
 Endpoint: POST {DIDAR_BASE_URL}/deal/save?apikey={API_KEY}
 Confirmed via live testing: Deal.save expects PersonId (not ContactId).
 
-NOT YET CONFIRMED (pending a live test of this rewrite):
+DESCRIPTION - source label + order link (client request, 2026-08):
+Only Faraz Honar (the client's own WooCommerce site) gets a confirmed,
+real per-order deep link (standard wp-admin edit-order URL - this
+pattern is well established, not a guess). The four marketplaces
+(Tapsi Shop, Digikala, Basalam, SnappShop) do NOT have a confirmed
+per-order URL pattern for their vendor panels - inventing one risks a
+broken/misleading link, so Description instead links to that vendor's
+panel *home page* (confirmed URLs, from the original project proposal)
+plus the order number as text, to be searched manually. Revisit with a
+real per-order URL once one is confirmed from any of those panels.
+
+NOT YET CONFIRMED (pending a live test of the DealItems rewrite):
   - Whether DealItems is a top-level sibling key alongside "Deal" in
     the request body (assumed here) or nested inside the Deal object.
   - The exact DealItems field names beyond ProductId/Quantity/UnitPrice/
@@ -37,6 +51,44 @@ from src.logger import get_logger
 from src.marketplaces.base import NormalizedOrder
 
 log = get_logger(__name__)
+
+_SOURCE_DISPLAY_NAMES = {
+    "tapsishop": "تپسی‌شاپ",
+    "digikala": "دیجی‌کالا",
+    "basalam": "باسلام",
+    "snappshop": "اسنپ‌شاپ",
+    "farazhonar": "فرازهنر",
+}
+
+# Vendor panel home page URLs (confirmed - these are the same links
+# listed in the original project proposal). NOT per-order deep links -
+# see module docstring.
+_PANEL_URLS = {
+    "tapsishop": "https://vendor.tapsi.shop/dashboard",
+    "digikala": "https://seller.digikala.com/pwa",
+    "basalam": "https://vendor.basalam.com",
+    "snappshop": "https://seller.snappshop.ir/dashboard",
+}
+
+
+def _order_link(order: NormalizedOrder) -> str:
+    if order.source == "farazhonar":
+        # Confirmed real WooCommerce admin URL pattern - opens this
+        # exact order directly.
+        return (
+            f"{settings.farazhonar.base_url}/wp-admin/post.php"
+            f"?post={order.source_order_id}&action=edit"
+        )
+    return _PANEL_URLS.get(order.source, "")
+
+
+def _build_description(order: NormalizedOrder) -> str:
+    source_label = _SOURCE_DISPLAY_NAMES.get(order.source, order.source)
+    link = _order_link(order)
+    lines = [f"فروشگاه: {source_label}", f"شماره سفارش: {order.order_number}"]
+    if link:
+        lines.append(f"مشاهده سفارش: {link}")
+    return "\n".join(lines)
 
 
 class DidarDealClient:
@@ -61,6 +113,7 @@ class DidarDealClient:
             "BizdomainId": self._config.bizdomain_id,
             "PersonId": contact_id,
             "PipelineStageId": self._config.pipeline_stage_id,
+            "Description": _build_description(order),
         }
         label_id = self._config.label_by_source.get(order.source)
         if label_id:

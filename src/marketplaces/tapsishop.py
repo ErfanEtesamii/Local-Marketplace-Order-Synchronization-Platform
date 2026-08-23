@@ -29,6 +29,14 @@ TWO MORE CONSTRAINTS CONFIRMED VIA LIVE TESTING (undocumented in the PDF):
      between every request this adapter makes, proactively rather than
      relying on retry-after-a-429, since the chunking above means a
      large backfill can trigger dozens of sequential calls.
+
+ORDER STATUS FILTER (client requirement, 2026-08): only orders whose
+status is 4 (تایید سفارش - confirmed/still active) are fetched.
+Excludes 6 (لغو سفارش - cancelled) and 9 (تحویل کامل - fully
+delivered), per the confirmed order-status enum in the vendor docs.
+Already-delivered orders were previously entered into Didar manually
+and must not be re-created by this sync; only orders still awaiting
+fulfillment are the sales team's concern here.
 """
 from __future__ import annotations
 
@@ -47,6 +55,7 @@ log = get_logger(__name__)
 
 _MAX_WINDOW = timedelta(days=7) - timedelta(minutes=1)  # small safety margin under the confirmed 7-day cap
 _MIN_REQUEST_INTERVAL_SECONDS = 5.5  # confirmed limit is 5s flat - small margin added
+_ACTIVE_ORDER_STATUS_IDS = [4]  # تایید سفارش only - excludes cancelled(6)/delivered(9), see module docstring
 
 
 def _to_decimal(value) -> Decimal:
@@ -122,6 +131,7 @@ class TapsiShopAdapter(MarketplaceAdapter):
                 "dateFilterTypeCode": 1,
                 "fromDate": window_start.isoformat(),
                 "toDate": window_end.isoformat(),
+                "orderStatusId": _ACTIVE_ORDER_STATUS_IDS,
             }
             payload = self._post("/Web/Hub/vendors/v1/orders", json=body)
             data = payload.get("data", {})
