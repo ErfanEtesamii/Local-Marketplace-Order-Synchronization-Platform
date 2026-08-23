@@ -68,6 +68,14 @@ class DidarConfig:
     bizdomain_id: str = field(default_factory=lambda: _get("DIDAR_BIZDOMAIN_ID"))
     pipeline_id: str = field(default_factory=lambda: _get("DIDAR_PIPELINE_ID"))
     pipeline_stage_id: str = field(default_factory=lambda: _get("DIDAR_PIPELINE_STAGE_ID"))
+    # Required by POST /product/save whenever a new product is auto-created
+    # (see src/didar/product_client.py) - Didar rejects the call with
+    # "product category is empty" if ProductCategoryId is missing.
+    # Confirmed via Didar's own docs: fetch valid Ids from
+    # POST /product/categories?apikey=... - see .env.example.
+    default_product_category_id: str = field(
+        default_factory=lambda: _get("DIDAR_DEFAULT_PRODUCT_CATEGORY_ID")
+    )
     # Label (Tag) GUIDs, one per marketplace source - see docs/architecture.md
     # for how to fetch these via GET /Tag/GetTagList. Any left blank simply
     # means that source's Deals won't carry a LabelId (not an error).

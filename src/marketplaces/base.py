@@ -25,6 +25,12 @@ class OrderItem:
     quantity: int
     unit_price: Decimal
     final_price: Decimal
+    # Marketplace's own product category/group name, when the source API
+    # exposes one (currently only Faraz Honar/WooCommerce does - see its
+    # adapter). Used to pick a matching Didar product category instead of
+    # always filing new products under one catch-all category. None means
+    # "unknown" - falls back to DIDAR_DEFAULT_PRODUCT_CATEGORY_ID.
+    category: str | None = None
 
 
 @dataclass(frozen=True)

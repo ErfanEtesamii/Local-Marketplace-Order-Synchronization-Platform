@@ -135,7 +135,9 @@ class DidarDealClient:
         # SKU is the natural upsert key; falls back to the item title
         # for the (rare) case a source provides no SKU, so at least
         # same-titled items resolve to the same product within a run.
-        product_id = self._products.upsert_product(code=item.sku or item.title, title=item.title)
+        product_id = self._products.upsert_product(
+            code=item.sku or item.title, title=item.title, category=item.category
+        )
         return {
             "ProductId": product_id,
             "Quantity": item.quantity,

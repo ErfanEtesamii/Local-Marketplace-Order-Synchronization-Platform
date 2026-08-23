@@ -18,6 +18,15 @@ Endpoints used:
                                             the MarketplaceAdapter interface,
                                             though fetch_new_orders already
                                             has everything it needs)
+  GET /wp-json/wc/v3/products/{id}       -> used ONLY to resolve each line
+                                            item's product category (WooCommerce
+                                            categories[] isn't included on the
+                                            order's line_items themselves) - see
+                                            _resolve_category(). Results are
+                                            cached for the adapter's lifetime
+                                            since product categories rarely
+                                            change and this avoids one extra
+                                            request per repeated product.
 
 Authentication: HTTP Basic Auth using a Consumer Key / Consumer Secret
 pair generated from wp-admin (WooCommerce > Settings > Advanced > REST
@@ -68,6 +77,7 @@ class FarazHonarAdapter(MarketplaceAdapter):
             auth=httpx.BasicAuth(self._config.consumer_key, self._config.consumer_secret),
             timeout=30.0,
         )
+        self._category_cache: dict[int, str | None] = {}
 
     @default_retry()
     def _get(self, path: str, params: dict | None = None) -> httpx.Response:
@@ -105,6 +115,32 @@ class FarazHonarAdapter(MarketplaceAdapter):
         resp = self._get(f"/wp-json/wc/v3/orders/{source_order_id}")
         return self._normalize(resp.json())
 
+    def _resolve_category(self, product_id: int) -> str | None:
+        """First WooCommerce product category title, or None if the
+        product has none / product_id is missing / the lookup fails.
+        A failed lookup must not break order sync, so errors here are
+        swallowed (logged) rather than raised - the item just falls
+        back to Didar's default catch-all category."""
+        if not product_id:
+            return None
+        if product_id in self._category_cache:
+            return self._category_cache[product_id]
+
+        category = None
+        try:
+            resp = self._get(f"/wp-json/wc/v3/products/{product_id}")
+            categories = resp.json().get("categories", [])
+            if categories:
+                category = str(categories[0].get("name") or "") or None
+        except httpx.HTTPError as exc:
+            log.warning(
+                "farazhonar: failed to resolve category for product_id=%s: %s",
+                product_id, exc,
+            )
+
+        self._category_cache[product_id] = category
+        return category
+
     def _normalize(self, raw: dict) -> NormalizedOrder:
         billing = raw.get("billing", {})
         full_name = " ".join(
@@ -118,6 +154,7 @@ class FarazHonarAdapter(MarketplaceAdapter):
                 quantity=int(item.get("quantity", 1)),
                 unit_price=_to_decimal(item.get("price")),
                 final_price=_to_decimal(item.get("total")),
+                category=self._resolve_category(item.get("product_id")),
             )
             for item in raw.get("line_items", [])
         ]
