@@ -32,10 +32,16 @@ There are two SEPARATE processes here, easy to conflate:
      whose *result* (the two tokens) gets seeded into .env once.
 
   2. Renewing the access_token day-to-day (automatic, done by THIS
-     adapter): POST /auth/refresh-token using only the refresh_token -
-     no private key, no manual step, no authorization_code involved.
-     This is what keeps the service running for the ~1 year the
-     refresh_token stays valid.
+     adapter): POST /auth/refresh-token - CONFIRMED via the official
+     docs (Authentication section) that despite the name, this call
+     requires BOTH the (expired) access_token AND the refresh_token in
+     the request body, not refresh_token alone:
+         {"access_token": "<expired token>", "refresh_token": "<...>"}
+     Omitting access_token gets a 400 with
+     errors.access_token = ["این قسمت نباید خالی باشد"] - this was a
+     real bug in an earlier version of this adapter (see git history)
+     that broke every scheduled refresh. No private key or
+     authorization_code is involved in this step, only in step 1 above.
 
 The private key used in step 1 should never be placed on the server -
 this service only ever needs the refresh_token for step 2. Roughly
@@ -112,8 +118,12 @@ class DigikalaAdapter(MarketplaceAdapter):
 
     @default_retry()
     def _refresh_access_token(self) -> None:
+        # Confirmed via official docs: both access_token and refresh_token
+        # are required in the body, even though this call's purpose is to
+        # replace the (expired) access_token - see module docstring.
         resp = self._client.post(
-            "/open-api/v1/auth/refresh-token", json={"refresh_token": self._refresh_token}
+            "/open-api/v1/auth/refresh-token",
+            json={"access_token": self._access_token, "refresh_token": self._refresh_token},
         )
         raise_for_status_with_body(resp)
         data = resp.json().get("data", {})
