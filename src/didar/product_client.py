@@ -46,18 +46,28 @@ life of one run is an acceptable tradeoff over re-fetching per item).
 
 Matching is deliberately simple (case-insensitive, whitespace-trimmed
 exact match) rather than fuzzy - a silent wrong-category match would
-be worse than a clear fallback. If a marketplace category has no
-same-named Didar category yet (or the item's marketplace doesn't
-report a category at all - every source besides farazhonar today),
-the product falls back to DidarConfig.default_product_category_id
-(DIDAR_DEFAULT_PRODUCT_CATEGORY_ID in .env) - a genuine catch-all
-("متفرقه") for exactly the unmatched/unknown cases, not everything.
+be worse than a clear fallback.
+
+KEYWORD FALLBACK (added per client feedback, 2026-08): an exact
+marketplace-category match is only possible for Faraz Honar today -
+Digikala/Basalam/Tapsi Shop/SnappShop don't expose a category field at
+all (see each adapter). For those, and for any farazhonar category
+that doesn't exact-match a Didar category, _category_id_for() now
+tries src.didar.category_mapping.keyword_category_title() against the
+item's own TITLE before giving up - see that module's docstring for
+how the keyword lists were built (draft, unconfirmed against the real
+catalog) and its match-order caveats. Only when that also finds
+nothing does the product fall back to
+DidarConfig.default_product_category_id (DIDAR_DEFAULT_PRODUCT_CATEGORY_ID
+in .env) - the genuine catch-all ("متفرقه") for exactly the
+unmatched/unknown cases, not everything.
 """
 from __future__ import annotations
 
 import httpx
 
 from src.config import DidarConfig, settings
+from src.didar.category_mapping import _normalize_fa, keyword_category_title
 from src.didar.contact_client import DidarApiError
 from src.http_utils import default_retry, raise_for_status_with_body
 from src.logger import get_logger
@@ -83,31 +93,69 @@ class DidarProductClient:
         payload = self._post("/product/categories")
         return payload.get("Response", [])
 
-    def _category_id_for(self, category_name: str | None) -> str:
-        """Resolve a marketplace category name to a Didar ProductCategoryId
-        by exact (case/whitespace-insensitive) title match, falling back to
-        the configured catch-all when there's no name or no match."""
+    def _category_by_title_map(self) -> dict[str, str]:
+        if self._category_by_title is None:
+            self._category_by_title = {
+                _normalize_fa(str(c.get("Title", ""))): str(c["Id"])
+                for c in self.list_categories()
+                if c.get("Id") and c.get("Title")
+            }
+        return self._category_by_title
+
+    def _category_id_for(self, category_name: str | None, item_title: str) -> str:
+        """Resolve a Didar ProductCategoryId for one order item, in order:
+
+        1. Exact (normalized) match of the marketplace's own category name,
+           when the source provides one (currently only farazhonar) - see
+           module docstring.
+        2. A keyword guess from the item's TITLE - see category_mapping.py.
+           This is the only signal available at all for the four sources
+           that don't report a category (Digikala/Basalam/Tapsi Shop/
+           SnappShop), and also covers farazhonar items whose WooCommerce
+           category has no same-named Didar category yet.
+        3. DidarConfig.default_product_category_id (متفرقه) - the genuine
+           catch-all, only reached when both of the above found nothing.
+        """
+        by_title = self._category_by_title_map()
+
         if category_name:
-            if self._category_by_title is None:
-                self._category_by_title = {
-                    str(c.get("Title", "")).strip().casefold(): str(c["Id"])
-                    for c in self.list_categories()
-                    if c.get("Id") and c.get("Title")
-                }
-            match = self._category_by_title.get(category_name.strip().casefold())
+            match = by_title.get(_normalize_fa(category_name))
             if match:
                 return match
             log.warning(
                 "didar: no category named %r in the Didar catalog - "
-                "falling back to the default category for this product",
+                "trying a keyword guess from the item title instead",
                 category_name,
+            )
+
+        guessed_title = keyword_category_title(item_title)
+        if guessed_title:
+            match = by_title.get(_normalize_fa(guessed_title))
+            if match:
+                return match
+            # KEYWORD_RULES referenced a category title that no longer
+            # exists in Didar (renamed/deleted there) - not silently
+            # ignorable, since it means category_mapping.py is out of
+            # sync with the live catalog.
+            log.warning(
+                "didar: keyword match picked category %r for title %r, "
+                "but no such category exists in the Didar catalog - "
+                "falling back to the default category",
+                guessed_title, item_title,
+            )
+        else:
+            log.info(
+                "didar: no keyword in category_mapping.py matched item "
+                "title %r - falling back to the default category",
+                item_title,
             )
 
         if not self._config.default_product_category_id:
             raise DidarApiError(
                 "didar: DIDAR_DEFAULT_PRODUCT_CATEGORY_ID is not set in .env - "
-                "needed as a fallback whenever an item's category is unknown "
-                "or has no matching Didar category. Call "
+                "needed as a fallback whenever an item's category is unknown, "
+                "has no matching Didar category, and no keyword in "
+                "category_mapping.py matches its title either. Call "
                 "DidarProductClient.list_categories() once (or POST "
                 "/product/categories directly) to pick a real Id, then set "
                 "it in .env - see .env.example."
@@ -115,7 +163,7 @@ class DidarProductClient:
         return self._config.default_product_category_id
 
     def upsert_product(self, code: str, title: str, category: str | None = None) -> str:
-        category_id = self._category_id_for(category)
+        category_id = self._category_id_for(category, title)
         body = {
             "Product": {
                 "Code": code,
