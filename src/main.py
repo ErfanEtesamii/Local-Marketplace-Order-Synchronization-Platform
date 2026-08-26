@@ -30,9 +30,18 @@ def build_engine() -> tuple[SyncEngine, Repository]:
         TapsiShopAdapter(),
         DigikalaAdapter(),
         BasalamAdapter(),
-        SnappShopAdapter(),
         FarazHonarAdapter(),
     ]
+    if settings.snappshop.enabled:
+        adapters.append(SnappShopAdapter())
+    else:
+        # SNAPPSHOP_ENABLED=false (the default) - client request 2026-08,
+        # no SnappShop API access yet. Left out of the poll loop entirely
+        # rather than left in to fail every single cycle - see
+        # SnappShopConfig.enabled in config.py. Set SNAPPSHOP_ENABLED=true
+        # in .env once real credentials exist; no code change needed.
+        log.info("snappshop: disabled (SNAPPSHOP_ENABLED is not 'true') - skipping")
+
     engine = SyncEngine(
         adapters=adapters,
         repository=repository,

@@ -41,6 +41,12 @@ class DigikalaConfig:
 
 @dataclass(frozen=True)
 class SnappShopConfig:
+    # Explicit opt-in switch (client request, 2026-08: "غیرفعالش کن اجرا
+    # نشه" - SnappShop API access hasn't been granted yet, keep it out
+    # of the poll loop entirely rather than letting it fail every cycle
+    # with a config error). Defaults to disabled - set
+    # SNAPPSHOP_ENABLED=true in .env once real credentials exist.
+    enabled: bool = field(default_factory=lambda: _get("SNAPPSHOP_ENABLED", "false").lower() == "true")
     base_url: str = field(default_factory=lambda: _get("SNAPPSHOP_BASE_URL"))
     auth_token: str = field(default_factory=lambda: _get("SNAPPSHOP_AUTH_TOKEN"))
     agent_user: str = field(default_factory=lambda: _get("SNAPPSHOP_AGENT_USER"))
