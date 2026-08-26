@@ -9,16 +9,41 @@ relationship to marketplace SKUs, so a match-by-SKU lookup would almost
 never succeed. The agreed approach: auto-create a Didar product whenever
 no exact match exists, using the marketplace's own product title verbatim.
 
-NOT YET CONFIRMED: a dedicated product-search endpoint. Rather than
-guess one, this client mirrors the pattern already proven to work for
-Contact (upsert via POST /product/save, keyed on a Code field) - Didar's
-API consistently upserts-by-code elsewhere (Contact.CustomerCode), so
-the same behavior is assumed here pending live confirmation. If
-product/save turns out NOT to upsert-by-Code in practice (i.e. it
-always creates a new product even when Code repeats), duplicate
-products will accumulate on re-sync of the same SKU - flagged here so
-it's the first thing to check if the Didar catalog looks cluttered
-after go-live.
+ENDPOINT CORRECTION (2026-08, after reading Didar's actual API docs -
+the earlier module comment guessed wrong): the official docs
+("مستندات API دیدار") document exactly three Product endpoints:
+
+    POST /product/search      - Criteria.Keywords (required) + From/Limit
+    POST /product/categories  - list valid ProductCategoryIds
+    POST /product/GetProductsList - list ALL products, no filter params
+
+There is NO documented /product/save (create/edit) endpoint. The
+original code's use of POST /product/save was a guess by analogy with
+/contact/save and /deal/save (flagged as unconfirmed in an earlier
+version of this docstring) - it does respond rather than 404, but live
+testing shows its behavior is inconsistent: the same call can return
+400 "duplicate product code." (for a Code that already exists) or 400
+"Product Not Exist" (cause unconfirmed - possibly an undocumented
+update-path validation). Since it's undocumented, its real contract
+can't be relied on.
+
+FIX: search-first. upsert_product() now calls the documented
+POST /product/search for the item's Code before ever calling
+/product/save, and uses the existing product's Id directly when a
+result's Code matches exactly (see _find_by_code) - this is what
+eliminates "duplicate product code" almost entirely, since save is
+then only ever attempted for genuinely new codes. /product/save is
+still the only candidate for actually CREATING a new product (the
+docs don't expose a documented create endpoint at all) - kept as a
+best-effort fallback, with one automatic retry-via-search if it comes
+back with "duplicate product code" (a create/search race: another
+process/run created the same Code in between). If save fails with
+anything else (including "Product Not Exist"), that's surfaced as
+before - a genuine open question about Didar's undocumented create
+contract, not something to paper over silently. Worth raising with
+Didar's own support if it keeps recurring after this fix, since the
+docs don't describe a supported way to create a product via API at
+all.
 
 Code = the marketplace SKU when available, otherwise a fallback derived
 from the item title, so at least same-titled items from the same run
@@ -75,6 +100,14 @@ from src.logger import get_logger
 log = get_logger(__name__)
 
 
+def _normalize_code(code: str) -> str:
+    """Whitespace-trimmed comparison for Code matching - Digikala's own
+    codes have been observed with stray leading/trailing spaces (see
+    "10502013 " in the API docs' own example), so an exact `==` would
+    silently miss real matches."""
+    return code.strip()
+
+
 class DidarProductClient:
     def __init__(self, config: DidarConfig | None = None) -> None:
         self._config = config or settings.didar
@@ -92,6 +125,25 @@ class DidarProductClient:
         via Didar's own docs (POST /product/categories)."""
         payload = self._post("/product/categories")
         return payload.get("Response", [])
+
+    def search_by_code(self, code: str, limit: int = 20) -> str | None:
+        """Look up an existing product by Code via the documented
+        POST /product/search (Criteria.Keywords is a full-text search,
+        not an exact-Code filter, so results are filtered down to an
+        exact normalized Code match here - a partial/fuzzy hit on the
+        wrong product would be worse than not finding one at all)."""
+        body = {"Criteria": {"Keywords": code}, "From": 0, "Limit": limit}
+        payload = self._post("/product/search", json=body)
+        results = payload.get("Response", [])
+        target = _normalize_code(code)
+        for product in results:
+            if not isinstance(product, dict):
+                continue
+            if _normalize_code(str(product.get("Code", ""))) == target:
+                product_id = product.get("Id")
+                if product_id:
+                    return str(product_id)
+        return None
 
     def _category_by_title_map(self) -> dict[str, str]:
         if self._category_by_title is None:
@@ -163,6 +215,18 @@ class DidarProductClient:
         return self._config.default_product_category_id
 
     def upsert_product(self, code: str, title: str, category: str | None = None) -> str:
+        # Search first (documented endpoint) - if the product already
+        # exists, use its Id directly and never touch the undocumented
+        # /product/save at all. This is what eliminates "duplicate
+        # product code" almost entirely - see module docstring.
+        existing_id = self.search_by_code(code)
+        if existing_id:
+            log.info(
+                "didar: found existing product Code=%s -> Id=%s (skipping create)",
+                code, existing_id,
+            )
+            return existing_id
+
         category_id = self._category_id_for(category, title)
         body = {
             "Product": {
@@ -171,10 +235,28 @@ class DidarProductClient:
                 "ProductCategoryId": category_id,
             }
         }
-        payload = self._post("/product/save", json=body)
+        try:
+            payload = self._post("/product/save", json=body)
+        except httpx.HTTPStatusError as exc:
+            # Race: search found nothing, but the product was created by
+            # something else (another sync run, a concurrent item with
+            # the same Code, a manual entry) between our search and this
+            # save call. Recover by searching once more rather than
+            # failing the whole order for a timing issue.
+            if exc.response is not None and "duplicate product code" in exc.response.text.lower():
+                recovered_id = self.search_by_code(code)
+                if recovered_id:
+                    log.info(
+                        "didar: create raced with another writer for Code=%s - "
+                        "recovered existing Id=%s via search",
+                        code, recovered_id,
+                    )
+                    return recovered_id
+            raise
+
         product_id = _extract_product_id(payload)
         log.info(
-            "didar: upserted product Code=%s Title=%s CategoryId=%s -> Id=%s",
+            "didar: created product Code=%s Title=%s CategoryId=%s -> Id=%s",
             code, title, category_id, product_id,
         )
         return product_id

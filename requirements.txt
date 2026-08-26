@@ -3,3 +3,5 @@ APScheduler>=3.10
 python-dotenv>=1.0
 pydantic>=2.7
 tenacity>=8.2
+pytest
+respx

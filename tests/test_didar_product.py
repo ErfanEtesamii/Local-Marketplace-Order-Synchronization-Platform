@@ -14,22 +14,36 @@ _CATEGORIES_RESPONSE = {
     ]
 }
 
+_CFG = DidarConfig(
+    base_url="https://app.didar.me/api",
+    api_key="test-key",
+    default_product_category_id="cat-default",
+)
 
-@respx.mock
-def test_upsert_product_sends_code_and_title():
-    respx.post("https://app.didar.me/api/product/categories").mock(
+
+def _mock_categories():
+    return respx.post("https://app.didar.me/api/product/categories").mock(
         return_value=httpx.Response(200, json=_CATEGORIES_RESPONSE)
     )
+
+
+def _mock_search_no_match():
+    """Every product/search call in these tests returns no exact-Code
+    match unless overridden - forces the create (/product/save) path."""
+    return respx.post("https://app.didar.me/api/product/search").mock(
+        return_value=httpx.Response(200, json={"Response": []})
+    )
+
+
+@respx.mock
+def test_upsert_product_creates_when_search_finds_nothing():
+    _mock_categories()
+    _mock_search_no_match()
     route = respx.post("https://app.didar.me/api/product/save").mock(
         return_value=httpx.Response(200, json={"Response": {"Product": {"Id": "p-1"}}})
     )
 
-    cfg = DidarConfig(
-        base_url="https://app.didar.me/api",
-        api_key="test-key",
-        default_product_category_id="cat-default",
-    )
-    client = DidarProductClient(config=cfg)
+    client = DidarProductClient(config=_CFG)
     product_id = client.upsert_product(code="SKU-A", title="گلدان خاتم ۳")
 
     assert product_id == "p-1"
@@ -41,40 +55,110 @@ def test_upsert_product_sends_code_and_title():
 
 
 @respx.mock
-def test_upsert_product_raises_clear_error_on_unrecognized_shape():
-    respx.post("https://app.didar.me/api/product/categories").mock(
-        return_value=httpx.Response(200, json=_CATEGORIES_RESPONSE)
+def test_upsert_product_uses_existing_id_from_search_without_calling_save():
+    _mock_categories()
+    respx.post("https://app.didar.me/api/product/search").mock(
+        return_value=httpx.Response(
+            200,
+            json={"Response": [{"Id": "existing-p-1", "Code": "SKU-A", "Title": "گلدان خاتم ۳"}]},
+        )
     )
+    save_route = respx.post("https://app.didar.me/api/product/save").mock(
+        return_value=httpx.Response(200, json={"Response": {"Product": {"Id": "should-not-be-used"}}})
+    )
+
+    client = DidarProductClient(config=_CFG)
+    product_id = client.upsert_product(code="SKU-A", title="گلدان خاتم ۳")
+
+    assert product_id == "existing-p-1"
+    assert not save_route.called  # search-first must skip create entirely
+
+
+@respx.mock
+def test_search_ignores_non_exact_code_matches():
+    """Keywords is a full-text search, not an exact filter - a result
+    whose Code only partially matches must not be used."""
+    _mock_categories()
+    respx.post("https://app.didar.me/api/product/search").mock(
+        return_value=httpx.Response(
+            200,
+            json={"Response": [{"Id": "wrong-product", "Code": "SKU-A-VARIANT", "Title": "چیز دیگر"}]},
+        )
+    )
+    route = respx.post("https://app.didar.me/api/product/save").mock(
+        return_value=httpx.Response(200, json={"Response": {"Product": {"Id": "p-created"}}})
+    )
+
+    client = DidarProductClient(config=_CFG)
+    product_id = client.upsert_product(code="SKU-A", title="یک محصول کاملا نامرتبط")
+
+    assert product_id == "p-created"
+    assert route.called
+
+
+@respx.mock
+def test_upsert_product_recovers_via_search_on_duplicate_code_race():
+    """If save fails with "duplicate product code" (another writer
+    created it between our search and this save call), recover by
+    searching again instead of failing the whole order."""
+    _mock_categories()
+    search_route = respx.post("https://app.didar.me/api/product/search").mock(
+        side_effect=[
+            httpx.Response(200, json={"Response": []}),  # first search: nothing yet
+            httpx.Response(  # recovery search: now it exists
+                200, json={"Response": [{"Id": "recovered-id", "Code": "SKU-RACE"}]}
+            ),
+        ]
+    )
+    respx.post("https://app.didar.me/api/product/save").mock(
+        return_value=httpx.Response(400, json={"Error": "duplicate product code."})
+    )
+
+    client = DidarProductClient(config=_CFG)
+    product_id = client.upsert_product(code="SKU-RACE", title="یک محصول کاملا نامرتبط")
+
+    assert product_id == "recovered-id"
+    assert search_route.call_count == 2
+
+
+@respx.mock
+def test_upsert_product_reraises_other_save_errors():
+    """A save failure that ISN'T "duplicate product code" (e.g. the
+    still-unexplained "Product Not Exist") must not be swallowed."""
+    _mock_categories()
+    _mock_search_no_match()
+    respx.post("https://app.didar.me/api/product/save").mock(
+        return_value=httpx.Response(400, json={"Error": "Product Not Exist"})
+    )
+
+    client = DidarProductClient(config=_CFG)
+    with pytest.raises(httpx.HTTPStatusError):
+        client.upsert_product(code="SKU-B", title="یک محصول کاملا نامرتبط")
+
+
+@respx.mock
+def test_upsert_product_raises_clear_error_on_unrecognized_shape():
+    _mock_categories()
+    _mock_search_no_match()
     respx.post("https://app.didar.me/api/product/save").mock(
         return_value=httpx.Response(200, json={"SomethingElse": True})
     )
-    cfg = DidarConfig(
-        base_url="https://app.didar.me/api",
-        api_key="test-key",
-        default_product_category_id="cat-default",
-    )
-    client = DidarProductClient(config=cfg)
+    client = DidarProductClient(config=_CFG)
     with pytest.raises(DidarApiError):
         client.upsert_product(code="x", title="محصول بدون کلیدواژه مرتبط")
 
 
 @respx.mock
 def test_upsert_product_exact_category_match_wins_over_keyword():
-    respx.post("https://app.didar.me/api/product/categories").mock(
-        return_value=httpx.Response(200, json=_CATEGORIES_RESPONSE)
-    )
+    _mock_categories()
+    _mock_search_no_match()
     route = respx.post("https://app.didar.me/api/product/save").mock(
         return_value=httpx.Response(200, json={"Response": {"Product": {"Id": "p-2"}}})
     )
-    cfg = DidarConfig(
-        base_url="https://app.didar.me/api",
-        api_key="test-key",
-        default_product_category_id="cat-default",
-    )
-    client = DidarProductClient(config=cfg)
+    client = DidarProductClient(config=_CFG)
     # title would keyword-match "خاتم", but an exact marketplace category
     # name ("مینا") is provided and must win.
-    client.upsert_product(code="SKU-B", title="جعبه خاتم", category="مینا")
+    client.upsert_product(code="SKU-C", title="جعبه خاتم", category="مینا")
 
     body = route.calls[0].request.content
     assert b'"ProductCategoryId":"cat-mina"' in body
@@ -82,19 +166,13 @@ def test_upsert_product_exact_category_match_wins_over_keyword():
 
 @respx.mock
 def test_upsert_product_falls_back_to_default_when_nothing_matches():
-    respx.post("https://app.didar.me/api/product/categories").mock(
-        return_value=httpx.Response(200, json=_CATEGORIES_RESPONSE)
-    )
+    _mock_categories()
+    _mock_search_no_match()
     route = respx.post("https://app.didar.me/api/product/save").mock(
         return_value=httpx.Response(200, json={"Response": {"Product": {"Id": "p-3"}}})
     )
-    cfg = DidarConfig(
-        base_url="https://app.didar.me/api",
-        api_key="test-key",
-        default_product_category_id="cat-default",
-    )
-    client = DidarProductClient(config=cfg)
-    client.upsert_product(code="SKU-C", title="یک محصول کاملا نامرتبط")
+    client = DidarProductClient(config=_CFG)
+    client.upsert_product(code="SKU-D", title="یک محصول کاملا نامرتبط")
 
     body = route.calls[0].request.content
     assert b'"ProductCategoryId":"cat-default"' in body

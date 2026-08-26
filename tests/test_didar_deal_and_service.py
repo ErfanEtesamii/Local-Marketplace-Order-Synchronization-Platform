@@ -15,7 +15,36 @@ _CFG = DidarConfig(
     base_url="https://app.didar.me/api", api_key="test-key",
     pipeline_id="p1", pipeline_stage_id="stage-1",
     label_tapsishop="label-tapsishop-guid",
+    default_product_category_id="cat-default",
 )
+
+# Shared category list for tests that don't care about category resolution
+# specifics - just needs /product/categories mocked so
+# DidarProductClient._category_by_title_map() doesn't hit a real endpoint.
+# None of these titles are expected to keyword-match "Product A" (the
+# _ORDER fixture's item title), so those tests fall through to
+# default_product_category_id="cat-default" as before this feature existed.
+_CATEGORIES_RESPONSE = {
+    "Response": [{"Id": "cat-default", "Title": "متفرقه"}]
+}
+
+
+def _mock_categories():
+    return respx.post("https://app.didar.me/api/product/categories").mock(
+        return_value=httpx.Response(200, json=_CATEGORIES_RESPONSE)
+    )
+
+
+def _mock_product_search_no_match():
+    """upsert_product() now searches (POST /product/search) before
+    ever calling /product/save - see product_client.py's module
+    docstring. None of these tests care about that lookup finding
+    anything, so it's always mocked to return no results, forcing the
+    create path these tests were already written to expect."""
+    return respx.post("https://app.didar.me/api/product/search").mock(
+        return_value=httpx.Response(200, json={"Response": []})
+    )
+
 
 _ORDER = NormalizedOrder(
     source="tapsishop",
@@ -38,6 +67,8 @@ def test_create_deal_title_uses_didar_default_convention():
     which the client asked to be replaced with Didar's own default
     convention: "معامله {display_name}".
     """
+    _mock_categories()
+    _mock_product_search_no_match()
     respx.post("https://app.didar.me/api/product/save").mock(
         return_value=httpx.Response(200, json={"Response": {"Product": {"Id": "p-1"}}})
     )
@@ -55,6 +86,8 @@ def test_create_deal_title_uses_didar_default_convention():
 
 @respx.mock
 def test_create_deal_sends_person_id_pipeline_stage_and_label():
+    _mock_categories()
+    _mock_product_search_no_match()
     respx.post("https://app.didar.me/api/product/save").mock(
         return_value=httpx.Response(200, json={"Response": {"Product": {"Id": "p-1"}}})
     )
@@ -73,6 +106,8 @@ def test_create_deal_sends_person_id_pipeline_stage_and_label():
 
 @respx.mock
 def test_create_deal_omits_label_when_source_not_mapped():
+    _mock_categories()
+    _mock_product_search_no_match()
     unmapped_order = NormalizedOrder(**{**_ORDER.__dict__, "source": "unmapped_source"})
     respx.post("https://app.didar.me/api/product/save").mock(
         return_value=httpx.Response(200, json={"Response": {"Product": {"Id": "p-1"}}})
@@ -90,6 +125,8 @@ def test_create_deal_omits_label_when_source_not_mapped():
 
 @respx.mock
 def test_description_includes_source_label_and_panel_link_for_marketplaces():
+    _mock_categories()
+    _mock_product_search_no_match()
     respx.post("https://app.didar.me/api/product/save").mock(
         return_value=httpx.Response(200, json={"Response": {"Product": {"Id": "p-1"}}})
     )
@@ -113,6 +150,8 @@ def test_description_includes_direct_order_link_for_farazhonar():
     link (standard WooCommerce wp-admin URL), unlike the four
     marketplaces which only get a link to the vendor panel's home page.
     """
+    _mock_categories()
+    _mock_product_search_no_match()
     faraz_order = NormalizedOrder(**{**_ORDER.__dict__, "source": "farazhonar", "source_order_id": "555"})
     respx.post("https://app.didar.me/api/product/save").mock(
         return_value=httpx.Response(200, json={"Response": {"Product": {"Id": "p-1"}}})
@@ -135,6 +174,8 @@ def test_create_deal_builds_structured_deal_items_not_description_text():
     items must be structured DealItems with a real ProductId, not text
     dumped into Description.
     """
+    _mock_categories()
+    _mock_product_search_no_match()
     product_route = respx.post("https://app.didar.me/api/product/save").mock(
         return_value=httpx.Response(200, json={"Response": {"Product": {"Id": "p-999"}}})
     )
@@ -164,6 +205,8 @@ def test_customer_code_prefers_mobile_then_falls_back_to_synthetic():
 
 @respx.mock
 def test_sync_service_calls_contact_then_deal_in_order():
+    _mock_categories()
+    _mock_product_search_no_match()
     contact_route = respx.post("https://app.didar.me/api/contact/save").mock(
         return_value=httpx.Response(
             200, json={"Response": {"Contact": {"Id": "c-42", "DisplayName": "مشتری تست"}}}
