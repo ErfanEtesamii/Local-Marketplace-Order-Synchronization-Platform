@@ -82,10 +82,27 @@ def _order_link(order: NormalizedOrder) -> str:
     return _PANEL_URLS.get(order.source, "")
 
 
+def _order_reference(order: NormalizedOrder) -> str:
+    """
+    Stable, globally-unique string identifying one order, independent of
+    order_number (which is only "human-readable", per NormalizedOrder's
+    docstring, and isn't guaranteed unique on its own the way
+    source+source_order_id is). This exact string is what
+    find_existing_deal_id() searches for and matches against - see that
+    method's docstring for why an exact anchor is needed instead of a
+    raw keyword hit.
+    """
+    return f"{order.source}:{order.source_order_id}"
+
+
 def _build_description(order: NormalizedOrder) -> str:
     source_label = _SOURCE_DISPLAY_NAMES.get(order.source, order.source)
     link = _order_link(order)
-    lines = [f"فروشگاه: {source_label}", f"شماره سفارش: {order.order_number}"]
+    lines = [
+        f"فروشگاه: {source_label}",
+        f"شماره سفارش: {order.order_number}",
+        f"شناسه یکتای هماهنگ‌سازی: {_order_reference(order)}",
+    ]
     if link:
         lines.append(f"مشاهده سفارش: {link}")
     return "\n".join(lines)
@@ -106,6 +123,76 @@ class DidarDealClient:
         resp = self._client.post(path, params={"apikey": self._config.api_key}, json=json)
         raise_for_status_with_body(resp)
         return resp.json()
+
+    def find_existing_deal_id(self, order: NormalizedOrder) -> str | None:
+        """
+        Duplicate-prevention safety net that checks Didar itself, not just
+        our own local sqlite state.
+
+        WHY THIS IS NEEDED ON TOP OF Repository.is_already_synced():
+        that local check only catches a duplicate if mark_synced() ran
+        for the earlier attempt. It doesn't run in at least two real
+        scenarios:
+          1. /deal/save succeeds on Didar's side, but the response never
+             reaches us (timeout, connection drop) - http_utils'
+             default_retry then automatically retries the SAME POST
+             (TransportError is retryable), which creates a SECOND real
+             Deal for the same order. sync_one_order() never reaches
+             mark_synced() for the first attempt because it never saw a
+             response, so nothing local ever recorded it.
+          2. record_failure() is written after such a lost-response
+             timeout; retry_pending_failures() later calls create_deal()
+             again on a source_order_id that was, in fact, already
+             synced.
+        Both are exactly the "duplicate order already added to Didar"
+        symptom - the local DB has no way to know, only Didar does.
+
+        ENDPOINT: uses the documented global search endpoint
+        POST /search/search (Keyword + Types) - there is no dedicated
+        "/deal/search" in the official docs, only "/Case/search", and a
+        "Case" is a distinct entity in Didar (a kanban card / activity,
+        linked to a Deal via a DealId field - see the docs' "نمونه
+        پارامترهای زمان ویرایش" example) - not the Deal itself, so it
+        cannot be used for this.
+
+        MATCHING: deliberately an exact-line check of the unique
+        `_order_reference()` string against each result's Description -
+        matching the exact line _build_description() writes it as, NOT
+        a raw substring containment check. /search/search does fuzzy
+        full-text matching (same as /product/search's Keywords), so a
+        raw hit could easily be a different order that merely shares
+        digits with this one (e.g. reference "tapsishop:999" is a plain
+        substring of "tapsishop:9999" - a real different order - so
+        `in` alone is NOT safe here). A false match means silently
+        skipping an order that was never actually synced, which is
+        worse than the duplicate this is meant to prevent, so "not
+        found" is the safe default whenever we can't be sure.
+
+        NOT YET CONFIRMED: the docs' one example of this endpoint shows
+        only Keyword+Types in the request body, no From/Limit pagination
+        params (unlike /product/search, which documents both) - so none
+        are sent here. If Didar caps or paginates /search/search results
+        under the hood, an existing deal could theoretically fall
+        outside what's returned; revisit if that's ever confirmed live.
+        """
+        reference = _order_reference(order)
+        reference_line = f"شناسه یکتای هماهنگ‌سازی: {reference}"
+        payload = self._post("/search/search", json={"Keyword": reference, "Types": ["deal"]})
+        results = payload.get("Response", {}).get("List", [])
+        for item in results:
+            if not isinstance(item, dict) or item.get("_tp") != "deal":
+                continue
+            description_lines = (item.get("Description") or "").splitlines()
+            if reference_line in description_lines:
+                deal_id = item.get("Id")
+                if deal_id:
+                    log.info(
+                        "didar: found existing deal for %s order %s -> Id=%s "
+                        "(skipping create - already in Didar)",
+                        order.source, order.source_order_id, deal_id,
+                    )
+                    return str(deal_id)
+        return None
 
     def create_deal(self, contact_id: str, display_name: str, order: NormalizedOrder) -> str:
         deal_body = {

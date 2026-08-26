@@ -35,6 +35,18 @@ def _mock_categories():
     )
 
 
+def _mock_deal_search_no_match():
+    """sync_order() now calls DidarDealClient.find_existing_deal_id()
+    (POST /search/search) before ever touching Contact/Deal creation -
+    see service.py and deal_client.py. Tests that exercise the create
+    path (i.e. don't care about the dedupe check itself) mock this to
+    return no results, forcing the normal create flow they already
+    expect."""
+    return respx.post("https://app.didar.me/api/search/search").mock(
+        return_value=httpx.Response(200, json={"Response": {"Total": 0, "List": []}})
+    )
+
+
 def _mock_product_search_no_match():
     """upsert_product() now searches (POST /product/search) before
     ever calling /product/save - see product_client.py's module
@@ -197,6 +209,131 @@ def test_create_deal_builds_structured_deal_items_not_description_text():
     assert b'"UnitPrice":100000' in deal_body
 
 
+@respx.mock
+def test_description_includes_unique_order_reference_for_dedupe():
+    """The exact anchor string find_existing_deal_id() later searches
+    for must actually be written into Description, or the dedupe check
+    can never match anything."""
+    _mock_categories()
+    _mock_product_search_no_match()
+    respx.post("https://app.didar.me/api/product/save").mock(
+        return_value=httpx.Response(200, json={"Response": {"Product": {"Id": "p-1"}}})
+    )
+    route = respx.post("https://app.didar.me/api/deal/save").mock(
+        return_value=httpx.Response(200, json={"Response": {"Deal": {"Id": "d-1"}}})
+    )
+
+    client = DidarDealClient(config=_CFG)
+    client.create_deal(contact_id="c-1", display_name="Someone", order=_ORDER)
+
+    body = route.calls[0].request.content
+    assert b"tapsishop:999" in body
+
+
+@respx.mock
+def test_find_existing_deal_id_returns_none_when_search_has_no_match():
+    _mock_categories()
+    route = respx.post("https://app.didar.me/api/search/search").mock(
+        return_value=httpx.Response(200, json={"Response": {"Total": 0, "List": []}})
+    )
+
+    client = DidarDealClient(config=_CFG)
+    assert client.find_existing_deal_id(_ORDER) is None
+    assert b'"Keyword":"tapsishop:999"' in route.calls[0].request.content
+    assert b'"Types":["deal"]' in route.calls[0].request.content
+
+
+@respx.mock
+def test_find_existing_deal_id_matches_on_exact_reference_in_description():
+    _mock_categories()
+    respx.post("https://app.didar.me/api/search/search").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "Response": {
+                    "Total": 1,
+                    "List": [
+                        {
+                            "_tp": "deal",
+                            "Id": "d-existing",
+                            "Title": "معامله مشتری تپسی-999",
+                            "Description": "فروشگاه: تپسی‌شاپ\nشماره سفارش: ORD-999\n"
+                            "شناسه یکتای هماهنگ‌سازی: tapsishop:999",
+                        }
+                    ],
+                }
+            },
+        )
+    )
+
+    client = DidarDealClient(config=_CFG)
+    assert client.find_existing_deal_id(_ORDER) == "d-existing"
+
+
+@respx.mock
+def test_find_existing_deal_id_ignores_non_deal_results_and_partial_matches():
+    """Fuzzy keyword search can return unrelated hits (a contact whose
+    name happens to contain the search text, or a different order whose
+    reference merely overlaps) - only an exact reference match on an
+    actual `deal`-typed result counts."""
+    _mock_categories()
+    respx.post("https://app.didar.me/api/search/search").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "Response": {
+                    "Total": 2,
+                    "List": [
+                        {"_tp": "contact", "Id": "c-1", "Description": "tapsishop:999"},
+                        {"_tp": "deal", "Id": "d-1", "Description": "tapsishop:9999"},
+                    ],
+                }
+            },
+        )
+    )
+
+    client = DidarDealClient(config=_CFG)
+    assert client.find_existing_deal_id(_ORDER) is None
+
+
+@respx.mock
+def test_sync_service_skips_contact_and_deal_creation_when_already_in_didar():
+    """Core regression test: if Didar already has a Deal for this order
+    (created earlier, e.g. by a retry after a lost response), sync_order
+    must NOT create a second Contact or Deal - it returns the existing
+    Deal Id instead."""
+    _mock_categories()
+    respx.post("https://app.didar.me/api/search/search").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "Response": {
+                    "Total": 1,
+                    "List": [
+                        {
+                            "_tp": "deal",
+                            "Id": "d-already-there",
+                            "Description": "شناسه یکتای هماهنگ‌سازی: tapsishop:999",
+                        }
+                    ],
+                }
+            },
+        )
+    )
+    contact_route = respx.post("https://app.didar.me/api/contact/save")
+    deal_route = respx.post("https://app.didar.me/api/deal/save")
+
+    service = DidarSyncService(
+        contact_client=DidarContactClient(config=_CFG),
+        deal_client=DidarDealClient(config=_CFG, product_client=DidarProductClient(config=_CFG)),
+    )
+    deal_id = service.sync_order(_ORDER)
+
+    assert deal_id == "d-already-there"
+    assert not contact_route.called
+    assert not deal_route.called
+
+
 def test_customer_code_prefers_mobile_then_falls_back_to_synthetic():
     with_mobile = NormalizedOrder(**{**_ORDER.__dict__, "customer_mobile": "0912"})
     assert _customer_code_for(with_mobile) == "0912"
@@ -206,6 +343,7 @@ def test_customer_code_prefers_mobile_then_falls_back_to_synthetic():
 @respx.mock
 def test_sync_service_calls_contact_then_deal_in_order():
     _mock_categories()
+    _mock_deal_search_no_match()
     _mock_product_search_no_match()
     contact_route = respx.post("https://app.didar.me/api/contact/save").mock(
         return_value=httpx.Response(

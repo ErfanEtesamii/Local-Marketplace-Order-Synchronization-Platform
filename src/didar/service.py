@@ -26,9 +26,21 @@ class DidarSyncService:
     def sync_order(self, order: NormalizedOrder) -> str:
         """
         Upsert the Contact for this order, then create a Deal linked to
-        it. Returns the new Deal's Id (what the Repository stores for
+        it. Returns the Deal's Id (what the Repository stores for
         duplicate-prevention bookkeeping).
+
+        Checks Didar itself for an already-existing Deal for this order
+        BEFORE touching Contact/Deal creation at all - see
+        DidarDealClient.find_existing_deal_id()'s docstring for exactly
+        why the local Repository dedupe check alone isn't sufficient.
+        When a match is found, neither Contact upsert nor Deal creation
+        happens - we just hand back the existing Id so the caller
+        (SyncEngine) records it as synced same as a normal create.
         """
+        existing_deal_id = self._deals.find_existing_deal_id(order)
+        if existing_deal_id:
+            return existing_deal_id
+
         customer_code = _customer_code_for(order)
         contact = self._contacts.upsert_contact(
             customer_code=customer_code,
