@@ -36,6 +36,29 @@ def _mock_search_no_match():
 
 
 @respx.mock
+def test_upsert_product_includes_confirmed_required_fields():
+    """
+    Regression test for the real "Product Not Exist" incident: the
+    create call was missing TitleForInvoice and Unit, which Didar's own
+    docs confirm are required (not the ProductCategoryId that was
+    originally suspected - that was already being sent correctly).
+    """
+    _mock_categories()
+    _mock_search_no_match()
+    route = respx.post("https://app.didar.me/api/product/save").mock(
+        return_value=httpx.Response(200, json={"Response": {"Product": {"Id": "p-1"}}})
+    )
+
+    client = DidarProductClient(config=_CFG)
+    client.upsert_product(code="SKU-A", title="گلدان خاتم ۳", unit_price=15000)
+
+    body = route.calls[0].request.content
+    assert "\"TitleForInvoice\":\"گلدان خاتم ۳\"".encode() in body
+    assert b'"Unit":"\xd8\xb9\xd8\xaf\xd8\xaf"' in body or "\"Unit\":\"عدد\"".encode() in body
+    assert b'"UnitPrice":15000' in body
+
+
+@respx.mock
 def test_upsert_product_creates_when_search_finds_nothing():
     _mock_categories()
     _mock_search_no_match()
@@ -123,8 +146,9 @@ def test_upsert_product_recovers_via_search_on_duplicate_code_race():
 
 @respx.mock
 def test_upsert_product_reraises_other_save_errors():
-    """A save failure that ISN'T "duplicate product code" (e.g. the
-    still-unexplained "Product Not Exist") must not be swallowed."""
+    """A save failure that ISN'T "duplicate product code" must not be
+    swallowed - it needs to surface so the order lands in retry/failure
+    tracking rather than silently vanishing."""
     _mock_categories()
     _mock_search_no_match()
     respx.post("https://app.didar.me/api/product/save").mock(

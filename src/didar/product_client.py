@@ -11,39 +11,39 @@ no exact match exists, using the marketplace's own product title verbatim.
 
 ENDPOINT CORRECTION (2026-08, after reading Didar's actual API docs -
 the earlier module comment guessed wrong): the official docs
-("مستندات API دیدار") document exactly three Product endpoints:
+("مستندات API دیدار") document exactly three Product endpoints under
+the "محصولات" section header text search picks up:
 
     POST /product/search      - Criteria.Keywords (required) + From/Limit
     POST /product/categories  - list valid ProductCategoryIds
     POST /product/GetProductsList - list ALL products, no filter params
 
-There is NO documented /product/save (create/edit) endpoint. The
-original code's use of POST /product/save was a guess by analogy with
-/contact/save and /deal/save (flagged as unconfirmed in an earlier
-version of this docstring) - it does respond rather than 404, but live
-testing shows its behavior is inconsistent: the same call can return
-400 "duplicate product code." (for a Code that already exists) or 400
-"Product Not Exist" (cause unconfirmed - possibly an undocumented
-update-path validation). Since it's undocumented, its real contract
-can't be relied on.
+/product/save IS ALSO documented (found later, under "پارامترهای
+خروجی ایجاد/ویرایش محصول" - easy to miss since the docx's text
+extraction doesn't surface the request-body code block the same way
+as the other endpoints' plain-text JSON examples; confirmed instead
+from screenshots of the rendered docs page). The earlier "Product Not
+Exist" 400 was NOT evidence the endpoint doesn't support creation -
+it was caused by missing required fields. The documented example
+request/response confirms a Product needs at minimum:
+
+    Code, Title, TitleForInvoice, Unit, UnitPrice, ProductCategoryId
+
+`upsert_product()` was previously only sending Code/Title/
+ProductCategoryId - TitleForInvoice and Unit are now always included
+(see below). `DidarId` (an integer) only ever appears in *responses* -
+it's Didar's own internal sequential id, auto-assigned, never sent on
+create.
 
 FIX: search-first. upsert_product() now calls the documented
 POST /product/search for the item's Code before ever calling
 /product/save, and uses the existing product's Id directly when a
-result's Code matches exactly (see _find_by_code) - this is what
-eliminates "duplicate product code" almost entirely, since save is
-then only ever attempted for genuinely new codes. /product/save is
-still the only candidate for actually CREATING a new product (the
-docs don't expose a documented create endpoint at all) - kept as a
-best-effort fallback, with one automatic retry-via-search if it comes
-back with "duplicate product code" (a create/search race: another
-process/run created the same Code in between). If save fails with
-anything else (including "Product Not Exist"), that's surfaced as
-before - a genuine open question about Didar's undocumented create
-contract, not something to paper over silently. Worth raising with
-Didar's own support if it keeps recurring after this fix, since the
-docs don't describe a supported way to create a product via API at
-all.
+result's Code matches exactly (see _find_by_code) - this avoids
+"duplicate product code" almost entirely, since save is then only ever
+attempted for genuinely new codes. If save still fails with "duplicate
+product code" (a create/search race: another process/run created the
+same Code in between), one automatic retry-via-search recovers the
+existing Id rather than failing the whole order for a timing issue.
 
 Code = the marketplace SKU when available, otherwise a fallback derived
 from the item title, so at least same-titled items from the same run
@@ -214,7 +214,13 @@ class DidarProductClient:
             )
         return self._config.default_product_category_id
 
-    def upsert_product(self, code: str, title: str, category: str | None = None) -> str:
+    def upsert_product(
+        self,
+        code: str,
+        title: str,
+        category: str | None = None,
+        unit_price: object = 0,
+    ) -> str:
         # Search first (documented endpoint) - if the product already
         # exists, use its Id directly and never touch the undocumented
         # /product/save at all. This is what eliminates "duplicate
@@ -232,6 +238,18 @@ class DidarProductClient:
             "Product": {
                 "Code": code,
                 "Title": title,
+                # Confirmed required via the client's screenshots of
+                # Didar's own docs for /product/save ("پارامترهای
+                # خروجی ایجاد/ویرایش محصول"): TitleForInvoice and Unit
+                # are populated on every real product, and omitting
+                # them was the actual cause of the earlier
+                # "Product Not Exist" 400 - not a missing/invalid
+                # ProductCategoryId as first suspected. "عدد" (piece)
+                # is a safe generic Unit label - none of our sources
+                # expose a real unit of measure.
+                "TitleForInvoice": title,
+                "Unit": "عدد",
+                "UnitPrice": int(unit_price or 0),
                 "ProductCategoryId": category_id,
             }
         }
