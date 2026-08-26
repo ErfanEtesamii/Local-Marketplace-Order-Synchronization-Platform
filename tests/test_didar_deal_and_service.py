@@ -5,6 +5,7 @@ import respx
 import httpx
 
 from src.config import DidarConfig
+from src.didar.activity_client import DidarActivityClient
 from src.didar.contact_client import DidarContactClient
 from src.didar.deal_client import DidarDealClient
 from src.didar.product_client import DidarProductClient
@@ -16,6 +17,12 @@ _CFG = DidarConfig(
     pipeline_id="p1", pipeline_stage_id="stage-1",
     label_tapsishop="label-tapsishop-guid",
     default_product_category_id="cat-default",
+    # Explicitly blank (not left to field default_factory / real .env) so
+    # these tests are hermetic: the post-sale checklist should be a no-op
+    # unless a test deliberately configures real activity type Ids - see
+    # test_sync_service_creates_post_sale_checklist_after_a_new_deal.
+    activity_type_new_call_id="", activity_type_sms1_id="", activity_type_sms2_id="",
+    activity_type_sms3_id="", activity_type_ship_id="", activity_type_satisfaction_call_id="",
 )
 
 # Shared category list for tests that don't care about category resolution
@@ -210,6 +217,91 @@ def test_create_deal_builds_structured_deal_items_not_description_text():
 
 
 @respx.mock
+def test_deal_item_description_includes_order_number():
+    """Regression test (client feedback, 2026-08): manually-entered deals
+    have the order number typed into each item's توضیحات; auto-created
+    deals previously left it blank entirely."""
+    _mock_categories()
+    _mock_product_search_no_match()
+    respx.post("https://app.didar.me/api/product/save").mock(
+        return_value=httpx.Response(200, json={"Response": {"Product": {"Id": "p-1"}}})
+    )
+    route = respx.post("https://app.didar.me/api/deal/save").mock(
+        return_value=httpx.Response(200, json={"Response": {"Deal": {"Id": "d-1"}}})
+    )
+
+    client = DidarDealClient(config=_CFG)
+    client.create_deal(contact_id="c-1", display_name="Someone", order=_ORDER)
+
+    deal_body = route.calls[0].request.content
+    assert "شماره سفارش: ORD-999".encode() in deal_body
+
+
+@respx.mock
+def test_deal_item_discount_reflects_gap_between_unit_and_final_price():
+    """Regression test (client feedback, 2026-08): Discount was
+    previously hardcoded to 0 for every item regardless of the source
+    data, silently losing real per-item discounts (Digikala, Tapsi
+    Shop, Faraz Honar and SnappShop all distinguish an original
+    unit_price from a possibly-discounted final_price)."""
+    _mock_categories()
+    _mock_product_search_no_match()
+    respx.post("https://app.didar.me/api/product/save").mock(
+        return_value=httpx.Response(200, json={"Response": {"Product": {"Id": "p-1"}}})
+    )
+    route = respx.post("https://app.didar.me/api/deal/save").mock(
+        return_value=httpx.Response(200, json={"Response": {"Deal": {"Id": "d-1"}}})
+    )
+    discounted_order = NormalizedOrder(**{
+        **_ORDER.__dict__,
+        "items": [
+            OrderItem(
+                sku="SKU-1", title="Product A", quantity=2,
+                unit_price=Decimal("100000"),
+                final_price=Decimal("180000"),  # 90000/unit actually charged -> 10000/unit discount
+            )
+        ],
+    })
+
+    client = DidarDealClient(config=_CFG)
+    client.create_deal(contact_id="c-1", display_name="Someone", order=discounted_order)
+
+    deal_body = route.calls[0].request.content
+    assert b'"Discount":10000' in deal_body
+
+
+@respx.mock
+def test_deal_item_discount_never_goes_negative_when_final_price_is_higher():
+    """A final_price higher than unit_price*quantity (e.g. tax/fees
+    added on top by the source, not a discount) must clamp to 0, not go
+    negative."""
+    _mock_categories()
+    _mock_product_search_no_match()
+    respx.post("https://app.didar.me/api/product/save").mock(
+        return_value=httpx.Response(200, json={"Response": {"Product": {"Id": "p-1"}}})
+    )
+    route = respx.post("https://app.didar.me/api/deal/save").mock(
+        return_value=httpx.Response(200, json={"Response": {"Deal": {"Id": "d-1"}}})
+    )
+    marked_up_order = NormalizedOrder(**{
+        **_ORDER.__dict__,
+        "items": [
+            OrderItem(
+                sku="SKU-1", title="Product A", quantity=1,
+                unit_price=Decimal("50200000"),
+                final_price=Decimal("55220000"),  # +10%, e.g. tax - not a discount
+            )
+        ],
+    })
+
+    client = DidarDealClient(config=_CFG)
+    client.create_deal(contact_id="c-1", display_name="Someone", order=marked_up_order)
+
+    deal_body = route.calls[0].request.content
+    assert b'"Discount":0' in deal_body
+
+
+@respx.mock
 def test_description_includes_unique_order_reference_for_dedupe():
     """The exact anchor string find_existing_deal_id() later searches
     for must actually be written into Description, or the dedupe check
@@ -370,3 +462,88 @@ def test_sync_service_calls_contact_then_deal_in_order():
     deal_body = deal_route.calls[0].request.content
     assert b"c-42" in deal_body
     assert "مشتری تست".encode() in deal_body
+
+
+@respx.mock
+def test_sync_service_creates_post_sale_checklist_after_a_new_deal():
+    """Core regression test for the checklist feature (client feedback,
+    2026-08): a successful new-deal sync must attach the standard
+    post-sale checklist Activities to that deal - see
+    DidarActivityClient.POST_SALE_CHECKLIST."""
+    _mock_categories()
+    _mock_deal_search_no_match()
+    _mock_product_search_no_match()
+    respx.post("https://app.didar.me/api/contact/save").mock(
+        return_value=httpx.Response(
+            200, json={"Response": {"Contact": {"Id": "c-42", "DisplayName": "مشتری تست"}}}
+        )
+    )
+    respx.post("https://app.didar.me/api/product/save").mock(
+        return_value=httpx.Response(200, json={"Response": {"Product": {"Id": "p-1"}}})
+    )
+    respx.post("https://app.didar.me/api/deal/save").mock(
+        return_value=httpx.Response(200, json={"Response": {"Deal": {"Id": "d-42"}}})
+    )
+    activity_route = respx.post("https://app.didar.me/api/activity/save").mock(
+        return_value=httpx.Response(200, json={"Response": {"Id": "a-x"}})
+    )
+
+    activity_cfg = DidarConfig(
+        base_url="https://app.didar.me/api", api_key="test-key",
+        activity_type_new_call_id="type-new-call",
+        activity_type_sms1_id="type-sms1", activity_type_sms2_id="type-sms2",
+        activity_type_sms3_id="type-sms3", activity_type_ship_id="type-ship",
+        activity_type_satisfaction_call_id="type-satisfaction-call",
+    )
+    service = DidarSyncService(
+        contact_client=DidarContactClient(config=_CFG),
+        deal_client=DidarDealClient(config=_CFG, product_client=DidarProductClient(config=_CFG)),
+        activity_client=DidarActivityClient(config=activity_cfg),
+    )
+    service.sync_order(_ORDER)
+
+    assert activity_route.call_count == 6
+    first_call_body = activity_route.calls[0].request.content
+    assert b'"DealId":"d-42"' in first_call_body
+
+
+@respx.mock
+def test_sync_service_does_not_recreate_checklist_when_deal_already_exists():
+    """Companion to the dedupe test above - finding an already-existing
+    Deal must skip the checklist too, not just Contact/Deal creation,
+    or a retry would duplicate all 6 activities every time."""
+    _mock_categories()
+    respx.post("https://app.didar.me/api/search/search").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "Response": {
+                    "Total": 1,
+                    "List": [
+                        {
+                            "_tp": "deal",
+                            "Id": "d-already-there",
+                            "Description": "شناسه یکتای هماهنگ‌سازی: tapsishop:999",
+                        }
+                    ],
+                }
+            },
+        )
+    )
+    activity_route = respx.post("https://app.didar.me/api/activity/save")
+
+    activity_cfg = DidarConfig(
+        base_url="https://app.didar.me/api", api_key="test-key",
+        activity_type_new_call_id="type-new-call",
+        activity_type_sms1_id="type-sms1", activity_type_sms2_id="type-sms2",
+        activity_type_sms3_id="type-sms3", activity_type_ship_id="type-ship",
+        activity_type_satisfaction_call_id="type-satisfaction-call",
+    )
+    service = DidarSyncService(
+        contact_client=DidarContactClient(config=_CFG),
+        deal_client=DidarDealClient(config=_CFG, product_client=DidarProductClient(config=_CFG)),
+        activity_client=DidarActivityClient(config=activity_cfg),
+    )
+    service.sync_order(_ORDER)
+
+    assert not activity_route.called
