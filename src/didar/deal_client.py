@@ -41,6 +41,8 @@ NOT YET CONFIRMED (pending a live test of the DealItems rewrite):
 """
 from __future__ import annotations
 
+from decimal import Decimal
+
 import httpx
 
 from src.config import DidarConfig, settings
@@ -208,7 +210,7 @@ class DidarDealClient:
 
         body = {
             "Deal": deal_body,
-            "DealItems": [self._build_deal_item(item) for item in order.items],
+            "DealItems": [self._build_deal_item(item, order) for item in order.items],
         }
         payload = self._post("/deal/save", json=body)
         deal_id = _extract_deal_id(payload)
@@ -218,7 +220,7 @@ class DidarDealClient:
         )
         return deal_id
 
-    def _build_deal_item(self, item) -> dict:
+    def _build_deal_item(self, item, order: NormalizedOrder) -> dict:
         # SKU is the natural upsert key; falls back to the item title
         # for the (rare) case a source provides no SKU, so at least
         # same-titled items resolve to the same product within a run.
@@ -228,11 +230,47 @@ class DidarDealClient:
             category=item.category,
             unit_price=item.unit_price,
         )
+        # Per-unit discount, from the gap between the source's original
+        # per-unit price and what the line actually settled for.
+        #
+        # WHY THIS MATTERS (found comparing an auto-created deal against
+        # a manually-entered one, client feedback 2026-08): Discount was
+        # previously hardcoded to 0 for every item, unconditionally -
+        # losing real discount data whenever a source actually applies
+        # one. unit_price/final_price genuinely diverge for Digikala
+        # (unit_price vs total_price), Tapsi Shop (price vs finalPrice,
+        # both confirmed distinct fields per the vendor's own API docs),
+        # Faraz Honar/WooCommerce (price vs the line's "total", which WC
+        # itself defines as post-discount, distinct from "subtotal") and
+        # SnappShop (unit_price vs final_price). Only Basalam's
+        # final_price is a pure unit_price*quantity restatement with no
+        # separate discount concept in its API - this naturally computes
+        # to a 0 discount there, same as before.
+        #
+        # Didar's DealItems Discount is a per-unit CURRENCY AMOUNT, not
+        # a percentage - confirmed from the docs' own example
+        # (UnitPrice=80000, Discount=4800).
+        quantity = item.quantity or 1
+        per_unit_discount = item.unit_price - (item.final_price / quantity)
+        if per_unit_discount < 0:
+            # Never negative - a negative gap means final_price is
+            # HIGHER than unit_price*quantity (tax/fees added on top by
+            # the source, not a discount), which Discount must not
+            # represent.
+            per_unit_discount = Decimal("0")
+
         return {
             "ProductId": product_id,
             "Quantity": item.quantity,
             "UnitPrice": int(item.unit_price),
-            "Discount": 0,
+            "Discount": int(per_unit_discount),
+            # Order-traceability text, matching the convention seen on
+            # manually-entered deals (client feedback 2026-08) - those
+            # have "شماره سفارش: X/شماره مرسوله: Y" typed into each
+            # item's توضیحات; we only have the order number reliably
+            # across all 5 sources (no NormalizedOrder field carries a
+            # shipment/parcel number yet), so that's what's written here.
+            "Description": f"شماره سفارش: {order.order_number}",
         }
 
 

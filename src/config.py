@@ -84,6 +84,29 @@ class DidarConfig:
     label_basalam: str = field(default_factory=lambda: _get("DIDAR_LABEL_BASALAM"))
     label_snappshop: str = field(default_factory=lambda: _get("DIDAR_LABEL_SNAPPSHOP"))
     label_farazhonar: str = field(default_factory=lambda: _get("DIDAR_LABEL_FARAZHONAR"))
+    # Optional - Activity.OwnerId is always present in the docs' own
+    # /activity/save example, but NOT confirmed required (create_deal()
+    # already works fine without ever setting Deal's OwnerId - see
+    # deal_client.py). Left blank, OwnerId is simply omitted from the
+    # request, same as LabelId below when a source has none configured.
+    default_owner_id: str = field(default_factory=lambda: _get("DIDAR_DEFAULT_OWNER_ID"))
+    # Post-sale checklist Activity types (src/didar/activity_client.py) -
+    # confirmed live for this account via POST /activity/GetActivityType
+    # (2026-08): this account already has ONE dedicated ActivityType per
+    # checklist item (not just generic call/sms/task buckets), so each
+    # item gets its own exact Id rather than sharing one per category.
+    # Any left blank means the whole checklist is skipped (logged), not
+    # partially created - see .env.example.
+    activity_type_new_call_id: str = field(
+        default_factory=lambda: _get("DIDAR_ACTIVITY_TYPE_NEW_CALL_ID")
+    )
+    activity_type_sms1_id: str = field(default_factory=lambda: _get("DIDAR_ACTIVITY_TYPE_SMS1_ID"))
+    activity_type_sms2_id: str = field(default_factory=lambda: _get("DIDAR_ACTIVITY_TYPE_SMS2_ID"))
+    activity_type_sms3_id: str = field(default_factory=lambda: _get("DIDAR_ACTIVITY_TYPE_SMS3_ID"))
+    activity_type_ship_id: str = field(default_factory=lambda: _get("DIDAR_ACTIVITY_TYPE_SHIP_ID"))
+    activity_type_satisfaction_call_id: str = field(
+        default_factory=lambda: _get("DIDAR_ACTIVITY_TYPE_SATISFACTION_CALL_ID")
+    )
 
     @property
     def label_by_source(self) -> dict[str, str]:

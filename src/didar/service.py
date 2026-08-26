@@ -6,6 +6,9 @@ in isolation while still being trivial to use together.
 """
 from __future__ import annotations
 
+from datetime import datetime, timezone
+
+from src.didar.activity_client import DidarActivityClient
 from src.didar.contact_client import DidarContactClient
 from src.didar.deal_client import DidarDealClient
 from src.logger import get_logger
@@ -19,23 +22,29 @@ class DidarSyncService:
         self,
         contact_client: DidarContactClient | None = None,
         deal_client: DidarDealClient | None = None,
+        activity_client: DidarActivityClient | None = None,
     ) -> None:
         self._contacts = contact_client or DidarContactClient()
         self._deals = deal_client or DidarDealClient()
+        self._activities = activity_client or DidarActivityClient()
 
     def sync_order(self, order: NormalizedOrder) -> str:
         """
         Upsert the Contact for this order, then create a Deal linked to
-        it. Returns the Deal's Id (what the Repository stores for
-        duplicate-prevention bookkeeping).
+        it, then attach the standard post-sale checklist Activities
+        (see DidarActivityClient) to that new Deal. Returns the Deal's
+        Id (what the Repository stores for duplicate-prevention
+        bookkeeping).
 
         Checks Didar itself for an already-existing Deal for this order
         BEFORE touching Contact/Deal creation at all - see
         DidarDealClient.find_existing_deal_id()'s docstring for exactly
         why the local Repository dedupe check alone isn't sufficient.
-        When a match is found, neither Contact upsert nor Deal creation
-        happens - we just hand back the existing Id so the caller
-        (SyncEngine) records it as synced same as a normal create.
+        When a match is found, nothing else happens - no Contact
+        upsert, no Deal creation, and NO checklist re-creation (it was
+        already created the first time this Deal was made) - we just
+        hand back the existing Id so the caller (SyncEngine) records it
+        as synced same as a normal create.
         """
         existing_deal_id = self._deals.find_existing_deal_id(order)
         if existing_deal_id:
@@ -54,6 +63,14 @@ class DidarSyncService:
             "didar: synced %s order %s -> contact=%s deal=%s",
             order.source, order.source_order_id, contact.id, deal_id,
         )
+
+        # Fire-and-forget: a checklist failure must never fail the order
+        # sync itself - see DidarActivityClient.create_post_sale_checklist's
+        # docstring for how it isolates per-item failures.
+        self._activities.create_post_sale_checklist(
+            deal_id=deal_id, due_date=datetime.now(timezone.utc)
+        )
+
         return deal_id
 
 
