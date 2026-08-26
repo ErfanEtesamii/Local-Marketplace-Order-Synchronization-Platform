@@ -110,6 +110,74 @@ def test_pagination_continues_even_when_total_pages_is_wrong():
 
 
 @respx.mock
+def test_history_requests_use_descending_order():
+    """order=desc (not the original asc) - see the early-stop test below
+    for why."""
+    route = respx.get("https://seller.digikala.com/open-api/v1/orders/history").mock(
+        return_value=httpx.Response(200, json={"data": {"pager": {"total_pages": 1}, "items": []}})
+    )
+
+    adapter = DigikalaAdapter(config=_CFG)
+    adapter.fetch_new_orders(since=datetime(2026, 8, 1, tzinfo=timezone.utc))
+
+    assert route.calls[0].request.url.params["order"] == "desc"
+
+
+@respx.mock
+def test_early_stop_pagination_once_a_page_is_older_than_since():
+    """
+    Optimization discovered from a real production log (2026-08-27):
+    order_created_at_from/_to don't actually filter server-side - a real
+    poll returned orders back to 2024 despite `since` being "yesterday".
+    SyncEngine._drop_orders_older_than_since() is the real safety net
+    regardless (see its module docstring) - but without this, every poll
+    cycle would walk the account's ENTIRE order history page by page.
+    Fetching newest-first (order=desc) and stopping the moment a page's
+    OLDEST row already predates `since` avoids that, without ever having
+    to trust the marketplace's own (apparently non-functional) filter.
+    """
+    route = respx.get("https://seller.digikala.com/open-api/v1/orders/history")
+    route.mock(
+        side_effect=[
+            # Page 1: a FULL page, every row newer than `since` - must
+            # keep paginating.
+            httpx.Response(200, json={
+                "data": {
+                    "pager": {"page": 1, "total_pages": 3, "total_rows": 150},
+                    "items": [
+                        {**_row(f"new-{i}", i), "order_created_at": "2026-08-20T09:00:00+03:30"}
+                        for i in range(50)
+                    ],
+                },
+            }),
+            # Page 2: a FULL page whose LAST row (oldest on the page,
+            # since order=desc) already predates `since` - must stop
+            # right here and never request page 3.
+            httpx.Response(200, json={
+                "data": {
+                    "pager": {"page": 2, "total_pages": 3, "total_rows": 150},
+                    "items": [
+                        {**_row(f"mixed-{i}", i), "order_created_at": "2026-08-15T09:00:00+03:30"}
+                        for i in range(49)
+                    ] + [
+                        {**_row("too-old", 99), "order_created_at": "2025-01-01T09:00:00+03:30"}
+                    ],
+                },
+            }),
+        ]
+    )
+
+    adapter = DigikalaAdapter(config=_CFG)
+    orders = adapter.fetch_new_orders(since=datetime(2026, 8, 1, tzinfo=timezone.utc))
+
+    assert route.call_count == 2  # page 3 was never requested
+    # Every row from pages 1-2 is still returned here - filtering the
+    # too-old one out is SyncEngine's job (_drop_orders_older_than_since),
+    # not this adapter's; this test only covers the pagination stop.
+    assert len(orders) == 100
+
+
+@respx.mock
 def test_expired_access_token_triggers_refresh_and_retry(tmp_path):
     """
     Regression test for the real discovery: access_token expires in

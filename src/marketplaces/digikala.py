@@ -14,6 +14,22 @@ source and are not requested - customer_full_name / customer_mobile are
 always None here (see src/didar/contact_client.py for the synthetic
 CustomerCode strategy this implies).
 
+DATE FILTER DOESN'T ACTUALLY FILTER (confirmed live, production log
+2026-08-27): order_created_at_from/_to are sent on every request exactly
+as the docs describe, but the API returns the account's ENTIRE order
+history regardless - a real poll returned orders back to 2024 despite
+`since` being "yesterday". SyncEngine._drop_orders_older_than_since()
+already guards against this at the application level (see
+sync_engine.py's module docstring), so no old order actually reaches
+Didar - but without the optimization below, every single poll cycle
+would walk the account's ENTIRE order history page by page just to
+throw almost all of it away client-side, getting slower forever as the
+account accumulates more orders. Fetching newest-first (order=desc,
+changed from the original asc) plus an early pagination stop the
+moment a page's oldest row predates `since` fixes the wasted work
+without weakening the actual safety guarantee, which still lives in
+SyncEngine, not here.
+
 TOKEN LIFECYCLE (confirmed via a real /auth/token exchange):
   - access_token: short-lived, ~24 hours
   - refresh_token: long-lived, ~1 year - matches the ~360-day validity
@@ -180,7 +196,12 @@ class DigikalaAdapter(MarketplaceAdapter):
         size = 50
 
         while True:
-            params = {"page": page, "size": size, "sort": "id", "order": "asc"}
+            # order=desc (newest first) - changed from the original asc.
+            # See module docstring: order_created_at_from doesn't actually
+            # filter server-side, so with asc (oldest first) every poll
+            # cycle would walk the account's entire history from the very
+            # beginning. desc + the early-stop below fixes that.
+            params = {"page": page, "size": size, "sort": "id", "order": "desc"}
             if order_created_at_from:
                 params["order_created_at_from"] = _fmt(order_created_at_from)
             if order_created_at_to:
@@ -192,6 +213,22 @@ class DigikalaAdapter(MarketplaceAdapter):
             data = payload.get("data", {})
             items = data.get("items", [])
             rows.extend(items)
+
+            # Early stop (only meaningful in date-filtered mode, i.e. from
+            # fetch_new_orders - search_text_all's fetch_order_detail
+            # lookup passes no order_created_at_from and so never takes
+            # this branch, matching its existing "search everything"
+            # behavior unchanged). Rows arrive newest-first, so once a
+            # page's OLDEST row already predates what we asked for, every
+            # row on every subsequent page is guaranteed even older -
+            # this is purely a wasted-work optimization, not a
+            # correctness guarantee: SyncEngine._drop_orders_older_than_since()
+            # is still the actual safety net regardless of what happens
+            # here (see its module docstring).
+            if order_created_at_from is not None and items:
+                oldest_on_page = _parse_date(items[-1].get("order_created_at"))
+                if oldest_on_page < order_created_at_from:
+                    break
 
             pager = data.get("pager", {})
             total_pages = pager.get("total_pages", 0)
