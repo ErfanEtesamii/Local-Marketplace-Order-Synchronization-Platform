@@ -8,12 +8,23 @@ from src.marketplaces.base import MarketplaceAdapter, NormalizedOrder, OrderItem
 from src.sync_engine import SyncEngine
 
 
-def _order(source: str, order_id: str, with_items: bool = False) -> NormalizedOrder:
+def _order(
+    source: str,
+    order_id: str,
+    with_items: bool = False,
+    created_at: datetime | None = None,
+) -> NormalizedOrder:
     return NormalizedOrder(
         source=source,
         source_order_id=order_id,
         order_number=order_id,
-        created_at=datetime(2026, 8, 10, tzinfo=timezone.utc),
+        # Fresh by default (not a fixed past date) - _sync_source() now
+        # drops any order whose created_at is older than the `since` it
+        # asked for (see sync_engine.py's _drop_orders_older_than_since),
+        # so tests that aren't specifically exercising that guard need
+        # their fixture orders to actually look "new" relative to
+        # whatever `since` the engine computes at run time.
+        created_at=created_at or datetime.now(timezone.utc),
         total_price=Decimal("100000"),
         status="confirmed",
         items=[OrderItem(sku="s", title="t", quantity=1, unit_price=Decimal("1"),
@@ -74,7 +85,21 @@ def repo(tmp_path):
     return Repository(db_path=str(db_path))
 
 
+def _seed_watermark(repo, source: str, minutes_ago: int = 60) -> None:
+    """
+    Most of these tests are about orchestration (dedupe, retries, source
+    isolation), not specifically about the first-run/no-watermark date
+    logic - call this to give `source` an existing watermark comfortably
+    in the past, so a normal `_order()` fixture (created_at defaults to
+    "now") lands after `since` and isn't dropped by
+    _drop_orders_older_than_since(). Tests that ARE about the
+    no-watermark / first-run behavior deliberately don't call this.
+    """
+    repo.set_last_sync_time(source, datetime.now(timezone.utc) - timedelta(minutes=minutes_ago))
+
+
 def test_new_order_gets_synced_and_marked(repo):
+    _seed_watermark(repo, "fake1")
     adapter = FakeAdapter("fake1", list_orders=[_order("fake1", "1", with_items=True)])
     didar = FakeDidarService()
     engine = SyncEngine(adapters=[adapter], repository=repo, didar_service=didar)
@@ -86,6 +111,7 @@ def test_new_order_gets_synced_and_marked(repo):
 
 
 def test_list_without_items_triggers_detail_fetch(repo):
+    _seed_watermark(repo, "fake1")
     adapter = FakeAdapter(
         "fake1",
         list_orders=[_order("fake1", "1", with_items=False)],
@@ -101,6 +127,7 @@ def test_list_without_items_triggers_detail_fetch(repo):
 
 
 def test_duplicate_order_is_not_synced_twice(repo):
+    _seed_watermark(repo, "fake1")
     adapter = FakeAdapter("fake1", list_orders=[_order("fake1", "1", with_items=True)])
     didar = FakeDidarService()
     engine = SyncEngine(adapters=[adapter], repository=repo, didar_service=didar)
@@ -112,6 +139,7 @@ def test_duplicate_order_is_not_synced_twice(repo):
 
 
 def test_one_source_failing_does_not_block_others(repo):
+    _seed_watermark(repo, "healthy")
     broken = FakeAdapter("broken", fail_fetch=True)
     healthy = FakeAdapter("healthy", list_orders=[_order("healthy", "1", with_items=True)])
     didar = FakeDidarService()
@@ -126,6 +154,7 @@ def test_one_source_failing_does_not_block_others(repo):
 
 
 def test_didar_failure_is_recorded_and_retried_successfully(repo):
+    _seed_watermark(repo, "fake1")
     adapter = FakeAdapter(
         "fake1",
         list_orders=[_order("fake1", "1", with_items=True)],
@@ -152,6 +181,7 @@ def test_run_once_self_heals_within_a_single_cycle(repo):
     transient failure that would succeed on a second attempt is already
     resolved by the time run_once() returns - no separate call needed.
     """
+    _seed_watermark(repo, "fake1")
     adapter = FakeAdapter(
         "fake1",
         list_orders=[_order("fake1", "1", with_items=True)],
@@ -201,3 +231,43 @@ def test_first_run_never_backfills_history(repo):
 
     watermark = repo.get_last_sync_time("fake1")
     assert watermark >= before - timedelta(minutes=11)
+
+
+def test_orders_older_than_since_are_dropped_even_if_the_adapter_returns_them(repo):
+    """
+    Defense-in-depth regression test: even when a marketplace adapter's
+    own server-side date filter doesn't actually mean "order creation
+    date" the way we assume - see marketplaces/tapsishop.py's
+    dateFilterTypeCode caveat, explicitly flagged there as unconfirmed -
+    and returns an order that's genuinely older than the `since` we
+    asked for, the Sync Engine must never hand it to Didar. FakeAdapter
+    ignores `since` entirely (like a buggy real filter would), so this
+    old order is exactly what such a bug would hand back.
+    """
+    old_order = _order(
+        "fake1", "old-1", with_items=True,
+        created_at=datetime.now(timezone.utc) - timedelta(days=30),
+    )
+    adapter = FakeAdapter("fake1", list_orders=[old_order])
+    didar = FakeDidarService()
+    engine = SyncEngine(adapters=[adapter], repository=repo, didar_service=didar)
+
+    engine.run_once()
+
+    assert didar.synced_orders == []
+    assert not repo.is_already_synced("fake1", "old-1")
+
+
+def test_orders_at_or_after_since_still_sync_normally(repo):
+    """Companion to the test above - the new floor must not accidentally
+    swallow legitimately new orders."""
+    _seed_watermark(repo, "fake1")
+    fresh_order = _order("fake1", "fresh-1", with_items=True)  # created_at defaults to "now"
+    adapter = FakeAdapter("fake1", list_orders=[fresh_order])
+    didar = FakeDidarService()
+    engine = SyncEngine(adapters=[adapter], repository=repo, didar_service=didar)
+
+    engine.run_once()
+
+    assert len(didar.synced_orders) == 1
+    assert repo.is_already_synced("fake1", "fresh-1")
