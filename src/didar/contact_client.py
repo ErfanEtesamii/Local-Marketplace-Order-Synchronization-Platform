@@ -37,6 +37,19 @@ and this save) is recovered the same way product_client.py handles its
 "duplicate product code" race - one retry-via-search rather than
 failing the whole order for a timing issue.
 
+SECOND PRODUCTION INCIDENT (2026-08-27): CustomerCode-only search
+wasn't enough either. Two consecutive Faraz Honar orders for the same
+real customer (41905, 42001) both failed with the same "Duplicate
+contacts is not allowed" even after the fix above - the search found
+nothing by CustomerCode, yet Didar rejected the create anyway. This
+means Didar's own duplicate check isn't keyed on CustomerCode alone;
+a Contact with that customer's MobilePhone already existed under a
+different CustomerCode (from an earlier sync using a different code
+format, or a manually-entered CRM contact). find_existing_contact_id()
+now ALSO searches by MobilePhone (when one is available) as a second
+lookup, matching on the result's MobilePhone field - see that
+method's docstring for the not-yet-confirmed phone-format caveat.
+
 Response envelope ({"Response": {"Contact": {...}}}) is confirmed via
 live testing. upsert_contact() returns a ContactResult carrying both
 the Id (needed for Deal.PersonId) and the DisplayName Didar computed
@@ -78,15 +91,44 @@ class DidarContactClient:
         raise_for_status_with_body(resp)
         return resp.json()
 
-    def find_existing_contact_id(self, customer_code: str, limit: int = 20) -> str | None:
+    def find_existing_contact_id(
+        self, customer_code: str, mobile_phone: str | None = None, limit: int = 20
+    ) -> str | None:
         """
-        Look up an existing Contact by CustomerCode via the documented
-        global search endpoint (POST /search/search, Types=["contact"]).
-        Full-text search, not an exact-CustomerCode filter (same
-        situation as /product/search's Keywords), so results are
-        filtered down to an exact match here - a wrong partial match
-        would silently attach this order's Deal to the wrong Contact,
-        which is worse than not finding one at all.
+        Look up an existing Contact via the documented global search
+        endpoint (POST /search/search, Types=["contact"]). Full-text
+        search, not an exact filter (same situation as
+        /product/search's Keywords), so results are filtered down to
+        an exact match here - a wrong partial match would silently
+        attach this order's Deal to the wrong Contact, which is worse
+        than not finding one at all.
+
+        Tries TWO lookups, in order:
+        1. By CustomerCode (the original approach).
+        2. By MobilePhone, when one is given.
+
+        WHY BOTH: a real production failure (farazhonar orders 41905 /
+        42001, 2026-08-27) proved CustomerCode-only lookup isn't
+        enough. Both orders' upsert_contact() searched by CustomerCode
+        (the customer's mobile number, per service.py's
+        _customer_code_for), found nothing, and then /contact/save
+        itself rejected the create with "Duplicate contacts is not
+        allowed" - meaning a Contact with that same phone number
+        already existed in Didar under a DIFFERENT CustomerCode (most
+        likely: created earlier by a different sync source/format, or
+        manually in the CRM). Didar's own duplicate check is evidently
+        keyed on MobilePhone (or something derived from it), not
+        CustomerCode - so CustomerCode-only search can never find that
+        conflicting Contact, and every retry hits the same wall.
+
+        NOT YET CONFIRMED: whether Didar's search indexes MobilePhone
+        in a normalized form (e.g. "0919..." vs "+98919..." vs with
+        spaces) - this only strips whitespace, matching the one
+        confirmed formatting quirk seen elsewhere (Code values with
+        stray padding). If MobilePhone values in Didar use a different
+        digit format than what marketplaces send, this second lookup
+        can still miss and the underlying conflict needs a manual
+        look in Didar's UI to confirm the actual stored format.
         """
         payload = self._post(
             "/search/search", json={"Keyword": customer_code, "Types": ["contact"]}
@@ -99,6 +141,27 @@ class DidarContactClient:
                 contact_id = item.get("Id")
                 if contact_id:
                     return str(contact_id)
+
+        if mobile_phone:
+            target_phone = mobile_phone.strip()
+            payload = self._post(
+                "/search/search", json={"Keyword": target_phone, "Types": ["contact"]}
+            )
+            results = payload.get("Response", {}).get("List", [])
+            for item in results:
+                if not isinstance(item, dict) or item.get("_tp") != "contact":
+                    continue
+                if str(item.get("MobilePhone", "")).strip() == target_phone:
+                    contact_id = item.get("Id")
+                    if contact_id:
+                        log.info(
+                            "didar: found existing contact by MobilePhone=%s "
+                            "(CustomerCode=%s didn't match - see "
+                            "find_existing_contact_id docstring) -> Id=%s",
+                            target_phone, customer_code, contact_id,
+                        )
+                        return str(contact_id)
+
         return None
 
     def upsert_contact(
@@ -135,7 +198,7 @@ class DidarContactClient:
             "MobilePhone": mobile_phone or "",
         }
 
-        existing_id = self.find_existing_contact_id(customer_code)
+        existing_id = self.find_existing_contact_id(customer_code, mobile_phone=mobile_phone)
         if existing_id:
             contact_body["Id"] = existing_id
 
@@ -153,7 +216,9 @@ class DidarContactClient:
                 and exc.response is not None
                 and "duplicate" in exc.response.text.lower()
             ):
-                recovered_id = self.find_existing_contact_id(customer_code)
+                recovered_id = self.find_existing_contact_id(
+                    customer_code, mobile_phone=mobile_phone
+                )
                 if recovered_id:
                     contact_body["Id"] = recovered_id
                     payload = self._post("/contact/save", json={"Contact": contact_body})

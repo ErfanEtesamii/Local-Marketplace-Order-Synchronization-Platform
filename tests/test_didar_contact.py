@@ -139,6 +139,92 @@ def test_find_existing_contact_id_matches_exact_customer_code():
 
 
 @respx.mock
+def test_find_existing_contact_id_falls_back_to_mobile_phone_search():
+    """
+    Core regression test for the second production incident (2026-08-27,
+    Faraz Honar orders 41905/42001): a Contact can already exist in
+    Didar under a DIFFERENT CustomerCode than what this sync generates
+    (order.customer_mobile), while sharing the same MobilePhone. The
+    CustomerCode-keyed search finds nothing, so a second search by
+    MobilePhone must be tried before giving up.
+    """
+    search_route = respx.post("https://app.didar.me/api/search/search")
+    search_route.mock(
+        side_effect=[
+            # 1st call: search by CustomerCode ("09121234567") - no match,
+            # since the existing Contact was filed under a different code.
+            httpx.Response(200, json={"Response": {"Total": 0, "List": []}}),
+            # 2nd call: search by MobilePhone - finds it.
+            httpx.Response(
+                200,
+                json={
+                    "Response": {
+                        "Total": 1,
+                        "List": [
+                            {
+                                "_tp": "contact",
+                                "Id": "c-by-phone",
+                                "CustomerCode": "some-older-different-code",
+                                "MobilePhone": "09121234567",
+                            }
+                        ],
+                    }
+                },
+            ),
+        ]
+    )
+    client = DidarContactClient(config=_CFG)
+    result = client.find_existing_contact_id(
+        "09121234567", mobile_phone="09121234567"
+    )
+    assert result == "c-by-phone"
+    assert search_route.call_count == 2
+
+
+@respx.mock
+def test_upsert_contact_finds_existing_by_mobile_phone_before_ever_saving():
+    """
+    End-to-end version of the incident above: upsert_contact() must
+    resolve the existing Contact via the MobilePhone fallback BEFORE
+    attempting /contact/save at all, so the call becomes a clean edit -
+    no 400 "Duplicate contacts is not allowed" should happen in the
+    first place for a Contact that already exists under another code.
+    """
+    respx.post("https://app.didar.me/api/search/search").mock(
+        side_effect=[
+            httpx.Response(200, json={"Response": {"Total": 0, "List": []}}),
+            httpx.Response(
+                200,
+                json={
+                    "Response": {
+                        "Total": 1,
+                        "List": [
+                            {
+                                "_tp": "contact",
+                                "Id": "c-by-phone",
+                                "CustomerCode": "some-older-different-code",
+                                "MobilePhone": "09121234567",
+                            }
+                        ],
+                    }
+                },
+            ),
+        ]
+    )
+    save_route = respx.post("https://app.didar.me/api/contact/save").mock(
+        return_value=httpx.Response(200, json={"Response": {"Contact": {"Id": "c-by-phone"}}})
+    )
+
+    client = DidarContactClient(config=_CFG)
+    result = client.upsert_contact(customer_code="09121234567", mobile_phone="09121234567")
+
+    assert result.id == "c-by-phone"
+    assert save_route.call_count == 1  # no duplicate 400, no retry needed
+    body = save_route.calls[0].request.content
+    assert b'"Id":"c-by-phone"' in body
+
+
+@respx.mock
 def test_upsert_contact_includes_existing_id_so_didar_edits_not_creates():
     """
     Core regression test for a real production incident (2026-08): a
@@ -174,21 +260,30 @@ def test_upsert_contact_includes_existing_id_so_didar_edits_not_creates():
 
 @respx.mock
 def test_upsert_contact_recovers_via_search_on_duplicate_race():
-    """Race: search found nothing, but the Contact was created by
-    something else between our search and this save - one recovery
-    search+retry instead of failing the whole order for a timing issue,
-    same pattern as product_client.py's duplicate-code recovery."""
+    """Race: BOTH the CustomerCode and MobilePhone searches find nothing
+    initially, but the Contact was created by something else between
+    our search and this save - one recovery search+retry (now finding
+    it via MobilePhone) instead of failing the whole order for a
+    timing issue, same pattern as product_client.py's duplicate-code
+    recovery."""
     search_route = respx.post("https://app.didar.me/api/search/search")
     search_route.mock(
         side_effect=[
-            httpx.Response(200, json={"Response": {"Total": 0, "List": []}}),
-            httpx.Response(
+            httpx.Response(200, json={"Response": {"Total": 0, "List": []}}),  # initial: by code
+            httpx.Response(200, json={"Response": {"Total": 0, "List": []}}),  # initial: by phone
+            httpx.Response(200, json={"Response": {"Total": 0, "List": []}}),  # recovery: by code
+            httpx.Response(  # recovery: by phone - now it exists
                 200,
                 json={
                     "Response": {
                         "Total": 1,
                         "List": [
-                            {"_tp": "contact", "Id": "c-race", "CustomerCode": "09121234567"}
+                            {
+                                "_tp": "contact",
+                                "Id": "c-race",
+                                "CustomerCode": "some-other-code",
+                                "MobilePhone": "09121234567",
+                            }
                         ],
                     }
                 },
@@ -207,6 +302,6 @@ def test_upsert_contact_recovers_via_search_on_duplicate_race():
     result = client.upsert_contact(customer_code="09121234567", mobile_phone="09121234567")
 
     assert result.id == "c-race"
+    assert search_route.call_count == 4
     assert save_route.call_count == 2
     assert b'"Id":"c-race"' in save_route.calls[1].request.content
-
