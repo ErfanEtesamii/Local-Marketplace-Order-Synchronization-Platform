@@ -67,7 +67,13 @@ def run_forever() -> None:
         "interval",
         seconds=settings.poll_interval_seconds,
         args=[engine, repository],
-        next_run_time=None,  # first run fires immediately, see below
+        # NOTE: do NOT pass next_run_time=None here - in APScheduler that
+        # means "add this job paused", not "run immediately". It was
+        # silently preventing the interval job from ever firing after the
+        # one manual _poll_cycle() call below. The manual call already
+        # covers "run once immediately on startup"; letting add_job use
+        # its normal default next_run_time lets the trigger schedule the
+        # next automatic run correctly.
     )
     scheduler.add_job(
         generate_daily_report,
