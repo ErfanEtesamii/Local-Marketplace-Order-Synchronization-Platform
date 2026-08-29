@@ -81,3 +81,21 @@ def test_fetch_order_detail():
     order = adapter.fetch_order_detail("501")
     assert order.source_order_id == "501"
     assert len(order.items) == 2
+
+
+@respx.mock
+def test_fetch_order_detail_converts_english_billing_name_to_persian():
+    # Customer filled the WooCommerce billing form with an English
+    # keyboard layout - _normalize() should convert it to Persian
+    # script (see src/finglish.py) rather than passing it through as-is.
+    raw_order = {
+        **_RAW_ORDER,
+        "id": 503,
+        "billing": {"first_name": "mohammad", "last_name": "ahmadi", "phone": "09121234567"},
+    }
+    respx.get("https://farazhonar.com/wp-json/wc/v3/orders/503").mock(
+        return_value=httpx.Response(200, json=raw_order)
+    )
+    adapter = FarazHonarAdapter(config=_CFG)
+    order = adapter.fetch_order_detail("503")
+    assert order.customer_full_name == "محمد احمدی"

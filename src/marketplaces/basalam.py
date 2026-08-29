@@ -40,6 +40,7 @@ import httpx
 from src.http_utils import default_retry, raise_for_status_with_body
 
 from src.config import BasalamConfig, settings
+from src.finglish import persianize_name
 from src.logger import get_logger
 from src.marketplaces.base import MarketplaceAdapter, NormalizedOrder, OrderItem
 
@@ -175,7 +176,11 @@ class BasalamAdapter(MarketplaceAdapter):
             # but wasn't populated in practice). Falls back to a
             # synthetic CustomerCode (basalam-{parcel_id}) via
             # src/didar/service.py, same as Tapsi Shop and Digikala.
-            customer_full_name=customer.get("name") or customer.get("title"),
+            # A customer typing their name with an English keyboard
+            # (e.g. "mohammad ahmadi") is converted back to Persian
+            # script here - see src/finglish.py for how/why this is
+            # approximate.
+            customer_full_name=persianize_name(customer.get("name") or customer.get("title")),
             customer_mobile=customer.get("mobile") or customer.get("phone_number"),
         )
 

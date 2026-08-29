@@ -53,6 +53,7 @@ from decimal import Decimal, InvalidOperation
 import httpx
 
 from src.config import FarazHonarConfig, settings
+from src.finglish import persianize_name
 from src.http_utils import default_retry, raise_for_status_with_body
 from src.logger import get_logger
 from src.marketplaces.base import MarketplaceAdapter, NormalizedOrder, OrderItem
@@ -146,6 +147,11 @@ class FarazHonarAdapter(MarketplaceAdapter):
         full_name = " ".join(
             part for part in [billing.get("first_name"), billing.get("last_name")] if part
         ).strip() or None
+        # Customers can fill the WooCommerce billing form with an
+        # English keyboard layout (e.g. "mohammad ahmadi" instead of
+        # "محمد احمدی") - convert that back to Persian before it reaches
+        # Didar. See src/finglish.py for how/why this is approximate.
+        full_name = persianize_name(full_name)
 
         items = [
             OrderItem(

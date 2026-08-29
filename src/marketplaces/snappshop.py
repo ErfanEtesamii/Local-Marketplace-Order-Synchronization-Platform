@@ -49,6 +49,7 @@ from decimal import Decimal, InvalidOperation
 import httpx
 
 from src.config import SnappShopConfig, settings
+from src.finglish import persianize_name
 from src.http_utils import default_retry, raise_for_status_with_body
 from src.logger import get_logger
 from src.marketplaces.base import MarketplaceAdapter, NormalizedOrder, OrderItem
@@ -173,7 +174,11 @@ class SnappShopAdapter(MarketplaceAdapter):
             items=items,
             # Only populated when the vendor (not SnappShop) handles
             # delivery, per the confirmed doc note - None otherwise.
-            customer_full_name=customer.get("name") or customer.get("full_name"),
+            # When it is populated and was typed with an English
+            # keyboard (e.g. "mohammad ahmadi"), convert it back to
+            # Persian script - see src/finglish.py for how/why this is
+            # approximate.
+            customer_full_name=persianize_name(customer.get("name") or customer.get("full_name")),
             customer_mobile=customer.get("mobile") or customer.get("phone"),
         )
 

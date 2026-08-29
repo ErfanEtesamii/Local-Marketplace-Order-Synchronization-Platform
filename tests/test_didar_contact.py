@@ -90,7 +90,7 @@ def test_missing_full_name_falls_back_to_customer_code_as_lastname():
     client.upsert_contact(customer_code="tapsishop-999")
 
     body = route.calls[0].request.content
-    assert b'"Lastname":"tapsishop-999"' in body
+    assert b'"LastName":"tapsishop-999"' in body
     assert b'"FirstName":"' in body and b'""FirstName":""' not in body  # non-empty placeholder
 
 
@@ -107,7 +107,7 @@ def test_single_word_full_name_also_falls_back_to_customer_code_as_lastname():
 
     body = route.calls[0].request.content
     assert b'"FirstName":"Cher"' in body
-    assert b'"Lastname":"basalam-42"' in body
+    assert b'"LastName":"basalam-42"' in body
 
 
 @respx.mock

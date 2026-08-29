@@ -6,7 +6,7 @@ combined with a third-party integration listing (apieco.ir/api/didar-crm)
 that documents the exact request shape for the same underlying API:
 
     POST {DIDAR_BASE_URL}/contact/save?apikey={API_KEY}
-    body: {"Contact": {"CustomerCode": ..., "FirstName": ..., "Lastname": ...,
+    body: {"Contact": {"CustomerCode": ..., "FirstName": ..., "LastName": ...,
                         "MobilePhone": ..., ...}}
 
 Authentication: confirmed from didar.me/api-help itself - the API key is
@@ -55,6 +55,15 @@ live testing. upsert_contact() returns a ContactResult carrying both
 the Id (needed for Deal.PersonId) and the DisplayName Didar computed
 (needed for Deal.Title = "معامله {display_name}", matching Didar's own
 default naming convention for manually-created deals).
+
+FIELD CASING FIX (2026-08-29): the request body sent "Lastname"
+(lowercase 'n'), but Didar's own documented request example
+("ایجاد شخص دارای شرکت") uses "LastName" (capital N). Didar's server
+apparently accepted the wrong casing without complaint the whole time
+(ASP.NET's default JSON model binding is case-insensitive), so this
+was silent, not a live failure - fixed to match the documented
+contract exactly rather than keep relying on undocumented
+case-insensitive leniency.
 """
 from __future__ import annotations
 
@@ -194,7 +203,7 @@ class DidarContactClient:
         contact_body = {
             "CustomerCode": customer_code,
             "FirstName": first_name,
-            "Lastname": last_name,
+            "LastName": last_name,
             "MobilePhone": mobile_phone or "",
         }
 
