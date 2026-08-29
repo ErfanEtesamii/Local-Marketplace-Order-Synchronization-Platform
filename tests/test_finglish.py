@@ -38,3 +38,12 @@ def test_transliterate_finglish_collapses_doubled_consonants():
     # "mohammad" (doubled m) should route through the lookup table and
     # not produce a doubled Persian letter.
     assert "مم" not in transliterate_finglish("mohammad")
+
+
+def test_persianize_name_handles_mozaffari_via_lookup_table():
+    # Regression: "Mozaffari" has no way to be recovered by the phonetic
+    # fallback (ظ has no Latin equivalent - it always maps "z" -> ز, see
+    # _SINGLES), which previously produced "موزافاری" instead of the
+    # real spelling "مظفری". Must be in _COMMON_NAMES, not derived.
+    assert persianize_name("Zahra Mozaffari") == "زهرا مظفری"
+    assert persianize_name("zahra mozafari") == "زهرا مظفری"

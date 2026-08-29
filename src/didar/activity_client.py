@@ -45,12 +45,14 @@ due date, all derived from the order's ship time (زمان ارسال محصول
 except پیامک 1, which is derived from order registration time instead.
 The actual date math lives in src/didar/scheduling.py (kept separate so
 it's unit-testable without HTTP mocking) - this module just looks each
-title's computed date up and never invents one itself. ship_time must
-come from the marketplace's own API (see NormalizedOrder.ship_time) -
-if a given order has none (adapter doesn't expose it yet), the whole
-checklist is skipped for that order, same all-or-nothing philosophy as
-a missing ActivityType Id above: a half-scheduled checklist would be
-more confusing than none.
+title's computed date up and never invents one itself. ship_time
+should come from the marketplace's own API (see NormalizedOrder.ship_time)
+when available (currently: Basalam only). For every other source, whose
+adapter doesn't expose a real ship_time yet, create_post_sale_checklist
+falls back to order_registered_at + 2 days (client instruction,
+2026-08-29, see _DEFAULT_SHIP_DELAY) rather than skipping the checklist
+- a missing ActivityType Id (below) still skips the whole checklist,
+but a missing ship_time no longer does.
 
 SHIP ACTIVITY ATTACHMENT (2026-08 client feedback): the "ارسال محصول"
 item used to get the order's product photo (pulled from the
@@ -63,7 +65,7 @@ supplied docs only show its response shape, never the request itself).
 """
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import httpx
 
@@ -78,6 +80,15 @@ log = get_logger(__name__)
 # Title of the checklist item that gets the order's product photo
 # attached (see create_post_sale_checklist's ship_attachment param).
 SHIP_ACTIVITY_TITLE = "ارسال محصول"
+
+# Fallback anchor (client instruction, 2026-08-29) for marketplaces whose
+# adapter doesn't yet expose a real ship_time (currently: everything
+# except Basalam - see NormalizedOrder.ship_time). Rather than skip the
+# whole checklist for those sources, assume shipping happens 2 days
+# after the order was registered. Once a given adapter is wired to a
+# real ship_time (the more accurate anchor), this fallback is simply
+# never reached for that source - no code change needed here.
+_DEFAULT_SHIP_DELAY = timedelta(days=2)
 
 # Exact checklist + order, copied from the client's screenshot of a
 # manually-built deal's "فعالیت‌های برنامه‌ریزی شده" timeline (2026-08
@@ -191,13 +202,15 @@ class DidarActivityClient:
         the ship activity is still created without the attachment,
         same fire-and-forget philosophy as everything else here.
 
-        All-or-nothing on configuration and on ship_time (see module
-        docstring), but NOT all-or-nothing on execution: one item
-        failing (a bad type Id, a transient API error) is logged and
-        the rest of the checklist still gets attempted - this checklist
-        is a sales-team convenience, not something that should ever
-        fail the order sync itself. Callers should treat this as
-        fire-and-forget.
+        All-or-nothing on configuration (see module docstring), but NOT
+        all-or-nothing on execution: one item failing (a bad type Id,
+        a transient API error) is logged and the rest of the checklist
+        still gets attempted - this checklist is a sales-team
+        convenience, not something that should ever fail the order sync
+        itself. Callers should treat this as fire-and-forget.
+
+        A missing ship_time (source adapter doesn't expose one yet) no
+        longer skips the checklist - see _DEFAULT_SHIP_DELAY above.
         """
         missing_types = sorted({
             config_attr for _, config_attr in POST_SALE_CHECKLIST
@@ -213,14 +226,13 @@ class DidarActivityClient:
             return
 
         if ship_time is None:
-            log.warning(
-                "didar: skipping post-sale checklist for deal %s - "
-                "no ship_time available for this order (marketplace "
-                "adapter doesn't expose it yet - see "
-                "NormalizedOrder.ship_time)",
-                deal_id,
+            ship_time = order_registered_at + _DEFAULT_SHIP_DELAY
+            log.info(
+                "didar: no ship_time available for deal %s (marketplace "
+                "adapter doesn't expose it yet - see NormalizedOrder.ship_time) "
+                "- defaulting to order_registered_at + %s per client instruction",
+                deal_id, _DEFAULT_SHIP_DELAY,
             )
-            return
 
         due_dates = compute_checklist_due_dates(
             order_registered_at=order_registered_at, ship_time=ship_time,

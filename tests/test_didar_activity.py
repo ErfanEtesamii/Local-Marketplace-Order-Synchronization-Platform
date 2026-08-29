@@ -97,15 +97,33 @@ def test_create_post_sale_checklist_creates_every_item_in_order():
 
 
 @respx.mock
-def test_create_post_sale_checklist_skipped_when_ship_time_missing():
-    route = respx.post("https://app.didar.me/api/activity/save")
+def test_create_post_sale_checklist_defaults_ship_time_when_missing():
+    # Client instruction (2026-08-29): a source whose adapter doesn't
+    # expose a real ship_time (everything except Basalam right now)
+    # must still get the checklist, anchored to
+    # order_registered_at + 2 days instead of being skipped.
+    activity_route = respx.post("https://app.didar.me/api/activity/save").mock(
+        return_value=httpx.Response(200, json={"Response": {"Id": "a-x"}})
+    )
 
     client = DidarActivityClient(config=_CFG_WITH_TYPES)
     client.create_post_sale_checklist(
         deal_id="deal-1", order_registered_at=_REGISTERED, ship_time=None,
     )
 
-    assert not route.called
+    assert activity_route.call_count == 6
+    expected_due_dates = compute_checklist_due_dates(
+        order_registered_at=_REGISTERED,
+        ship_time=_REGISTERED + timedelta(days=2),
+    )
+    for call in activity_route.calls:
+        activity = _json.loads(call.request.content)["Activity"]
+        expected = expected_due_dates[activity["Title"]]
+        expected_str = (
+            expected.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.")
+            + f"{expected.microsecond // 1000:03d}Z"
+        )
+        assert activity["DueDate"] == expected_str
 
 
 @respx.mock

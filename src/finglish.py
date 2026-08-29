@@ -89,6 +89,12 @@ _COMMON_NAMES: dict[str, str] = {
     "ebrahimi": "ابراهیمی", "kiani": "کیانی", "soleimani": "سلیمانی",
     "soleymani": "سلیمانی", "javadi": "جوادی", "heidari": "حیدری",
     "heydari": "حیدری", "fallahi": "فلاحی", "shafiei": "شفیعی",
+    # These families use "z"/"s" sounds that are spelled with a letter
+    # (ظ/ض/ذ/ص) the phonetic fallback below has no way to guess - it
+    # always maps that sound to ز/س (see _SINGLES) since Latin script
+    # doesn't distinguish them. Must go in this table verbatim, same as
+    # any other name the fallback gets wrong (see module docstring).
+    "mozaffari": "مظفری", "mozafari": "مظفری", "muzaffari": "مظفری",
 }
 
 # Longest-match-first substitution of Latin digraphs that stand for a

@@ -69,9 +69,9 @@ class DidarSyncService:
         # docstring for how it isolates per-item failures. Due dates are
         # computed from order.ship_time / order.created_at (see
         # src/didar/scheduling.py) - if a given marketplace adapter
-        # doesn't expose ship_time yet, the checklist is skipped for
-        # that order rather than guessing a schedule (see that method's
-        # docstring).
+        # doesn't expose ship_time yet, create_post_sale_checklist
+        # defaults it to order_registered_at + 2 days rather than
+        # skipping the checklist (see that method's docstring).
         self._activities.create_post_sale_checklist(
             deal_id=deal_id,
             order_registered_at=order.created_at,
