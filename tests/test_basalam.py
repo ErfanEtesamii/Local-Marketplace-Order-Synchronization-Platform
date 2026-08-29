@@ -22,6 +22,7 @@ def test_fetch_new_orders_paginates_via_cursor():
                         "created_at": "2026-08-10T10:00:00Z",
                         "status": {"id": 3739, "title": "جدید"},
                         "order": {"id": 9001, "paid_at": "2026-08-10T09:59:00Z"},
+                        "estimate_send_at": "2026-08-12T18:00:00Z",
                     }
                 ],
                 "next_cursor": None,
@@ -41,6 +42,37 @@ def test_fetch_new_orders_paginates_via_cursor():
     assert o.total_price == 4800000  # 480000 تومان × ۱۰ (BasalamConfig defaults to price_unit="toman")
     assert o.status == "جدید"
     assert o.items == []  # list endpoint - detail call needed for line items
+    assert o.ship_time == datetime(2026, 8, 12, 18, 0, tzinfo=timezone.utc)
+
+
+@respx.mock
+def test_fetch_new_orders_ship_time_is_none_when_estimate_send_at_missing():
+    respx.get("https://order-processing.basalam.com/v3/vendor-parcels").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "data": [
+                    {
+                        "id": 555,
+                        "total_items_price": 480000,
+                        "created_at": "2026-08-10T10:00:00Z",
+                        "status": {"id": 3739, "title": "جدید"},
+                        "order": {"id": 9001},
+                        # no estimate_send_at
+                    }
+                ],
+                "next_cursor": None,
+                "previous_cursor": None,
+            },
+        )
+    )
+
+    adapter = BasalamAdapter(config=_CFG)
+    orders = adapter.fetch_new_orders(since=datetime(2026, 8, 1, tzinfo=timezone.utc))
+
+    # Must stay None, not fall back to "now" like created_at does - see
+    # _parse_date_or_none's docstring for why.
+    assert orders[0].ship_time is None
 
 
 @respx.mock
@@ -58,9 +90,13 @@ def test_fetch_order_detail_includes_items_and_customer():
                     "paid_at": "2026-08-10T09:59:00Z",
                     "customer": {"name": "علی رضایی", "mobile": "09121234567"},
                 },
+                "estimate_send_at": "2026-08-12T18:00:00Z",
                 "items": [
                     {"id": 1, "title": "گلدان سفالی", "quantity": 2, "price": 240000,
-                     "product": {"id": 4242}}
+                     "product": {"id": 4242, "photo": {
+                         "original": "https://cdn.basalam.com/photos/4242-original.jpg",
+                         "lg": "https://cdn.basalam.com/photos/4242-lg.jpg",
+                     }}}
                 ],
             },
         )
@@ -74,6 +110,35 @@ def test_fetch_order_detail_includes_items_and_customer():
     assert order.items[0].final_price == 4800000  # (price * quantity) تومان × ۱۰
     assert order.customer_full_name == "علی رضایی"
     assert order.customer_mobile == "09121234567"
+    assert order.ship_time == datetime(2026, 8, 12, 18, 0, tzinfo=timezone.utc)
+    assert order.product_image_url == "https://cdn.basalam.com/photos/4242-original.jpg"
+
+
+@respx.mock
+def test_fetch_order_detail_product_image_falls_back_to_lg_without_original():
+    respx.get("https://order-processing.basalam.com/v3/vendor-parcels/555").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "id": 555,
+                "total_items_price": 480000,
+                "created_at": "2026-08-10T10:00:00Z",
+                "status": {"id": 3739, "title": "جدید"},
+                "order": {"id": 9001},
+                "items": [
+                    {"id": 1, "title": "گلدان سفالی", "quantity": 1, "price": 240000,
+                     "product": {"id": 4242, "photo": {
+                         "lg": "https://cdn.basalam.com/photos/4242-lg.jpg",
+                     }}}
+                ],
+            },
+        )
+    )
+
+    adapter = BasalamAdapter(config=_CFG)
+    order = adapter.fetch_order_detail("555")
+
+    assert order.product_image_url == "https://cdn.basalam.com/photos/4242-lg.jpg"
 
 
 @respx.mock

@@ -86,6 +86,20 @@ nothing does the product fall back to
 DidarConfig.default_product_category_id (DIDAR_DEFAULT_PRODUCT_CATEGORY_ID
 in .env) - the genuine catch-all ("متفرقه") for exactly the
 unmatched/unknown cases, not everything.
+
+CATALOG-BASED CODE LOOKUP (client feedback, 2026-08-29): most products
+already exist in Didar under a short internal name/Code that has no
+relationship at all to the marketplace's own SKU or title (see
+product_catalog.py's module docstring for the motivating example).
+resolve_catalog_code() looks up the item's marketplace title against a
+client-maintained Excel export of the Didar catalog (path from
+DidarConfig.product_catalog_xlsx) and, on a confident match, returns
+the catalog's OWN Code and title - the caller (deal_client.py) then
+searches/creates using those instead of the marketplace SKU/title.
+Loaded lazily (only touches the filesystem on first real lookup) and
+only when DIDAR_PRODUCT_CATALOG_XLSX is actually set, so leaving it
+blank is a complete, silent no-op (falls back to the pre-existing
+SKU/title behaviour) rather than a startup requirement.
 """
 from __future__ import annotations
 
@@ -94,6 +108,7 @@ import httpx
 from src.config import DidarConfig, settings
 from src.didar.category_mapping import _normalize_fa, keyword_category_title
 from src.didar.contact_client import DidarApiError
+from src.didar.product_catalog import ProductCatalog
 from src.http_utils import default_retry, raise_for_status_with_body
 from src.logger import get_logger
 
@@ -113,12 +128,75 @@ class DidarProductClient:
         self._config = config or settings.didar
         self._client = httpx.Client(base_url=self._config.base_url, timeout=30.0)
         self._category_by_title: dict[str, str] | None = None  # populated lazily
+        self._catalog: ProductCatalog | None = None  # populated lazily
+        self._catalog_load_attempted = False
 
     @default_retry()
     def _post(self, path: str, json: dict | None = None) -> dict:
         resp = self._client.post(path, params={"apikey": self._config.api_key}, json=json or {})
         raise_for_status_with_body(resp)
         return resp.json()
+
+    def resolve_catalog_code(self, marketplace_title: str) -> tuple[str, str] | None:
+        """
+        Look up a marketplace item's title in the client's Excel product
+        catalog (see product_catalog.py) - returns (code, catalog_title)
+        on a confident full-word-set match, else None. Callers should
+        fall back to their own default Code (marketplace SKU/title) when
+        this returns None - see deal_client.py's _build_deal_item.
+
+        The catalog file is loaded at most once per client instance, and
+        only if DIDAR_PRODUCT_CATALOG_XLSX is actually set - leaving it
+        blank means this always returns None without ever touching the
+        filesystem.
+
+        A bad path or a malformed file (ProductCatalog raises
+        FileNotFoundError/ValueError for both - see its own tests) is
+        caught HERE rather than left to propagate: this method runs
+        inside create_deal(), which has no fire-and-forget wrapper
+        (unlike the post-sale checklist), so an uncaught exception here
+        would fail that order's ENTIRE sync, not just disable catalog
+        matching for it. And because loading is attempted only ONCE per
+        long-lived instance (see _catalog_load_attempted above, and
+        DidarProductClient's own lifetime - one instance for the whole
+        process, not per order - via DidarDealClient/DidarSyncService),
+        an uncaught failure here would fail exactly the first order to
+        need this and then go permanently, silently quiet for every
+        order after that - the worst kind of bug to notice in
+        production. log.exception (ERROR + full traceback) rather than
+        a plain warning is deliberate here, since this fires exactly
+        once for the whole process's lifetime (the load is attempted
+        only once - see _catalog_load_attempted) and needs to be visible
+        enough that it doesn't get lost among the routine per-order info
+        logs around it.
+        """
+        if not self._catalog_load_attempted:
+            self._catalog_load_attempted = True
+            path = self._config.product_catalog_xlsx
+            if path:
+                try:
+                    self._catalog = ProductCatalog(path)
+                except Exception:
+                    log.exception(
+                        "didar: failed to load product catalog from %r "
+                        "(DIDAR_PRODUCT_CATALOG_XLSX) - catalog-based Code "
+                        "lookup is DISABLED for the rest of this run, every "
+                        "item falls back to marketplace SKU/title. Fix the "
+                        "path/file and restart the service to re-enable it.",
+                        path,
+                    )
+
+        if self._catalog is None:
+            return None
+
+        match = self._catalog.match(marketplace_title)
+        if match is None:
+            return None
+        log.info(
+            "didar: catalog match for title=%r -> Code=%s (catalog title=%r)",
+            marketplace_title, match.code, match.title,
+        )
+        return match.code, match.title
 
     def list_categories(self) -> list[dict]:
         """GET the {Id, Title} list of valid product categories - confirmed

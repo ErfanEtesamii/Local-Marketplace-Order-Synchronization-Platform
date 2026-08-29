@@ -6,7 +6,7 @@ in isolation while still being trivial to use together.
 """
 from __future__ import annotations
 
-from datetime import datetime, timezone
+import httpx
 
 from src.didar.activity_client import DidarActivityClient
 from src.didar.contact_client import DidarContactClient
@@ -66,12 +66,49 @@ class DidarSyncService:
 
         # Fire-and-forget: a checklist failure must never fail the order
         # sync itself - see DidarActivityClient.create_post_sale_checklist's
-        # docstring for how it isolates per-item failures.
+        # docstring for how it isolates per-item failures. Due dates are
+        # computed from order.ship_time / order.created_at (see
+        # src/didar/scheduling.py) - if a given marketplace adapter
+        # doesn't expose ship_time yet, the checklist is skipped for
+        # that order rather than guessing a schedule (see that method's
+        # docstring).
         self._activities.create_post_sale_checklist(
-            deal_id=deal_id, due_date=datetime.now(timezone.utc)
+            deal_id=deal_id,
+            order_registered_at=order.created_at,
+            ship_time=order.ship_time,
+            ship_attachment=_fetch_product_image(order),
         )
 
         return deal_id
+
+
+def _fetch_product_image(order: NormalizedOrder) -> tuple[bytes, str, str] | None:
+    """
+    Downloads order.product_image_url (when the source adapter provides
+    one) so it can be attached to the "ارسال محصول" Activity - see
+    DidarActivityClient.create_post_sale_checklist's ship_attachment
+    param. Returns None (not an error) when the order has no image URL,
+    or when the download itself fails - a missing/broken product photo
+    must never fail the order sync, same fire-and-forget philosophy as
+    the checklist itself. The filename is derived from the URL's own
+    path segment, falling back to a generic name if that's empty.
+    """
+    if not order.product_image_url:
+        return None
+    try:
+        resp = httpx.get(order.product_image_url, timeout=30.0, follow_redirects=True)
+        resp.raise_for_status()
+    except Exception:
+        log.exception(
+            "didar: failed to download product image for %s order %s - "
+            "continuing without a ship attachment",
+            order.source, order.source_order_id,
+        )
+        return None
+
+    content_type = resp.headers.get("content-type", "application/octet-stream").split(";")[0]
+    filename = order.product_image_url.rstrip("/").rsplit("/", 1)[-1] or "product.jpg"
+    return resp.content, filename, content_type
 
 
 def _customer_code_for(order: NormalizedOrder) -> str:

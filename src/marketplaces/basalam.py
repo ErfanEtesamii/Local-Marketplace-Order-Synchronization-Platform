@@ -60,6 +60,21 @@ def _to_decimal(value) -> Decimal:
 
 
 
+def _first_item_photo_url(raw_items: list[dict]) -> str | None:
+    """
+    Best-effort product photo for the order - see the UNCONFIRMED note at
+    its call site in _normalize_detail. Tries the first item's nested
+    product.photo (confirmed shape: {"original", "xs", "sm", "md", "lg"}),
+    preferring "original" then falling back to the largest thumbnail.
+    """
+    for item in raw_items:
+        photo = ((item.get("product") or {}).get("photo")) or {}
+        url = photo.get("original") or photo.get("lg") or photo.get("md")
+        if url:
+            return str(url)
+    return None
+
+
 class BasalamAuthError(RuntimeError):
     """Raised when the access token is rejected (expired/revoked).
 
@@ -143,12 +158,19 @@ class BasalamAdapter(MarketplaceAdapter):
             items=[],  # list endpoint gives summary items only - fetch_order_detail has full items
             customer_full_name=None,
             customer_mobile=None,
+            # CONFIRMED field name - estimate_send_at is the only accepted
+            # sort key above (live 422s ruled out created_at/id), and it's
+            # exactly the "parcel_estimate_send_at" / "estimate_send_at"
+            # filter documented for orders/parcels respectively. This is
+            # the ship-time anchor for src/didar/scheduling.py.
+            ship_time=_parse_date_or_none(raw.get("estimate_send_at")),
         )
 
     def _normalize_detail(self, raw: dict) -> NormalizedOrder:
         order = raw.get("order", {})
         status = raw.get("status") or {}
         customer = order.get("customer") or {}
+        raw_items = raw.get("items", [])
 
         items = [
             OrderItem(
@@ -164,7 +186,7 @@ class BasalamAdapter(MarketplaceAdapter):
                     self._config.price_unit,
                 ),
             )
-            for item in raw.get("items", [])
+            for item in raw_items
         ]
 
         return NormalizedOrder(
@@ -186,6 +208,19 @@ class BasalamAdapter(MarketplaceAdapter):
             # approximate.
             customer_full_name=persianize_name(customer.get("name") or customer.get("title")),
             customer_mobile=customer.get("mobile") or customer.get("phone_number"),
+            # Same confirmed field as _normalize_list_item - see its comment.
+            ship_time=_parse_date_or_none(raw.get("estimate_send_at")),
+            # UNCONFIRMED (unlike estimate_send_at above): no live order-item
+            # response was available to verify this. The product-photo
+            # SCHEMA itself is confirmed elsewhere in the docs
+            # ({"photo": {"id", "original", "xs", "sm", "md", "lg"}} on the
+            # /vendors/{id}/products response) - what's unconfirmed is only
+            # whether a vendor-parcel item embeds that same nested "product"
+            # object with a "photo" field, or whether the photo would need a
+            # separate GET on the product id already used for sku above. If
+            # this comes back empty in production, that's the first place
+            # to check - not necessarily a bug in the checklist logic.
+            product_image_url=_first_item_photo_url(raw_items),
         )
 
 
@@ -196,3 +231,18 @@ def _parse_date(value: str | None) -> datetime:
         return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
     except ValueError:
         return datetime.now(timezone.utc)
+
+
+def _parse_date_or_none(value: str | None) -> datetime | None:
+    # Unlike _parse_date (used for created_at, where "now" is a reasonable
+    # fallback for a value that should always be present), a missing or
+    # unparseable estimate_send_at must stay None rather than fabricate a
+    # ship_time - see NormalizedOrder.ship_time and
+    # DidarActivityClient.create_post_sale_checklist, which deliberately
+    # skip the whole checklist rather than schedule it off a made-up date.
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except ValueError:
+        return None

@@ -42,8 +42,7 @@ class TapsiShopConfig:
     base_url: str = field(default_factory=lambda: _get("TAPSISHOP_BASE_URL"))
     auth_token: str = field(default_factory=lambda: _get("TAPSISHOP_AUTH_TOKEN"))
     webhook_token: str = field(default_factory=lambda: _get("TAPSISHOP_WEBHOOK_TOKEN"))
-    # UNCONFIRMED - see src/currency.py's module docstring. Defaults to
-    # "rial" (no conversion) until someone checks a real order.
+    # Confirmed by the client (2026-08-29): Tapsi Shop prices are Rial.
     price_unit: str = field(
         default_factory=lambda: _get_price_unit("TAPSISHOP_PRICE_UNIT", "rial")
     )
@@ -56,8 +55,7 @@ class DigikalaConfig:
     client_secret: str = field(default_factory=lambda: _get("DIGIKALA_CLIENT_SECRET"))
     access_token: str = field(default_factory=lambda: _get("DIGIKALA_ACCESS_TOKEN"))
     refresh_token: str = field(default_factory=lambda: _get("DIGIKALA_REFRESH_TOKEN"))
-    # Digikala's web service is documented as Rial-based - see
-    # src/currency.py's module docstring for the source/confidence.
+    # Confirmed by the client (2026-08-29): Digikala prices are Rial.
     price_unit: str = field(
         default_factory=lambda: _get_price_unit("DIGIKALA_PRICE_UNIT", "rial")
     )
@@ -75,10 +73,9 @@ class SnappShopConfig:
     auth_token: str = field(default_factory=lambda: _get("SNAPPSHOP_AUTH_TOKEN"))
     agent_user: str = field(default_factory=lambda: _get("SNAPPSHOP_AGENT_USER"))
     vendor_id: str = field(default_factory=lambda: _get("SNAPPSHOP_VENDOR_ID"))
-    # UNCONFIRMED - see src/currency.py's module docstring. Defaults to
-    # "rial" (no conversion) until someone checks a real order.
+    # Confirmed by the client (2026-08-29): SnappShop prices are Toman.
     price_unit: str = field(
-        default_factory=lambda: _get_price_unit("SNAPPSHOP_PRICE_UNIT", "rial")
+        default_factory=lambda: _get_price_unit("SNAPPSHOP_PRICE_UNIT", "toman")
     )
 
 
@@ -86,8 +83,7 @@ class SnappShopConfig:
 class BasalamConfig:
     base_url: str = field(default_factory=lambda: _get("BASALAM_BASE_URL"))
     access_token: str = field(default_factory=lambda: _get("BASALAM_ACCESS_TOKEN"))
-    # Best-guess default, not confirmed against a live order - see
-    # src/currency.py's module docstring for the (indirect) evidence.
+    # Confirmed by the client (2026-08-29): Basalam prices are Toman.
     price_unit: str = field(
         default_factory=lambda: _get_price_unit("BASALAM_PRICE_UNIT", "toman")
     )
@@ -120,6 +116,16 @@ class DidarConfig:
     default_product_category_id: str = field(
         default_factory=lambda: _get("DIDAR_DEFAULT_PRODUCT_CATEGORY_ID")
     )
+    # Path to the client-maintained Excel export of the existing Didar
+    # product catalog (columns: عنوان محصول / کد محصول) - see
+    # src/didar/product_catalog.py for how it's used to recover a
+    # product's real Didar Code from its marketplace title. Blank
+    # (default) disables catalog-based Code lookup entirely - every
+    # item then falls back to the marketplace SKU/title, same as before
+    # this feature existed.
+    product_catalog_xlsx: str = field(
+        default_factory=lambda: _get("DIDAR_PRODUCT_CATALOG_XLSX")
+    )
     # Label (Tag) GUIDs, one per marketplace source - see docs/architecture.md
     # for how to fetch these via GET /Tag/GetTagList. Any left blank simply
     # means that source's Deals won't carry a LabelId (not an error).
@@ -150,6 +156,18 @@ class DidarConfig:
     activity_type_ship_id: str = field(default_factory=lambda: _get("DIDAR_ACTIVITY_TYPE_SHIP_ID"))
     activity_type_satisfaction_call_id: str = field(
         default_factory=lambda: _get("DIDAR_ACTIVITY_TYPE_SATISFACTION_CALL_ID")
+    )
+    # UNCONFIRMED - the API docs supplied for this project show the
+    # RESPONSE shape of "attaching files" (Key/Size/Type/Name) but never
+    # document the request endpoint/method that produces it. This is a
+    # best guess, not a verified path - see
+    # DidarActivityClient.upload_attachment()'s docstring. Override here
+    # once the real endpoint is confirmed (e.g. from Didar support or a
+    # captured request from the web app), no code change needed.
+    # Relative to base_url, which already includes "/api" (same
+    # convention as every other path in this file, e.g. "/activity/save").
+    attachment_upload_path: str = field(
+        default_factory=lambda: _get("DIDAR_ATTACHMENT_UPLOAD_PATH", "/UploadFile")
     )
 
     @property

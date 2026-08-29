@@ -1,10 +1,12 @@
-from datetime import datetime, timezone
+import json as _json
+from datetime import datetime, timedelta, timezone
 
 import respx
 import httpx
 
 from src.config import DidarConfig
 from src.didar.activity_client import DidarActivityClient, POST_SALE_CHECKLIST
+from src.didar.scheduling import compute_checklist_due_dates
 
 _CFG_WITH_TYPES = DidarConfig(
     base_url="https://app.didar.me/api", api_key="test-key",
@@ -25,6 +27,8 @@ _CFG_MISSING_SMS2 = DidarConfig(
     activity_type_satisfaction_call_id="type-satisfaction-call",
 )
 _DUE = datetime(2026, 8, 27, 12, 0, tzinfo=timezone.utc)
+_REGISTERED = datetime(2026, 8, 27, 6, 0, tzinfo=timezone.utc)
+_SHIP = datetime(2026, 8, 29, 18, 0, tzinfo=timezone.utc)
 
 
 @respx.mock
@@ -71,14 +75,90 @@ def test_create_post_sale_checklist_creates_every_item_in_order():
     )
 
     client = DidarActivityClient(config=_CFG_WITH_TYPES)
-    client.create_post_sale_checklist(deal_id="deal-1", due_date=_DUE)
+    client.create_post_sale_checklist(
+        deal_id="deal-1", order_registered_at=_REGISTERED, ship_time=_SHIP,
+    )
 
     assert route.call_count == len(POST_SALE_CHECKLIST)
-    sent_titles = []
-    for call in route.calls:
-        import json as _json
-        sent_titles.append(_json.loads(call.request.content)["Activity"]["Title"])
+    sent = [_json.loads(call.request.content)["Activity"] for call in route.calls]
+    sent_titles = [a["Title"] for a in sent]
     assert sent_titles == [title for title, _ in POST_SALE_CHECKLIST]
+
+    expected_due_dates = compute_checklist_due_dates(
+        order_registered_at=_REGISTERED, ship_time=_SHIP,
+    )
+    for activity in sent:
+        expected = expected_due_dates[activity["Title"]]
+        expected_str = (
+            expected.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.")
+            + f"{expected.microsecond // 1000:03d}Z"
+        )
+        assert activity["DueDate"] == expected_str
+
+
+@respx.mock
+def test_create_post_sale_checklist_skipped_when_ship_time_missing():
+    route = respx.post("https://app.didar.me/api/activity/save")
+
+    client = DidarActivityClient(config=_CFG_WITH_TYPES)
+    client.create_post_sale_checklist(
+        deal_id="deal-1", order_registered_at=_REGISTERED, ship_time=None,
+    )
+
+    assert not route.called
+
+
+@respx.mock
+def test_create_post_sale_checklist_attaches_uploaded_photo_to_ship_item_only():
+    upload_route = respx.post("https://app.didar.me/api/UploadFile").mock(
+        return_value=httpx.Response(
+            200,
+            json={"Response": [{
+                "Key": "photo-key-1.jpg", "Size": 123,
+                "Type": "image/jpeg", "Name": "photo.jpg",
+            }]},
+        )
+    )
+    save_route = respx.post("https://app.didar.me/api/activity/save").mock(
+        return_value=httpx.Response(200, json={"Response": {"Id": "a-x"}})
+    )
+
+    client = DidarActivityClient(config=_CFG_WITH_TYPES)
+    client.create_post_sale_checklist(
+        deal_id="deal-1",
+        order_registered_at=_REGISTERED,
+        ship_time=_SHIP,
+        ship_attachment=(b"fake-bytes", "photo.jpg", "image/jpeg"),
+    )
+
+    assert upload_route.call_count == 1
+    sent = [_json.loads(call.request.content)["Activity"]["Title"] for call in save_route.calls]
+    bodies = [_json.loads(call.request.content) for call in save_route.calls]
+    ship_body = bodies[sent.index("ارسال محصول")]
+    assert ship_body.get("NewAttachments") == [{"First": "photo-key-1.jpg", "Second": "photo.jpg"}]
+    # every other item gets no attachment
+    for title, body in zip(sent, bodies):
+        if title != "ارسال محصول":
+            assert "NewAttachments" not in body
+
+
+@respx.mock
+def test_create_post_sale_checklist_continues_without_attachment_when_upload_fails():
+    respx.post("https://app.didar.me/api/UploadFile").mock(return_value=httpx.Response(500))
+    route = respx.post("https://app.didar.me/api/activity/save").mock(
+        return_value=httpx.Response(200, json={"Response": {"Id": "a-x"}})
+    )
+
+    client = DidarActivityClient(config=_CFG_WITH_TYPES)
+    client.create_post_sale_checklist(
+        deal_id="deal-1",
+        order_registered_at=_REGISTERED,
+        ship_time=_SHIP,
+        ship_attachment=(b"fake-bytes", "photo.jpg", "image/jpeg"),
+    )
+
+    # the whole checklist still gets created despite the upload failure
+    assert route.call_count == len(POST_SALE_CHECKLIST)
 
 
 @respx.mock
@@ -88,7 +168,9 @@ def test_create_post_sale_checklist_skipped_entirely_when_a_type_is_unconfigured
     route = respx.post("https://app.didar.me/api/activity/save")
 
     client = DidarActivityClient(config=_CFG_MISSING_SMS2)
-    client.create_post_sale_checklist(deal_id="deal-1", due_date=_DUE)
+    client.create_post_sale_checklist(
+        deal_id="deal-1", order_registered_at=_REGISTERED, ship_time=_SHIP,
+    )
 
     assert not route.called
 
@@ -111,7 +193,9 @@ def test_create_post_sale_checklist_continues_after_one_item_fails():
     route = respx.post("https://app.didar.me/api/activity/save").mock(side_effect=_responder)
 
     client = DidarActivityClient(config=_CFG_WITH_TYPES)
-    client.create_post_sale_checklist(deal_id="deal-1", due_date=_DUE)
+    client.create_post_sale_checklist(
+        deal_id="deal-1", order_registered_at=_REGISTERED, ship_time=_SHIP,
+    )
 
     # Every item was attempted (6 calls) despite the one 400 in the middle.
     assert route.call_count == len(POST_SALE_CHECKLIST)

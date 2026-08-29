@@ -221,12 +221,25 @@ class DidarDealClient:
         return deal_id
 
     def _build_deal_item(self, item, order: NormalizedOrder) -> dict:
-        # SKU is the natural upsert key; falls back to the item title
-        # for the (rare) case a source provides no SKU, so at least
-        # same-titled items resolve to the same product within a run.
+        # Prefer the client's Excel catalog: most products already exist
+        # in Didar under a short internal Code/title that has no
+        # relationship to the marketplace's own SKU or title (see
+        # product_catalog.py's module docstring). A confident match
+        # there means we search/create using the REAL catalog Code and
+        # title instead of the marketplace's.
+        catalog_match = self._products.resolve_catalog_code(item.title)
+        if catalog_match:
+            code, title = catalog_match
+        else:
+            # SKU is the natural upsert key; falls back to the item
+            # title for the (rare) case a source provides no SKU, so at
+            # least same-titled items resolve to the same product
+            # within a run.
+            code, title = item.sku or item.title, item.title
+
         product_id = self._products.upsert_product(
-            code=item.sku or item.title,
-            title=item.title,
+            code=code,
+            title=title,
             category=item.category,
             unit_price=item.unit_price,
         )

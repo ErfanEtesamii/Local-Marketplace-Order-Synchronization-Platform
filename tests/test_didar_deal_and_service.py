@@ -217,6 +217,60 @@ def test_create_deal_builds_structured_deal_items_not_description_text():
 
 
 @respx.mock
+def test_deal_item_uses_catalog_code_and_title_when_excel_match_found(tmp_path):
+    """Regression test for the client's Excel-catalog feature: when the
+    item's marketplace title has a confident match in the client's Excel
+    product catalog (product_catalog.py), the product must be
+    searched/created using the CATALOG's Code and title - not the
+    marketplace SKU/title - so it resolves to the product that already
+    exists in Didar rather than creating a wrongly-named duplicate."""
+    from openpyxl import Workbook
+
+    wb = Workbook()
+    ws = wb.active
+    ws.append(["_type", "عنوان محصول", "دسته بندی محصول", "کد دیدار محصول", "کد محصول"])
+    ws.append(["Product", "راستین 1", None, 0, "146"])
+    xlsx_path = tmp_path / "catalog.xlsx"
+    wb.save(xlsx_path)
+
+    cfg = DidarConfig(
+        base_url=_CFG.base_url, api_key=_CFG.api_key,
+        pipeline_id=_CFG.pipeline_id, pipeline_stage_id=_CFG.pipeline_stage_id,
+        default_product_category_id=_CFG.default_product_category_id,
+        product_catalog_xlsx=str(xlsx_path),
+    )
+    order = NormalizedOrder(
+        source="digikala", source_order_id="1", order_number="1",
+        created_at=datetime.now(timezone.utc), total_price=Decimal("100000"), status="new",
+        items=[OrderItem(
+            sku="DK-SOME-SKU", quantity=1, unit_price=Decimal("100000"), final_price=Decimal("100000"),
+            title="ست هدیه مسی فراز هنر مدل راستین کد 1 | چند رنگ | گارانتی اصالت و سلامت فیزیکی کالا",
+        )],
+    )
+
+    _mock_categories()
+    search_route = respx.post("https://app.didar.me/api/product/search").mock(
+        return_value=httpx.Response(200, json={"Response": [{"Id": "p-existing", "Code": "146"}]})
+    )
+    save_route = respx.post("https://app.didar.me/api/product/save").mock(
+        return_value=httpx.Response(200, json={"Response": {"Product": {"Id": "should-not-be-used"}}})
+    )
+    deal_route = respx.post("https://app.didar.me/api/deal/save").mock(
+        return_value=httpx.Response(200, json={"Response": {"Deal": {"Id": "d-1"}}})
+    )
+
+    client = DidarDealClient(config=cfg)
+    client.create_deal(contact_id="c-1", display_name="Someone", order=order)
+
+    search_body = search_route.calls[0].request.content
+    assert b'"Keywords":"146"' in search_body
+    assert not save_route.called  # matched existing catalog product - no create needed
+
+    deal_body = deal_route.calls[0].request.content
+    assert b'"ProductId":"p-existing"' in deal_body
+
+
+@respx.mock
 def test_deal_item_description_includes_order_number():
     """Regression test (client feedback, 2026-08): manually-entered deals
     have the order number typed into each item's توضیحات; auto-created
@@ -500,7 +554,10 @@ def test_sync_service_creates_post_sale_checklist_after_a_new_deal():
         deal_client=DidarDealClient(config=_CFG, product_client=DidarProductClient(config=_CFG)),
         activity_client=DidarActivityClient(config=activity_cfg),
     )
-    service.sync_order(_ORDER)
+    order_with_ship_time = NormalizedOrder(
+        **{**_ORDER.__dict__, "ship_time": datetime(2026, 8, 12, 18, 0, tzinfo=timezone.utc)}
+    )
+    service.sync_order(order_with_ship_time)
 
     assert activity_route.call_count == 6
     first_call_body = activity_route.calls[0].request.content

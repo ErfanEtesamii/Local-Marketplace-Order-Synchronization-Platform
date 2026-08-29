@@ -7,30 +7,18 @@ every marketplace's API returns prices in Rial - some return Toman
 they reach src/didar/deal_client.py, or every amount synced from that
 source is off by a factor of 10.
 
-PER-SOURCE UNIT, AND HOW CONFIDENT EACH ONE IS (2026-08-29):
-  - Faraz Honar (WooCommerce): TOMAN - confirmed directly by the client
-    checking real order data.
-  - Digikala: RIAL already - Digikala's own web service is documented
-    (by a third-party WooCommerce-integration vendor, not Digikala's
-    own docs directly, but describing Digikala's API specifically) as
-    Rial-based. Not from a Didar-side live test, so treat as
-    reasonably-but-not-100%-confirmed.
-  - Basalam: TOMAN - the official Basalam SDK's own quick-start example
-    prints a product's price with "تومان" next to it. Indirect (a docs
-    example, not a confirmed live order payload), so this is a
-    best-guess default, not a verified fact.
-  - SnappShop, Tapsi Shop: UNCONFIRMED - neither vendor's available
-    documentation states a currency unit anywhere. Defaulted to "rial"
-    (no conversion applied) purely to avoid silently guessing on money;
-    this is a placeholder, not a claim that it's correct.
+PER-SOURCE UNIT (confirmed by the client, 2026-08-29):
+  - Faraz Honar (WooCommerce): TOMAN
+  - Basalam: TOMAN
+  - SnappShop: TOMAN
+  - Digikala: RIAL
+  - Tapsi Shop: RIAL
 
 Each source's unit is a config value (see src/config.py's
 `price_unit` fields, one per marketplace, each reading a
-`<SOURCE>_PRICE_UNIT` env var), NOT hardcoded here - so if a default
-above turns out wrong, or SnappShop/Tapsi Shop's real unit gets
-confirmed later, it's a one-line .env change, not a code change.
-Whoever confirms a unit for real should also update the comment above
-and in .env.example so this docstring doesn't go stale.
+`<SOURCE>_PRICE_UNIT` env var), NOT hardcoded here - so if any of the
+above ever turns out wrong (e.g. a marketplace changes its API), it's
+a one-line .env change, not a code change.
 """
 from __future__ import annotations
 

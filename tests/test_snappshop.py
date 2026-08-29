@@ -89,7 +89,7 @@ def test_fetch_order_detail_maps_items_defensively():
     assert order.source == "snappshop"
     assert len(order.items) == 1
     assert order.items[0].quantity == 3
-    assert order.total_price == 150000
+    assert order.total_price == 1500000  # 150000 تومان × ۱۰ (SnappShopConfig defaults to price_unit="toman")
 
 
 @respx.mock
@@ -99,3 +99,39 @@ def test_discover_vendor_id_helper():
     )
     adapter = SnappShopAdapter(config=_CFG)
     assert adapter.discover_vendor_id() == "v-42"
+
+
+@respx.mock
+def test_price_unit_rial_config_does_not_multiply():
+    """
+    Regression test for the Toman->Rial conversion (src/currency.py):
+    a vendor explicitly configured with price_unit="rial" must NOT have
+    its prices multiplied by 10 - only "toman" (SnappShopConfig's
+    default, confirmed by the client) does.
+    """
+    rial_cfg = SnappShopConfig(
+        base_url="https://apix.snappshop.ir",
+        auth_token="test-token",
+        agent_user="agent-123",
+        vendor_id="v1",
+        price_unit="rial",
+    )
+    respx.get("https://apix.snappshop.ir/vendors/v1/orders/A1").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "data": {
+                    "order_number": "A1",
+                    "status": "confirmed",
+                    "created_at": "2026-08-10T09:00:00Z",
+                    "total_price": 150000,
+                    "items": [],
+                }
+            },
+        )
+    )
+
+    adapter = SnappShopAdapter(config=rial_cfg)
+    order = adapter.fetch_order_detail("A1")
+
+    assert order.total_price == 150000

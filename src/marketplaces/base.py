@@ -55,6 +55,23 @@ class NormalizedOrder:
     customer_full_name: str | None = None
     customer_mobile: str | None = None
 
+    # When the order was actually shipped (or the marketplace's committed
+    # "must ship by" deadline - whichever a given adapter's API exposes).
+    # This is the single anchor every post-sale checklist due-date (new
+    # call, SMS x3, satisfaction call - see src/didar/scheduling.py) is
+    # computed from, per client's 2026-08 timing rules. None means the
+    # adapter doesn't yet expose this field for its marketplace - the
+    # checklist is skipped for that order rather than guessing a
+    # fabricated time (see DidarActivityClient.create_post_sale_checklist).
+    ship_time: datetime | None = None
+
+    # URL of the order/product photo as shown on the marketplace, if the
+    # source API exposes one directly. Used to attach that photo to the
+    # "ارسال محصول" (ship) Activity in Didar - see
+    # DidarActivityClient.create_post_sale_checklist. None means no
+    # attachment is uploaded for that order (not an error).
+    product_image_url: str | None = None
+
 
 class MarketplaceAdapter(ABC):
     """
