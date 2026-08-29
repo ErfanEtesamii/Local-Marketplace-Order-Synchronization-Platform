@@ -23,11 +23,30 @@ def _get(key: str, default: str = "") -> str:
     return os.getenv(key, default)
 
 
+def _get_price_unit(key: str, default: str) -> str:
+    """Reads a <SOURCE>_PRICE_UNIT env var - must be "toman" or "rial"
+    (case-insensitive). Fails loudly on anything else rather than
+    silently treating a typo as "rial" (no conversion) - wrong money
+    should be visible immediately, not discovered later in Didar."""
+    value = _get(key, default).strip().lower()
+    if value not in ("toman", "rial"):
+        raise ValueError(
+            f"{key}={value!r} is invalid - must be 'toman' or 'rial' "
+            f"(see src/currency.py for what each source is currently set to)"
+        )
+    return value
+
+
 @dataclass(frozen=True)
 class TapsiShopConfig:
     base_url: str = field(default_factory=lambda: _get("TAPSISHOP_BASE_URL"))
     auth_token: str = field(default_factory=lambda: _get("TAPSISHOP_AUTH_TOKEN"))
     webhook_token: str = field(default_factory=lambda: _get("TAPSISHOP_WEBHOOK_TOKEN"))
+    # UNCONFIRMED - see src/currency.py's module docstring. Defaults to
+    # "rial" (no conversion) until someone checks a real order.
+    price_unit: str = field(
+        default_factory=lambda: _get_price_unit("TAPSISHOP_PRICE_UNIT", "rial")
+    )
 
 
 @dataclass(frozen=True)
@@ -37,6 +56,11 @@ class DigikalaConfig:
     client_secret: str = field(default_factory=lambda: _get("DIGIKALA_CLIENT_SECRET"))
     access_token: str = field(default_factory=lambda: _get("DIGIKALA_ACCESS_TOKEN"))
     refresh_token: str = field(default_factory=lambda: _get("DIGIKALA_REFRESH_TOKEN"))
+    # Digikala's web service is documented as Rial-based - see
+    # src/currency.py's module docstring for the source/confidence.
+    price_unit: str = field(
+        default_factory=lambda: _get_price_unit("DIGIKALA_PRICE_UNIT", "rial")
+    )
 
 
 @dataclass(frozen=True)
@@ -51,12 +75,22 @@ class SnappShopConfig:
     auth_token: str = field(default_factory=lambda: _get("SNAPPSHOP_AUTH_TOKEN"))
     agent_user: str = field(default_factory=lambda: _get("SNAPPSHOP_AGENT_USER"))
     vendor_id: str = field(default_factory=lambda: _get("SNAPPSHOP_VENDOR_ID"))
+    # UNCONFIRMED - see src/currency.py's module docstring. Defaults to
+    # "rial" (no conversion) until someone checks a real order.
+    price_unit: str = field(
+        default_factory=lambda: _get_price_unit("SNAPPSHOP_PRICE_UNIT", "rial")
+    )
 
 
 @dataclass(frozen=True)
 class BasalamConfig:
     base_url: str = field(default_factory=lambda: _get("BASALAM_BASE_URL"))
     access_token: str = field(default_factory=lambda: _get("BASALAM_ACCESS_TOKEN"))
+    # Best-guess default, not confirmed against a live order - see
+    # src/currency.py's module docstring for the (indirect) evidence.
+    price_unit: str = field(
+        default_factory=lambda: _get_price_unit("BASALAM_PRICE_UNIT", "toman")
+    )
 
 
 @dataclass(frozen=True)
@@ -64,6 +98,10 @@ class FarazHonarConfig:
     base_url: str = field(default_factory=lambda: _get("FARAZHONAR_BASE_URL"))
     consumer_key: str = field(default_factory=lambda: _get("FARAZHONAR_CONSUMER_KEY"))
     consumer_secret: str = field(default_factory=lambda: _get("FARAZHONAR_CONSUMER_SECRET"))
+    # Confirmed by the client checking real order data (2026-08-29).
+    price_unit: str = field(
+        default_factory=lambda: _get_price_unit("FARAZHONAR_PRICE_UNIT", "toman")
+    )
 
 
 @dataclass(frozen=True)

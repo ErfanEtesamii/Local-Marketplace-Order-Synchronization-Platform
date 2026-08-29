@@ -85,6 +85,7 @@ from pathlib import Path
 import httpx
 
 from src.config import DigikalaConfig, settings
+from src.currency import to_rial
 from src.http_utils import default_retry, raise_for_status_with_body
 from src.logger import get_logger
 from src.marketplaces.base import MarketplaceAdapter, NormalizedOrder, OrderItem
@@ -260,8 +261,8 @@ class DigikalaAdapter(MarketplaceAdapter):
                     sku=str(r.get("product_supplier_code", r.get("product_id", ""))),
                     title=str(r.get("product_variant_title", "")),
                     quantity=int(r.get("quantity", 1)),
-                    unit_price=_to_decimal(r.get("unit_price")),
-                    final_price=_to_decimal(r.get("total_price")),
+                    unit_price=to_rial(_to_decimal(r.get("unit_price")), self._config.price_unit),
+                    final_price=to_rial(_to_decimal(r.get("total_price")), self._config.price_unit),
                 )
                 for r in item_rows
             ]

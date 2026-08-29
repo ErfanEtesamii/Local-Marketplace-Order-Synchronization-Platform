@@ -49,6 +49,7 @@ from decimal import Decimal, InvalidOperation
 import httpx
 
 from src.config import SnappShopConfig, settings
+from src.currency import to_rial
 from src.finglish import persianize_name
 from src.http_utils import default_retry, raise_for_status_with_body
 from src.logger import get_logger
@@ -143,7 +144,7 @@ class SnappShopAdapter(MarketplaceAdapter):
             source_order_id=str(raw.get("order_number", raw.get("id", ""))),
             order_number=str(raw.get("order_number", raw.get("id", ""))),
             created_at=_parse_date(raw.get("created_at", raw.get("event_at"))),
-            total_price=_to_decimal(raw.get("total_price", raw.get("amount"))),
+            total_price=to_rial(_to_decimal(raw.get("total_price", raw.get("amount"))), self._config.price_unit),
             status=str(raw.get("status", "unknown")),
             items=[],  # list endpoint - fetch_order_detail has full items
             customer_full_name=None,
@@ -156,8 +157,13 @@ class SnappShopAdapter(MarketplaceAdapter):
                 sku=str(item.get("sku", item.get("vendor_product_info_id", ""))),
                 title=str(item.get("title", item.get("product_title", ""))),
                 quantity=int(item.get("quantity", item.get("deliverable_quantity", 1))),
-                unit_price=_to_decimal(item.get("unit_price", item.get("price"))),
-                final_price=_to_decimal(item.get("final_price", item.get("total_price"))),
+                unit_price=to_rial(
+                    _to_decimal(item.get("unit_price", item.get("price"))), self._config.price_unit
+                ),
+                final_price=to_rial(
+                    _to_decimal(item.get("final_price", item.get("total_price"))),
+                    self._config.price_unit,
+                ),
             )
             for item in raw.get("items", raw.get("products", []))
         ]
@@ -169,7 +175,7 @@ class SnappShopAdapter(MarketplaceAdapter):
             source_order_id=str(raw.get("order_number", "")),
             order_number=str(raw.get("order_number", "")),
             created_at=_parse_date(raw.get("created_at")),
-            total_price=_to_decimal(raw.get("total_price", raw.get("amount"))),
+            total_price=to_rial(_to_decimal(raw.get("total_price", raw.get("amount"))), self._config.price_unit),
             status=str(raw.get("status", "unknown")),
             items=items,
             # Only populated when the vendor (not SnappShop) handles

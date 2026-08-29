@@ -47,6 +47,7 @@ from decimal import Decimal, InvalidOperation
 import httpx
 
 from src.config import TapsiShopConfig, settings
+from src.currency import to_rial
 from src.http_utils import default_retry, raise_for_status_with_body
 from src.logger import get_logger
 from src.marketplaces.base import MarketplaceAdapter, NormalizedOrder, OrderItem
@@ -165,8 +166,8 @@ class TapsiShopAdapter(MarketplaceAdapter):
                 # The detail response does not expose a per-item quantity field;
                 # each entry represents one unit. Revisit if the vendor adds one.
                 quantity=1,
-                unit_price=_to_decimal(i.get("price")),
-                final_price=_to_decimal(i.get("finalPrice")),
+                unit_price=to_rial(_to_decimal(i.get("price")), self._config.price_unit),
+                final_price=to_rial(_to_decimal(i.get("finalPrice")), self._config.price_unit),
             )
             for i in raw_items
         ]
@@ -176,7 +177,10 @@ class TapsiShopAdapter(MarketplaceAdapter):
             source_order_id=str(source_order_id),
             order_number=str(order.get("orderNumber", source_order_id)),
             created_at=_parse_date(order.get("orderDate")),
-            total_price=_to_decimal(order.get("amountAfterDiscount") or order.get("originalAmount")),
+            total_price=to_rial(
+                _to_decimal(order.get("amountAfterDiscount") or order.get("originalAmount")),
+                self._config.price_unit,
+            ),
             status=str(order.get("status", "unknown")),
             items=items,
             customer_full_name=None,  # not available via REST polling - see module docstring
@@ -189,7 +193,7 @@ class TapsiShopAdapter(MarketplaceAdapter):
             source_order_id=str(raw.get("id")),
             order_number=str(raw.get("orderNumber", raw.get("id"))),
             created_at=_parse_date(raw.get("createdOn")),
-            total_price=_to_decimal(raw.get("finalPrice")),
+            total_price=to_rial(_to_decimal(raw.get("finalPrice")), self._config.price_unit),
             status=str(raw.get("stateTitle", raw.get("stateCode", "unknown"))),
             items=[],  # list endpoint doesn't include line items - fetch_order_detail does
             customer_full_name=None,

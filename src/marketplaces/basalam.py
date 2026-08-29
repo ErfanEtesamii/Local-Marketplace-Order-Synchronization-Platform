@@ -40,6 +40,7 @@ import httpx
 from src.http_utils import default_retry, raise_for_status_with_body
 
 from src.config import BasalamConfig, settings
+from src.currency import to_rial
 from src.finglish import persianize_name
 from src.logger import get_logger
 from src.marketplaces.base import MarketplaceAdapter, NormalizedOrder, OrderItem
@@ -137,7 +138,7 @@ class BasalamAdapter(MarketplaceAdapter):
             source_order_id=str(raw.get("id")),
             order_number=str(order.get("id", raw.get("id"))),
             created_at=_parse_date(raw.get("created_at")),
-            total_price=_to_decimal(raw.get("total_items_price")),
+            total_price=to_rial(_to_decimal(raw.get("total_items_price")), self._config.price_unit),
             status=str(status.get("title", "unknown")),
             items=[],  # list endpoint gives summary items only - fetch_order_detail has full items
             customer_full_name=None,
@@ -157,8 +158,11 @@ class BasalamAdapter(MarketplaceAdapter):
                 sku=str((item.get("product") or {}).get("id", item.get("id", ""))),
                 title=str(item.get("title", "")),
                 quantity=int(item.get("quantity", 1)),
-                unit_price=_to_decimal(item.get("price")),
-                final_price=_to_decimal(item.get("price", 0)) * int(item.get("quantity", 1)),
+                unit_price=to_rial(_to_decimal(item.get("price")), self._config.price_unit),
+                final_price=to_rial(
+                    _to_decimal(item.get("price", 0)) * int(item.get("quantity", 1)),
+                    self._config.price_unit,
+                ),
             )
             for item in raw.get("items", [])
         ]
@@ -168,7 +172,7 @@ class BasalamAdapter(MarketplaceAdapter):
             source_order_id=str(raw.get("id")),
             order_number=str(order.get("id", raw.get("id"))),
             created_at=_parse_date(raw.get("created_at")),
-            total_price=_to_decimal(raw.get("total_items_price")),
+            total_price=to_rial(_to_decimal(raw.get("total_items_price")), self._config.price_unit),
             status=str(status.get("title", "unknown")),
             items=items,
             # Confirmed via live testing: customer name/mobile came back

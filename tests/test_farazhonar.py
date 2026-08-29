@@ -44,7 +44,7 @@ def test_fetch_new_orders_uses_basic_auth_and_includes_line_items_directly():
     order = orders[0]
     assert order.source == "farazhonar"
     assert order.source_order_id == "501"
-    assert order.total_price == 480000
+    assert order.total_price == 4800000  # 480000 تومان × ۱۰ (FarazHonarConfig.price_unit="toman")
     assert len(order.items) == 2  # got items from the LIST call, no detail call needed
     assert order.customer_full_name == "علی رضایی"
     assert order.customer_mobile == "09121234567"
@@ -99,3 +99,25 @@ def test_fetch_order_detail_converts_english_billing_name_to_persian():
     adapter = FarazHonarAdapter(config=_CFG)
     order = adapter.fetch_order_detail("503")
     assert order.customer_full_name == "محمد احمدی"
+
+
+@respx.mock
+def test_price_unit_rial_config_does_not_multiply():
+    """
+    Regression test for the Toman->Rial conversion (src/currency.py):
+    a store explicitly configured with price_unit="rial" must NOT have
+    its prices multiplied by 10 - only "toman" (FarazHonarConfig's
+    default, confirmed for the real Faraz Honar store) does.
+    """
+    rial_cfg = FarazHonarConfig(
+        base_url="https://farazhonar.com",
+        consumer_key="ck_test",
+        consumer_secret="cs_test",
+        price_unit="rial",
+    )
+    respx.get("https://farazhonar.com/wp-json/wc/v3/orders/501").mock(
+        return_value=httpx.Response(200, json=_RAW_ORDER)
+    )
+    adapter = FarazHonarAdapter(config=rial_cfg)
+    order = adapter.fetch_order_detail("501")
+    assert order.total_price == 480000

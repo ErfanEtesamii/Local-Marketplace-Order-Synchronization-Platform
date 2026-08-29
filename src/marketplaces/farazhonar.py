@@ -53,6 +53,7 @@ from decimal import Decimal, InvalidOperation
 import httpx
 
 from src.config import FarazHonarConfig, settings
+from src.currency import to_rial
 from src.finglish import persianize_name
 from src.http_utils import default_retry, raise_for_status_with_body
 from src.logger import get_logger
@@ -158,8 +159,8 @@ class FarazHonarAdapter(MarketplaceAdapter):
                 sku=str(item.get("sku") or item.get("product_id", "")),
                 title=str(item.get("name", "")),
                 quantity=int(item.get("quantity", 1)),
-                unit_price=_to_decimal(item.get("price")),
-                final_price=_to_decimal(item.get("total")),
+                unit_price=to_rial(_to_decimal(item.get("price")), self._config.price_unit),
+                final_price=to_rial(_to_decimal(item.get("total")), self._config.price_unit),
                 category=self._resolve_category(item.get("product_id")),
             )
             for item in raw.get("line_items", [])
@@ -170,7 +171,7 @@ class FarazHonarAdapter(MarketplaceAdapter):
             source_order_id=str(raw.get("id")),
             order_number=str(raw.get("number", raw.get("id"))),
             created_at=_parse_date(raw.get("date_created_gmt")),
-            total_price=_to_decimal(raw.get("total")),
+            total_price=to_rial(_to_decimal(raw.get("total")), self._config.price_unit),
             status=str(raw.get("status", "unknown")),
             items=items,
             customer_full_name=full_name,
