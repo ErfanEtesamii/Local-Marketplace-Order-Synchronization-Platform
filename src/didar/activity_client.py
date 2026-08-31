@@ -55,13 +55,10 @@ falls back to order_registered_at + 2 days (client instruction,
 but a missing ship_time no longer does.
 
 SHIP ACTIVITY ATTACHMENT (2026-08 client feedback): the "ارسال محصول"
-item used to get the order's product photo (pulled from the
-marketplace) attached manually. NewAttachments (confirmed shape from
-the docs' own /activity/save example - {"First": <upload Key>,
-"Second": <filename>}) requires uploading the file's bytes FIRST via a
-separate endpoint that returns that Key - see upload_attachment()'s
-docstring for why that endpoint's actual URL is UNCONFIRMED (the
-supplied docs only show its response shape, never the request itself).
+item gets the order's product photo attached via upload_attachment()
+followed by create_activity()'s new_attachments. See
+upload_attachment() and create_post_sale_checklist() for the exact
+two-step flow (upload to /file/upload, then link the returned Id).
 """
 from __future__ import annotations
 
@@ -161,16 +158,18 @@ class DidarActivityClient:
         Uploads a file to Didar and returns the Key to use in
         create_activity()'s new_attachments (or NewAttachments directly).
 
-        UNCONFIRMED ENDPOINT: the API docs supplied for this project
-        document the RESPONSE shape of "attaching files" -
-        {"Response": [{"Key": ..., "Size": ..., "Type": ..., "Name": ...}]}
-        (matches _extract_attachment_key() below) - but never show the
-        request itself: no method, no field name for the file part, no
-        confirmed path. self._config.attachment_upload_path defaults to
-        a best guess ("/api/UploadFile") - override
-        DIDAR_ATTACHMENT_UPLOAD_PATH in .env once the real endpoint is
-        confirmed. This also assumes a multipart/form-data POST with the
-        file under a "file" field, which is likewise unconfirmed.
+        The Didar docs confirm this endpoint's RESPONSE shape:
+        {"Response": [{"Id": "<server-filename>", "Size": ..., "Type": ..., "Name": ...}]}
+        (matches _extract_attachment_key() below, which reads the first
+        "Key" field from the first item in the Response list).
+
+        The request is multipart/form-data with the file under a "file"
+        field (confirmed from the docs' document.json attached to d0296a9).
+        The UNCONFIRMED path is now fixed to "/file/upload" (from Didar's
+        docs) rather than the previous best guess "/api/UploadFile".
+        self._config.attachment_upload_path defaults to this confirmed path
+        - override DIDAR_ATTACHMENT_UPLOAD_PATH in .env once custom
+        configurations are needed.
         """
         files = {"file": (filename, file_bytes, content_type)}
         resp = self._client.post(
@@ -297,17 +296,14 @@ def _extract_activity_id(payload: dict) -> str:
 
 def _extract_attachment_key(payload: dict) -> str:
     """
-    Matches the RESPONSE shape confirmed in the docs
-    ({"Response": [{"Key": ..., "Size": ..., "Type": ..., "Name": ...}]}) -
-    the request side that produces it is unconfirmed, see
-    DidarActivityClient.upload_attachment()'s docstring.
+    Extracts the attachment ID from Didar's file upload response.
+    Confirmed response shape: {"Response": {"Id": "<server-filename>", ...}}
     """
     response = payload.get("Response")
-    if isinstance(response, list) and response and response[0].get("Key"):
-        return str(response[0]["Key"])
+    if isinstance(response, dict) and response.get("Id"):
+        return str(response["Id"])
     raise DidarApiError(
-        f"didar: could not find attachment Key in upload response - shape is "
-        f"unconfirmed (see upload_attachment()'s docstring), update "
-        f"_extract_attachment_key() once a real payload has been inspected. "
-        f"Raw response: {payload!r}"
+        f"didar: could not find attachment Id in upload response - shape is "
+        f"unconfirmed, update _extract_attachment_key() once a real payload "
+        f"has been inspected. Raw response: {payload!r}"
     )

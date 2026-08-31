@@ -170,8 +170,10 @@ class DidarConfig:
     # captured request from the web app), no code change needed.
     # Relative to base_url, which already includes "/api" (same
     # convention as every other path in this file, e.g. "/activity/save").
+    # CONFIRMED (2026-09, from Didar API docs): POST /api/file/upload
+    # returns {"Response": {"Id": "<server-filename>"}}.
     attachment_upload_path: str = field(
-        default_factory=lambda: _get("DIDAR_ATTACHMENT_UPLOAD_PATH", "/UploadFile")
+        default_factory=lambda: _get("DIDAR_ATTACHMENT_UPLOAD_PATH", "/file/upload")
     )
 
     @property

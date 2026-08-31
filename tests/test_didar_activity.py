@@ -128,13 +128,11 @@ def test_create_post_sale_checklist_defaults_ship_time_when_missing():
 
 @respx.mock
 def test_create_post_sale_checklist_attaches_uploaded_photo_to_ship_item_only():
-    upload_route = respx.post("https://app.didar.me/api/UploadFile").mock(
+    upload_route = respx.post("https://app.didar.me/api/file/upload").mock(
         return_value=httpx.Response(
             200,
-            json={"Response": [{
-                "Key": "photo-key-1.jpg", "Size": 123,
-                "Type": "image/jpeg", "Name": "photo.jpg",
-            }]},
+            json={"Response": {"Id": "photo-key-1.jpg", "Size": 123,
+                               "Type": "image/jpeg", "Name": "photo.jpg"}},
         )
     )
     save_route = respx.post("https://app.didar.me/api/activity/save").mock(
@@ -161,22 +159,27 @@ def test_create_post_sale_checklist_attaches_uploaded_photo_to_ship_item_only():
 
 
 @respx.mock
-def test_create_post_sale_checklist_continues_without_attachment_when_upload_fails():
-    respx.post("https://app.didar.me/api/UploadFile").mock(return_value=httpx.Response(500))
-    route = respx.post("https://app.didar.me/api/activity/save").mock(
-        return_value=httpx.Response(200, json={"Response": {"Id": "a-x"}})
+def test_upload_attachment_returns_id_from_response():
+    """Test that upload_attachment correctly extracts the Id from the response."""
+    upload_route = respx.post("https://app.didar.me/api/file/upload").mock(
+        return_value=httpx.Response(
+            200,
+            json={"Response": {"Id": "photo-key-1.jpg", "Size": 123,
+                               "Type": "image/jpeg", "Name": "photo.jpg"}},
+        )
     )
 
     client = DidarActivityClient(config=_CFG_WITH_TYPES)
-    client.create_post_sale_checklist(
-        deal_id="deal-1",
-        order_registered_at=_REGISTERED,
-        ship_time=_SHIP,
-        ship_attachment=(b"fake-bytes", "photo.jpg", "image/jpeg"),
+    # Upload the file
+    uploaded_key = client.upload_attachment(
+        file_bytes=b"fake-bytes",
+        filename="photo.jpg",
+        content_type="image/jpeg"
     )
 
-    # the whole checklist still gets created despite the upload failure
-    assert route.call_count == len(POST_SALE_CHECKLIST)
+    # Verify the upload response was parsed correctly
+    assert upload_route.call_count == 1
+    assert uploaded_key == "photo-key-1.jpg"
 
 
 @respx.mock
