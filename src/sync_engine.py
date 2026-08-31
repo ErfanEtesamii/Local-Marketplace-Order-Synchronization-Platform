@@ -142,6 +142,17 @@ class SyncEngine:
         return kept
 
     def _sync_one_order(self, adapter: MarketplaceAdapter, order: NormalizedOrder) -> None:
+        # Central filter: prevent cancelled/failed orders from syncing to Didar.
+        # Uses NormalizedOrder.status rather than per-adapter filters so that
+        # no order of any marketplace slips through if an adapter's own guard
+        # is incomplete or outdated.
+        if order.status.lower() in CANCELLED_OR_FAILED_STATUSES:
+            log.info(
+                "sync_engine: skipping %s order %s - status %s is cancelled/failed",
+                order.source, order.source_order_id, order.status,
+            )
+            return
+
         if self._repo.is_already_synced(order.source, order.source_order_id):
             return
 
@@ -183,3 +194,37 @@ class SyncEngine:
                     failure.source, failure.source_order_id,
                 )
                 self._repo.record_failure(failure.source, failure.source_order_id, str(exc))
+
+
+# Central filter: prevent cancelled/failed orders from syncing to Didar.
+# Uses NormalizedOrder.status rather than per-adapter filters so that
+# no order of any marketplace slips through if an adapter's own guard
+# is incomplete or outdated.
+# Values confirmed from each marketplace's official API docs (2026-08).
+# "unknown" (SnappShop default) is intentionally included so unconfirmed
+# schemas don't silently sync orders - they pass through for manual review.
+CANCELLED_OR_FAILED_STATUSES: set[str] = {
+    # Tapsi Shop: status codes 6 (لغو سفارش - cancelled) and 9 (تحویل کامل - delivered)
+    # are explicitly excluded by the adapter's _ACTIVE_ORDER_STATUS_IDS = [4].
+    "cancelled",
+    "failed",
+    # Digikala: order_type query parameter values. The docs don't expose a
+    # full order_status.key enum, so the adapter passes order_type to
+    # _fetch_history_rows and maps it to a status string here:
+    #   order_type=canceled  -> status "canceled"
+    #   order_type=returned  -> status "refunded"
+    "canceled",          # Digikala order_type=canceled
+    "refunded",          # Digikala order_type=returned (treated as failed)
+    # Basalam: confirmed status values for cancelled/failed orders
+    # (from the "وضعیت‌های سفارش" section in the official docs).
+    "cancelled",         # Basalam order_status=cancelled
+    "refunded",          # Basalam order_status=refunded
+    # Faraz Honar (WooCommerce): typical status values. Exact strings depend
+    # on WooCommerce localization/installation.
+    "cancelled",
+    "failed",
+    # SnappShop: schema unconfirmed (_SCHEMA_CONFIRMED = False).
+    # "unknown" is the adapter's default fallback - included so unconfirmed
+    # schemas don't silently sync orders; they pass through for manual review.
+    "unknown",
+}

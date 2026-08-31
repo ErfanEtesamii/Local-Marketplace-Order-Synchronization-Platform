@@ -31,6 +31,10 @@ class OrderItem:
     # always filing new products under one catch-all category. None means
     # "unknown" - falls back to DIDAR_DEFAULT_PRODUCT_CATEGORY_ID.
     category: str | None = None
+    # URL of the product's first image, used to attach to the
+    # "ارسال محصول" (ship) Activity in Didar - see
+    # NormalizedOrder.product_image_url docs. None means no attachment.
+    product_image_url: str | None = None
 
 
 @dataclass(frozen=True)

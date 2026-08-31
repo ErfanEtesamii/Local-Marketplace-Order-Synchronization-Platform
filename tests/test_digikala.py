@@ -1,5 +1,6 @@
 from datetime import datetime, timezone
 
+import pytest
 import respx
 import httpx
 
@@ -243,3 +244,136 @@ def test_refreshed_tokens_are_persisted_and_reused_on_restart(tmp_path):
 
     assert access_token == "fresh-token"
     assert refresh_token == "rotated-refresh-token"
+
+
+@respx.mock
+def test_fetch_order_detail_finds_order_in_full_history():
+    """
+    Regression test for a real bug: fetch_order_detail previously passed
+    search_text_all=source_order_id, but that param doesn't search by
+    order_id - it matches serial / shipment_id / product identifiers.
+    The local filter found nothing, so every detail fetch failed with
+    "order not found in history", breaking the entire Digikala sync.
+
+    The fix: fetch full history (no search_text_all) and let
+    _group_rows_into_orders group by order_id, then pick the matching one.
+    """
+    route = respx.get("https://seller.digikala.com/open-api/v1/orders/history").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "data": {
+                    "pager": {"total_pages": 1},
+                    "items": [
+                        {
+                            "order_id": "371575168",
+                            "order_created_at": "2026-08-10T09:00:00+03:30",
+                            "product_variant_title": "محصول A",
+                            "product_supplier_code": "SKU-A",
+                            "quantity": 1,
+                            "unit_price": 100000,
+                            "total_price": 100000,
+                            "order_status": {"key": "confirmed", "title": "نهایی شده"},
+                        },
+                        {
+                            "order_id": "371573884",
+                            "order_created_at": "2026-08-11T09:00:00+03:30",
+                            "product_variant_title": "محصول B",
+                            "product_supplier_code": "SKU-B",
+                            "quantity": 2,
+                            "unit_price": 50000,
+                            "total_price": 100000,
+                            "order_status": {"key": "confirmed", "title": "نهایی شده"},
+                        },
+                    ],
+                },
+            },
+        )
+    )
+
+    adapter = DigikalaAdapter(config=_CFG)
+    order = adapter.fetch_order_detail("371575168")
+
+    assert order.source == "digikala"
+    assert order.source_order_id == "371575168"
+    assert order.order_number == "371575168"
+    assert len(order.items) == 1
+    assert order.items[0].title == "محصول A"
+    assert order.status == "نهایی شده"
+    # The request must NOT use search_text_all (the broken param).
+    assert "search_text_all" not in route.calls[0].request.url.params
+
+
+@respx.mock
+def test_fetch_order_detail_groups_multi_item_rows_for_target_order():
+    """A multi-item order must be grouped correctly when fetched by detail."""
+    route = respx.get("https://seller.digikala.com/open-api/v1/orders/history").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "data": {
+                    "pager": {"total_pages": 1},
+                    "items": [
+                        {
+                            "order_id": "371575168",
+                            "order_created_at": "2026-08-10T09:00:00+03:30",
+                            "product_variant_title": "محصول A",
+                            "product_supplier_code": "SKU-A",
+                            "quantity": 1,
+                            "unit_price": 100000,
+                            "total_price": 100000,
+                            "order_status": {"key": "confirmed", "title": "نهایی شده"},
+                        },
+                        {
+                            "order_id": "371575168",
+                            "order_created_at": "2026-08-10T09:00:00+03:30",
+                            "product_variant_title": "محصول B",
+                            "product_supplier_code": "SKU-B",
+                            "quantity": 2,
+                            "unit_price": 50000,
+                            "total_price": 100000,
+                            "order_status": {"key": "confirmed", "title": "نهایی شده"},
+                        },
+                    ],
+                },
+            },
+        )
+    )
+
+    adapter = DigikalaAdapter(config=_CFG)
+    order = adapter.fetch_order_detail("371575168")
+
+    assert len(order.items) == 2
+    assert order.total_price == 200000
+
+
+@respx.mock
+def test_fetch_order_detail_raises_when_order_not_found():
+    """If the target order_id isn't in the history, fetch_order_detail must
+    raise ValueError - same as before the fix, but now for the right reason."""
+    respx.get("https://seller.digikala.com/open-api/v1/orders/history").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "data": {
+                    "pager": {"total_pages": 1},
+                    "items": [
+                        {
+                            "order_id": "99999",
+                            "order_created_at": "2026-08-10T09:00:00+03:30",
+                            "product_variant_title": "محصول دیگر",
+                            "product_supplier_code": "SKU-OTHER",
+                            "quantity": 1,
+                            "unit_price": 10000,
+                            "total_price": 10000,
+                            "order_status": {"key": "confirmed", "title": "نهایی شده"},
+                        },
+                    ],
+                },
+            },
+        )
+    )
+
+    adapter = DigikalaAdapter(config=_CFG)
+    with pytest.raises(ValueError, match="371575168"):
+        adapter.fetch_order_detail("371575168")

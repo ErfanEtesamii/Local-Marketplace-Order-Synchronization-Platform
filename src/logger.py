@@ -6,6 +6,7 @@ when running interactively during development / debugging on the server).
 """
 from __future__ import annotations
 
+import io
 import logging
 import sys
 import time
@@ -18,6 +19,50 @@ _LOG_DIR = Path(__file__).resolve().parent.parent / "logs"
 _LOG_DIR.mkdir(exist_ok=True)
 
 _FORMAT = "%(asctime)s | %(levelname)-8s | %(name)s | %(message)s"
+
+
+class _EncodingSafeStream(io.TextIOBase):
+    """
+    Wraps a stream (typically sys.stdout) so that writes never raise
+    UnicodeEncodeError. Any character the underlying stream can't encode
+    is replaced with U+FFFD rather than crashing the log call - the
+    alternative (letting an exception bubble up) would break the sync
+    itself every time a Persian title or message got logged, and worse,
+    it would do so silently in the sense that the file handler (which
+    DOES support utf-8) would still record everything correctly - only
+    the console output would be affected.
+
+    This matters specifically on Windows: the default console codepage
+    (cp1252 / cp437) has no Persian glyphs, so logging a Persian string
+    through the raw stdout stream raises UnicodeEncodeError. On Linux
+    and macOS the terminal is usually utf-8 and this wrapper is a
+    no-op, so it costs nothing there.
+    """
+
+    def __init__(self, stream) -> None:
+        self._stream = stream
+
+    def write(self, data: str) -> int:
+        try:
+            return self._stream.write(data)
+        except UnicodeEncodeError:
+            # Replace the unencodable characters with the replacement
+            # character and retry - never fail the log call.
+            encoding = getattr(self._stream, "encoding", None) or "ascii"
+            safe = data.encode(encoding, errors="replace").decode(encoding)
+            return self._stream.write(safe)
+
+    def flush(self) -> None:
+        try:
+            self._stream.flush()
+        except (ValueError, OSError):
+            # Stream may already be closed (e.g. during interpreter
+            # shutdown) - swallowing here is intentional, matching how
+            # logging.StreamHandler itself ignores closed streams.
+            pass
+
+    def writable(self) -> bool:
+        return True
 
 
 class _WindowsSafeTimedRotatingFileHandler(TimedRotatingFileHandler):
@@ -71,7 +116,11 @@ def get_logger(name: str) -> logging.Logger:
 
     formatter = logging.Formatter(_FORMAT)
 
-    console_handler = logging.StreamHandler(sys.stdout)
+    # Use encoding-safe wrapper for console output to handle non-ASCII characters
+    # (e.g. Persian activity titles, product catalog titles) on Windows consoles
+    # that have encoding like cp1252 and can't natively handle Unicode.
+    safe_stdout = _EncodingSafeStream(sys.stdout)
+    console_handler = logging.StreamHandler(safe_stdout)
     console_handler.setFormatter(formatter)
 
     file_handler = _WindowsSafeTimedRotatingFileHandler(

@@ -40,14 +40,13 @@ def test_basalam_price_unit_defaults_to_toman(monkeypatch):
     assert BasalamConfig().price_unit == "toman"
 
 
-def test_tapsishop_price_unit_defaults_to_rial(monkeypatch):
+def test_tapsishop_and_snappshop_price_unit_default_to_rial_when_unconfirmed(monkeypatch):
+    # Neither vendor's docs state a currency unit - default to "rial"
+    # (no conversion) rather than guessing, until confirmed otherwise.
     monkeypatch.delenv("TAPSISHOP_PRICE_UNIT", raising=False)
-    assert TapsiShopConfig().price_unit == "rial"
-
-
-def test_snappshop_price_unit_defaults_to_toman(monkeypatch):
     monkeypatch.delenv("SNAPPSHOP_PRICE_UNIT", raising=False)
-    assert SnappShopConfig().price_unit == "toman"
+    assert TapsiShopConfig().price_unit == "rial"
+    assert SnappShopConfig().price_unit == "rial"
 
 
 def test_price_unit_env_var_overrides_default(monkeypatch):

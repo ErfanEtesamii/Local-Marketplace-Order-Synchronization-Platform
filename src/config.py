@@ -42,7 +42,8 @@ class TapsiShopConfig:
     base_url: str = field(default_factory=lambda: _get("TAPSISHOP_BASE_URL"))
     auth_token: str = field(default_factory=lambda: _get("TAPSISHOP_AUTH_TOKEN"))
     webhook_token: str = field(default_factory=lambda: _get("TAPSISHOP_WEBHOOK_TOKEN"))
-    # Confirmed by the client (2026-08-29): Tapsi Shop prices are Rial.
+    # UNCONFIRMED - see src/currency.py's module docstring. Defaults to
+    # "rial" (no conversion) until someone checks a real order.
     price_unit: str = field(
         default_factory=lambda: _get_price_unit("TAPSISHOP_PRICE_UNIT", "rial")
     )
@@ -55,7 +56,8 @@ class DigikalaConfig:
     client_secret: str = field(default_factory=lambda: _get("DIGIKALA_CLIENT_SECRET"))
     access_token: str = field(default_factory=lambda: _get("DIGIKALA_ACCESS_TOKEN"))
     refresh_token: str = field(default_factory=lambda: _get("DIGIKALA_REFRESH_TOKEN"))
-    # Confirmed by the client (2026-08-29): Digikala prices are Rial.
+    # Digikala's web service is documented as Rial-based - see
+    # src/currency.py's module docstring for the source/confidence.
     price_unit: str = field(
         default_factory=lambda: _get_price_unit("DIGIKALA_PRICE_UNIT", "rial")
     )
@@ -73,9 +75,10 @@ class SnappShopConfig:
     auth_token: str = field(default_factory=lambda: _get("SNAPPSHOP_AUTH_TOKEN"))
     agent_user: str = field(default_factory=lambda: _get("SNAPPSHOP_AGENT_USER"))
     vendor_id: str = field(default_factory=lambda: _get("SNAPPSHOP_VENDOR_ID"))
-    # Confirmed by the client (2026-08-29): SnappShop prices are Toman.
+    # UNCONFIRMED - see src/currency.py's module docstring. Defaults to
+    # "rial" (no conversion) until someone checks a real order.
     price_unit: str = field(
-        default_factory=lambda: _get_price_unit("SNAPPSHOP_PRICE_UNIT", "toman")
+        default_factory=lambda: _get_price_unit("SNAPPSHOP_PRICE_UNIT", "rial")
     )
 
 
@@ -83,7 +86,8 @@ class SnappShopConfig:
 class BasalamConfig:
     base_url: str = field(default_factory=lambda: _get("BASALAM_BASE_URL"))
     access_token: str = field(default_factory=lambda: _get("BASALAM_ACCESS_TOKEN"))
-    # Confirmed by the client (2026-08-29): Basalam prices are Toman.
+    # Best-guess default, not confirmed against a live order - see
+    # src/currency.py's module docstring for the (indirect) evidence.
     price_unit: str = field(
         default_factory=lambda: _get_price_unit("BASALAM_PRICE_UNIT", "toman")
     )

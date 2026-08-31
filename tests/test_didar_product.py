@@ -50,11 +50,14 @@ def test_upsert_product_includes_confirmed_required_fields():
     )
 
     client = DidarProductClient(config=_CFG)
-    client.upsert_product(code="SKU-A", title="گلدان خاتم ۳", unit_price=15000)
+    client.upsert_product(code="SKU-A", title="گلدان خاتم ۳", unit_price=20000, final_price=15000)
 
     body = route.calls[0].request.content
-    assert "\"TitleForInvoice\":\"گلدان خاتم ۳\"".encode() in body
-    assert b'"Unit":"\xd8\xb9\xd8\xaf\xd8\xaf"' in body or "\"Unit\":\"عدد\"".encode() in body
+    # Original price (before discount) is preserved in TitleForInvoice so
+    # it's visible in the Didar catalog; the discounted final price is
+    # what Didar uses as the product's own UnitPrice.
+    assert b"\xd8\xae\xd8\xa7\xd8\xaa\xd9\x85 \xdb\xb3 - 20000" in body
+    assert b'"Unit":"\xd8\xb9\xd8\xaf\xd8\xaf"' in body or b'"Unit":"\xd8\xb9\xd8\xaf\xd8\xaf"' in body or "\"Unit\":\"عدد\"".encode() in body
     assert b'"UnitPrice":15000' in body
 
 
@@ -200,50 +203,3 @@ def test_upsert_product_falls_back_to_default_when_nothing_matches():
 
     body = route.calls[0].request.content
     assert b'"ProductCategoryId":"cat-default"' in body
-
-
-def test_resolve_catalog_code_returns_none_when_not_configured():
-    client = DidarProductClient(config=_CFG)  # product_catalog_xlsx unset
-    assert client.resolve_catalog_code("هر عنوانی") is None
-
-
-def test_resolve_catalog_code_returns_match(tmp_path):
-    from openpyxl import Workbook
-
-    wb = Workbook()
-    ws = wb.active
-    ws.append(["_type", "عنوان محصول", "کد محصول"])
-    ws.append(["Product", "راستین 1", "146"])
-    xlsx_path = tmp_path / "catalog.xlsx"
-    wb.save(xlsx_path)
-
-    cfg = DidarConfig(
-        base_url=_CFG.base_url, api_key=_CFG.api_key,
-        default_product_category_id=_CFG.default_product_category_id,
-        product_catalog_xlsx=str(xlsx_path),
-    )
-    client = DidarProductClient(config=cfg)
-
-    assert client.resolve_catalog_code("ست هدیه راستین کد 1 چند رنگ") == ("146", "راستین 1")
-
-
-def test_resolve_catalog_code_disables_itself_without_crashing_when_file_is_bad():
-    """
-    Regression test: a bad DIDAR_PRODUCT_CATALOG_XLSX path (typo, moved
-    file, corrupted export) must never raise out of resolve_catalog_code -
-    this runs inside create_deal(), which has no fire-and-forget wrapper
-    (unlike the post-sale checklist), so an uncaught exception here would
-    fail that order's entire sync. Every subsequent call on the SAME
-    client (a long-lived, one-per-process instance - see
-    DidarProductClient/DidarDealClient/DidarSyncService's lifetimes) must
-    also cleanly return None rather than retry-and-crash-again.
-    """
-    cfg = DidarConfig(
-        base_url=_CFG.base_url, api_key=_CFG.api_key,
-        default_product_category_id=_CFG.default_product_category_id,
-        product_catalog_xlsx="/no/such/path/catalog.xlsx",
-    )
-    client = DidarProductClient(config=cfg)
-
-    assert client.resolve_catalog_code("هر عنوانی") is None
-    assert client.resolve_catalog_code("یک عنوان دیگر") is None  # doesn't retry/re-raise

@@ -121,3 +121,181 @@ def test_price_unit_rial_config_does_not_multiply():
     adapter = FarazHonarAdapter(config=rial_cfg)
     order = adapter.fetch_order_detail("501")
     assert order.total_price == 480000
+
+
+@respx.mock
+def test_normalize_resolves_image_url_for_each_line_item():
+    """
+    The first image URL from each line item's WooCommerce product must
+    end up on that item's product_image_url field, so the
+    "ارسال محصول" (ship) Activity in Didar can attach it. The lookup
+    goes through /wp-json/wc/v3/products/{id} and is cached per id.
+    """
+    raw_order = {
+        **_RAW_ORDER,
+        "id": 601,
+        "number": "601",
+        "line_items": [
+            {
+                "product_id": 111,
+                "sku": "SKU-A",
+                "name": "جعبه خاتم",
+                "quantity": 2,
+                "price": "150000",
+                "total": "300000",
+            },
+            {
+                "product_id": 222,
+                "sku": "SKU-B",
+                "name": "تخته نرد",
+                "quantity": 1,
+                "price": "180000",
+                "total": "180000",
+            },
+        ],
+    }
+    respx.get("https://farazhonar.com/wp-json/wc/v3/orders/601").mock(
+        return_value=httpx.Response(200, json=raw_order)
+    )
+    products_route = respx.get(
+        url__regex=r"https://farazhonar\.com/wp-json/wc/v3/products/\d+"
+    ).mock(
+        side_effect=[
+            # _resolve_category(product_id=111) then _resolve_image_url(product_id=111)
+            httpx.Response(200, json={"categories": [{"name": "خاتم"}], "images": [{"src": "https://cdn.farazhonar.com/111.jpg"}]}),
+            httpx.Response(200, json={"categories": [{"name": "خاتم"}], "images": [{"src": "https://cdn.farazhonar.com/111.jpg"}]}),
+            # _resolve_category(product_id=222) then _resolve_image_url(product_id=222)
+            httpx.Response(200, json={"categories": [{"name": "-NC"}], "images": [{"src": "https://cdn.farazhonar.com/222.jpg"}]}),
+            httpx.Response(200, json={"categories": [{"name": "-NC"}], "images": [{"src": "https://cdn.farazhonar.com/222.jpg"}]}),
+        ]
+    )
+
+    adapter = FarazHonarAdapter(config=_CFG)
+    order = adapter.fetch_order_detail("601")
+
+    assert products_route.call_count == 4  # category + image per unique product_id (2 products)
+    assert order.items[0].product_image_url == "https://cdn.farazhonar.com/111.jpg"
+    assert order.items[1].product_image_url == "https://cdn.farazhonar.com/222.jpg"
+
+
+@respx.mock
+def test_normalize_image_url_is_none_when_product_has_no_image():
+    """
+    A WooCommerce product with no images (or an empty images array) must
+    resolve to None - the ship Activity simply has no attachment, rather
+    than the sync failing.
+    """
+    raw_order = {
+        **_RAW_ORDER,
+        "id": 602,
+        "number": "602",
+        "line_items": [
+            {
+                "product_id": 333,
+                "sku": "SKU-NOIMG",
+                "name": "محصول بدون تصویر",
+                "quantity": 1,
+                "price": "100000",
+                "total": "100000",
+            },
+        ],
+    }
+    respx.get("https://farazhonar.com/wp-json/wc/v3/orders/602").mock(
+        return_value=httpx.Response(200, json=raw_order)
+    )
+    respx.get("https://farazhonar.com/wp-json/wc/v3/products/333").mock(
+        return_value=httpx.Response(200, json={"images": []})
+    )
+
+    adapter = FarazHonarAdapter(config=_CFG)
+    order = adapter.fetch_order_detail("602")
+
+    assert order.items[0].product_image_url is None
+
+
+@respx.mock
+def test_normalize_image_lookup_failure_does_not_break_order():
+    """
+    A transient HTTP failure on the per-product image lookup must NOT
+    propagate - _resolve_image_url() swallows HTTPError and returns None,
+    so the order still syncs with no product image attached to the ship
+    Activity. Confirms the "image is best-effort" contract.
+    """
+    raw_order = {
+        **_RAW_ORDER,
+        "id": 603,
+        "number": "603",
+        "line_items": [
+            {
+                "product_id": 444,
+                "sku": "SKU-ERR",
+                "name": "محصول با خطا",
+                "quantity": 1,
+                "price": "100000",
+                "total": "100000",
+            },
+        ],
+    }
+    respx.get("https://farazhonar.com/wp-json/wc/v3/orders/603").mock(
+        return_value=httpx.Response(200, json=raw_order)
+    )
+    respx.get("https://farazhonar.com/wp-json/wc/v3/products/444").mock(
+        return_value=httpx.Response(500, text="boom")
+    )
+
+    adapter = FarazHonarAdapter(config=_CFG)
+    order = adapter.fetch_order_detail("603")
+
+    assert order.items[0].product_image_url is None
+    assert order.source_order_id == "603"
+
+
+@respx.mock
+def test_normalize_caches_image_lookup_per_product_id():
+    """
+    If two line items reference the same product_id, the image lookup
+    for that id must happen ONCE - per-product caching mirrors the
+    existing _resolve_category() behavior and avoids an extra request
+    per repeated product on multi-item orders.
+    """
+    raw_order = {
+        **_RAW_ORDER,
+        "id": 604,
+        "number": "604",
+        "line_items": [
+            {
+                "product_id": 555,
+                "sku": "SKU-X",
+                "name": "محصول تکراری ۱",
+                "quantity": 1,
+                "price": "100000",
+                "total": "100000",
+            },
+            {
+                "product_id": 555,
+                "sku": "SKU-X",
+                "name": "محصول تکراری ۲",
+                "quantity": 1,
+                "price": "100000",
+                "total": "100000",
+            },
+        ],
+    }
+    respx.get("https://farazhonar.com/wp-json/wc/v3/orders/604").mock(
+        return_value=httpx.Response(200, json=raw_order)
+    )
+    products_route = respx.get("https://farazhonar.com/wp-json/wc/v3/products/555").mock(
+        return_value=httpx.Response(
+            200,
+            json={"categories": [{"name": "خاتم"}], "images": [{"src": "https://cdn.farazhonar.com/555.jpg"}]},
+        )
+    )
+
+    adapter = FarazHonarAdapter(config=_CFG)
+    order = adapter.fetch_order_detail("604")
+
+    # Same product_id on two line items -> category + image lookup happens once
+    # due to per-product_id caching - 2 calls total (one for category, one for image)
+    assert products_route.call_count == 2
+    assert order.items[0].product_image_url == "https://cdn.farazhonar.com/555.jpg"
+    assert order.items[1].product_image_url == "https://cdn.farazhonar.com/555.jpg"

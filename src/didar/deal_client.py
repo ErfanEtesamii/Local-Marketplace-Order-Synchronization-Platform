@@ -242,6 +242,7 @@ class DidarDealClient:
             title=title,
             category=item.category,
             unit_price=item.unit_price,
+            final_price=item.final_price,
         )
         # Per-unit discount, from the gap between the source's original
         # per-unit price and what the line actually settled for.
@@ -283,6 +284,11 @@ class DidarDealClient:
             # item's توضیحات; we only have the order number reliably
             # across all 5 sources (no NormalizedOrder field carries a
             # shipment/parcel number yet), so that's what's written here.
+            # Note: Didar's DealItems schema has no dedicated tax/duty field.
+            # Tax/fees are represented as Discount = 0 when final_price >
+            # unit_price*quantity (see per-unit discount logic above at lines
+            # 270-273 where it's clamped to >= 0, meaning a higher final_price
+            # is not treated as a negative discount but as zero discount).
             "Description": f"شماره سفارش: {order.order_number}",
         }
 

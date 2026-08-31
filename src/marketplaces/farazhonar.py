@@ -80,6 +80,7 @@ class FarazHonarAdapter(MarketplaceAdapter):
             timeout=30.0,
         )
         self._category_cache: dict[int, str | None] = {}
+        self._image_cache: dict[int, str | None] = {}
 
     @default_retry()
     def _get(self, path: str, params: dict | None = None) -> httpx.Response:
@@ -116,6 +117,32 @@ class FarazHonarAdapter(MarketplaceAdapter):
     def fetch_order_detail(self, source_order_id: str) -> NormalizedOrder:
         resp = self._get(f"/wp-json/wc/v3/orders/{source_order_id}")
         return self._normalize(resp.json())
+
+    def _resolve_image_url(self, product_id: int) -> str | None:
+        """First image URL for a WooCommerce product, or None if the
+        product has no image / product_id is missing / the lookup fails.
+        A failed lookup must not break order sync, so errors here are
+        swallowed (logged) rather than raised - the item just falls back
+        to no product image in the "ارسال محصول" activity."""
+        if not product_id:
+            return None
+        if product_id in self._image_cache:
+            return self._image_cache[product_id]
+
+        url = None
+        try:
+            resp = self._get(f"/wp-json/wc/v3/products/{product_id}")
+            images = resp.json().get("images", [])
+            if images:
+                url = images[0].get("src") or None
+        except httpx.HTTPError as exc:
+            log.warning(
+                "farazhonar: failed to resolve image for product_id=%s: %s",
+                product_id, exc,
+            )
+
+        self._image_cache[product_id] = url
+        return url
 
     def _resolve_category(self, product_id: int) -> str | None:
         """First WooCommerce product category title, or None if the
@@ -162,6 +189,7 @@ class FarazHonarAdapter(MarketplaceAdapter):
                 unit_price=to_rial(_to_decimal(item.get("price")), self._config.price_unit),
                 final_price=to_rial(_to_decimal(item.get("total")), self._config.price_unit),
                 category=self._resolve_category(item.get("product_id")),
+                product_image_url=self._resolve_image_url(item.get("product_id")),
             )
             for item in raw.get("line_items", [])
         ]

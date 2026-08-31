@@ -298,6 +298,7 @@ class DidarProductClient:
         title: str,
         category: str | None = None,
         unit_price: object = 0,
+        final_price: object = 0,
     ) -> str:
         # Search first (documented endpoint) - if the product already
         # exists, use its Id directly and never touch the undocumented
@@ -325,9 +326,14 @@ class DidarProductClient:
                 # ProductCategoryId as first suspected. "عدد" (piece)
                 # is a safe generic Unit label - none of our sources
                 # expose a real unit of measure.
-                "TitleForInvoice": title,
+                # Original price (before discount) is stored in TitleForInvoice
+                # so it's visible in the Didar product catalog.
+                "TitleForInvoice": f"{title} - {unit_price}",
                 "Unit": "عدد",
-                "UnitPrice": int(unit_price or 0),
+                # UnitPrice sent to Didar is the discounted final price,
+                # not the original unit price - see deal_client.py
+                # _build_deal_item() which passes final_price here.
+                "UnitPrice": int(final_price or 0),
                 "ProductCategoryId": category_id,
             }
         }

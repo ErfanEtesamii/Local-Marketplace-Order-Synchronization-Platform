@@ -1,25 +1,8 @@
-# Secrets - never commit
-.env
-
-# Local database and runtime state
-*.db
-*.sqlite3
-data/
-reports/
-
-# Python
-__pycache__/
-*.pyc
-.venv/
-venv/
-
-# Logs
-logs/
-*.log
-
-# Third-party binary the installer downloads separately - see docs/installation.md
-deploy/nssm.exe
-
-# OS
-.DS_Store
-Thumbs.db
+basalam_status.txt
+diag_digikala.py
+diag_digikala2.py
+output.txt
+proposal.txt
+status_extract_temp.txt
+status_samples.txt
+status_structures.txt

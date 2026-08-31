@@ -64,15 +64,6 @@ this service only ever needs the refresh_token for step 2. Roughly
 once a year (when refresh_token approaches its own expiry), step 1
 needs to be repeated manually and the new tokens re-seeded into .env
 (or directly into data/digikala_tokens.json).
-
-Since this service runs continuously, it cannot rely on a static
-access_token from .env - it will expire within about a day. Instead,
-this adapter refreshes reactively (on a 401) via
-POST /open-api/v1/auth/refresh-token, and persists the new
-access_token/refresh_token pair to a local JSON file
-(data/digikala_tokens.json) so a service restart doesn't need a fresh
-manual authorization - only the *initial* tokens in .env are ever used
-as a one-time seed.
 """
 from __future__ import annotations
 
@@ -98,6 +89,21 @@ def _to_decimal(value) -> Decimal:
         return Decimal(str(value))
     except (InvalidOperation, TypeError):
         return Decimal("0")
+
+
+def _first_item_photo_url(raw_items: list[dict]) -> str | None:
+    """
+    Best-effort product photo for the order - see the UNCONFIRMED note at
+    its call site in _normalize_detail. Tries the first item's nested
+    product.photo (confirmed shape: {"original", "xs", "sm", "md", "lg"}),
+    preferring "original" then falling back to the largest thumbnail.
+    """
+    for item in raw_items:
+        photo = ((item.get("product") or {}).get("photo")) or {}
+        url = photo.get("original") or photo.get("lg") or photo.get("md")
+        if url:
+            return str(url)
+    return None
 
 
 class DigikalaAdapter(MarketplaceAdapter):
@@ -170,27 +176,29 @@ class DigikalaAdapter(MarketplaceAdapter):
         rows = self._fetch_history_rows(
             order_created_at_from=since,
             order_created_at_to=datetime.now(timezone.utc),
+            order_type=None,  # fetch all order types; sync_engine filters cancelled/failed
         )
-        orders = self._group_rows_into_orders(rows)
+        orders = self._group_rows_into_orders(rows, order_type=None)
         log.info("digikala: fetched %d new orders since %s", len(orders), since.isoformat())
         return orders
 
     def fetch_order_detail(self, source_order_id: str) -> NormalizedOrder:
-        # The history endpoint has no direct order_id filter, but search_text_all
-        # matches serial / order_shipment_id / product identifiers - order_id
-        # search is supported by the vendor's own UI via this same param.
-        rows = self._fetch_history_rows(search_text_all=source_order_id)
-        rows = [r for r in rows if str(r.get("order_id")) == str(source_order_id)]
-        orders = self._group_rows_into_orders(rows)
-        if not orders:
-            raise ValueError(f"digikala: order {source_order_id} not found in history")
-        return orders[0]
+        # The history endpoint has no direct order_id filter, and search_text_all
+        # does NOT search by order_id (it matches serial / order_shipment_id /
+        # product identifiers). Instead, fetch full history (newest-first) and
+        # let _group_rows_into_orders group by order_id, then pick the one we want.
+        rows = self._fetch_history_rows(order_type=None)
+        orders = self._group_rows_into_orders(rows, order_type=None)
+        for order in orders:
+            if order.source_order_id == source_order_id:
+                return order
+        raise ValueError(f"digikala: order {source_order_id} not found in history")
 
     def _fetch_history_rows(
         self,
         order_created_at_from: datetime | None = None,
         order_created_at_to: datetime | None = None,
-        search_text_all: str | None = None,
+        order_type: str | None = None,
     ) -> list[dict]:
         rows: list[dict] = []
         page = 1
@@ -204,11 +212,11 @@ class DigikalaAdapter(MarketplaceAdapter):
             # beginning. desc + the early-stop below fixes that.
             params = {"page": page, "size": size, "sort": "id", "order": "desc"}
             if order_created_at_from:
-                params["order_created_at_from"] = _fmt(order_created_at_from)
+                params["order_created_at_from"] = self._fmt(order_created_at_from)
             if order_created_at_to:
-                params["order_created_at_to"] = _fmt(order_created_at_to)
-            if search_text_all:
-                params["search_text_all"] = search_text_all
+                params["order_created_at_to"] = self._fmt(order_created_at_to)
+            if order_type:
+                params["order_type"] = order_type
 
             payload = self._get("/open-api/v1/orders/history", params=params)
             data = payload.get("data", {})
@@ -216,16 +224,19 @@ class DigikalaAdapter(MarketplaceAdapter):
             rows.extend(items)
 
             # Early stop (only meaningful in date-filtered mode, i.e. from
-            # fetch_new_orders - search_text_all's fetch_order_detail
-            # lookup passes no order_created_at_from and so never takes
-            # this branch, matching its existing "search everything"
-            # behavior unchanged). Rows arrive newest-first, so once a
-            # page's OLDEST row already predates what we asked for, every
-            # row on every subsequent page is guaranteed even older -
-            # this is purely a wasted-work optimization, not a
-            # correctness guarantee: SyncEngine._drop_orders_older_than_since()
+            # fetch_new_orders - fetch_order_detail's lookup passes no
+            # order_created_at_from and so never takes this branch,
+            # matching its existing "fetch full history" behavior
+            # unchanged). Rows arrive newest-first, so once a page's
+            # OLDEST row already predates what we asked for, every row
+            # on every subsequent page is guaranteed even older - this
+            # is purely a wasted-work optimization, not a correctness
+            # guarantee: SyncEngine._drop_orders_older_than_since()
             # is still the actual safety net regardless of what happens
             # here (see its module docstring).
+            # NOTE: search_text_all parameter was removed in a previous fix
+            # as it does NOT search by order_id (it matches serial / order_shipment_id /
+            # product identifiers).
             if order_created_at_from is not None and items:
                 oldest_on_page = _parse_date(items[-1].get("order_created_at"))
                 if oldest_on_page < order_created_at_from:
@@ -248,7 +259,7 @@ class DigikalaAdapter(MarketplaceAdapter):
 
         return rows
 
-    def _group_rows_into_orders(self, rows: list[dict]) -> list[NormalizedOrder]:
+    def _group_rows_into_orders(self, rows: list[dict], order_type: str | None = None) -> list[NormalizedOrder]:
         grouped: dict[str, list[dict]] = defaultdict(list)
         for row in rows:
             grouped[str(row.get("order_id"))].append(row)
@@ -263,10 +274,21 @@ class DigikalaAdapter(MarketplaceAdapter):
                     quantity=int(r.get("quantity", 1)),
                     unit_price=to_rial(_to_decimal(r.get("unit_price")), self._config.price_unit),
                     final_price=to_rial(_to_decimal(r.get("total_price")), self._config.price_unit),
+                    # Extract product image URL from the first item's product data
+                    # The Digikala API response structure may vary, but we assume
+                    # a "product" object with "photo" field containing image URLs
+                    product_image_url=self._extract_product_image_url(r),
                 )
                 for r in item_rows
             ]
+            # Map order_type to status for Digikala (since order_status may not reflect cancelled/failed)
             status = first.get("order_status", {})
+            if order_type == "canceled":
+                status_val = "canceled"
+            elif order_type == "returned":
+                status_val = "refunded"
+            else:
+                status_val = str(status.get("title") or status.get("key") or "unknown")
             orders.append(
                 NormalizedOrder(
                     source=self.name,
@@ -274,7 +296,7 @@ class DigikalaAdapter(MarketplaceAdapter):
                     order_number=order_id,
                     created_at=_parse_date(first.get("order_created_at")),
                     total_price=sum((i.final_price for i in items), Decimal("0")),
-                    status=str(status.get("title") or status.get("key") or "unknown"),
+                    status=status_val,
                     items=items,
                     customer_full_name=None,  # not requested for this project - see module docstring
                     customer_mobile=None,
@@ -282,10 +304,33 @@ class DigikalaAdapter(MarketplaceAdapter):
             )
         return orders
 
+    def _extract_product_image_url(self, row: dict) -> str | None:
+        """
+        Extract product image URL from a row.
+        Assumes the Digikala API returns a "product" object with "photo" field
+        containing image URLs (original, xs, sm, md, lg), similar to Basalam.
+        """
+        # Try to find the product object within the row
+        product_data = row.get("product") or {}
+        if not product_data:
+            return None
 
-def _fmt(dt: datetime) -> str:
-    # Digikala's documented format: Y-m-d\TH:i:s.v\Z
-    return dt.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.") + f"{dt.microsecond // 1000:03d}Z"
+        photo_data = product_data.get("photo") or {}
+        if not photo_data:
+            return None
+
+        # Prefer "original" then "lg" then "md" then "sm" then "original"
+        url = (
+            photo_data.get("original") or
+            photo_data.get("lg") or
+            photo_data.get("md") or
+            photo_data.get("sm")
+        )
+        return str(url) if url else None
+
+    def _fmt(self, dt: datetime) -> str:
+        # Digikala's documented format: Y-m-d\TH:i:s.v\Z
+        return dt.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.") + f"{dt.microsecond // 1000:03d}Z"
 
 
 def _parse_date(value: str | None) -> datetime:
