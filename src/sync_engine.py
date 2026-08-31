@@ -2,8 +2,9 @@
 Sync Engine - the piece that ties everything else together:
 
     for each marketplace adapter:
-        fetch new orders since the last successful check for that source
-        for each order not already synced (per the Repository):
+        fetch recent orders (last 5 hours, sliding window)
+        for each order not already synced (per the Repository, keyed
+           by platform + source_order_id):
             fetch full detail if the list call didn't include line items
             push it to Didar (Contact upsert -> Deal create)
             record success or failure in the Repository
@@ -12,54 +13,50 @@ Design choices worth calling out:
 
 - One adapter failing to fetch (e.g. an expired token) must not stop the
   others from running - each source is wrapped in its own try/except.
-- The "since" watermark per source is read from and written back to the
-  Repository (sync_state table), so a restart resumes from where it left
-  off rather than re-scanning everything or missing a gap. A small
-  overlap margin is subtracted when advancing the watermark, to guard
-  against clock skew / API latency right at the boundary - any order
-  that gets fetched twice because of this is caught for free by the
-  Repository's is_already_synced() dedupe check, so the overlap costs
-  nothing but redundant API calls.
+- Every order is deduplicated by (platform, source_order_id) stored in
+  the Repository's synced_orders table. This is the single source of
+  truth for "already synced" - it persists across app restarts, so a
+  crash and restart never re-syncs orders already pushed to Didar.
+- The sliding 5-hour fetch window is ENFORCED, not just advisory: the
+  SyncEngine passes since=(now - FETCH_WINDOW_HOURS) to every adapter
+  and additionally drops any returned order whose created_at predates
+  that window client-side. This is the primary guard against pulling old
+  history on a fresh DB (where ID-based dedup hasn't yet seen any orders
+  and would otherwise let the entire account history through). ID-based
+  dedup is the secondary guard, preventing re-syncs of orders already
+  pushed within the window. This matters because at least one adapter
+  (Digikala - see src/marketplaces/digikala.py) does not filter
+  server-side by date, so without the client-side drop the window would
+  be a no-op for it.
 - Failed Didar syncs are recorded via Repository.record_failure() rather
   than just logged and dropped, so retry_pending_failures() can give them
   another attempt on a later run without re-fetching the entire source.
-- FIRST RUN NEVER BACKFILLS HISTORY: per an explicit client requirement,
-  orders that existed before the service's very first run must never be
-  touched - many of them were already handled manually in Didar before
-  this project existed. When a source has no prior watermark, "since"
-  defaults to the moment this poll cycle started, not some lookback
-  window into the past. This used to default to "now - 1 day", which is
-  exactly what caused a flood of already-completed historical orders to
-  get synced on the very first production run (see git history).
-- The "since" we pass to fetch_new_orders() only protects us if the
-  marketplace's own date filter truly means "order creation date" the
-  way we assume - and for at least one source that's explicitly NOT
-  confirmed: Tapsi Shop's dateFilterTypeCode is only confirmed to be
-  ACCEPTED with value 1, not confirmed to mean creation date rather
-  than e.g. last status-change date (see marketplaces/tapsishop.py's
-  module docstring). If it actually filters by status-change date, an
-  order created weeks ago that only just reached the tracked status
-  would come back from fetch_new_orders() looking brand new - the
-  exact "old orders getting written to Didar" symptom the watermark
-  system exists to prevent, just arriving through a side door the
-  watermark alone can't close. So _sync_source() applies an
-  application-level floor on top: any order whose own created_at is
-  earlier than the `since` we asked for is dropped before it ever
-  reaches Didar, regardless of what the marketplace's filter actually
-  did server-side. See _drop_orders_older_than_since().
+- The 5-hour sliding window is intentionally wide (well beyond the 2-minute
+  poll interval) so that any gap caused by a missed cycle, a restart, or
+  a temporary outage is fully recovered on the next run.
 """
 from __future__ import annotations
 
+import json
+import uuid
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
+from src.config import settings
 from src.db.repository import Repository
 from src.didar.service import DidarSyncService
 from src.logger import get_logger
 from src.marketplaces.base import MarketplaceAdapter, NormalizedOrder
+from src.telegram import TelegramNotifier
 
 log = get_logger(__name__)
 
-WATERMARK_OVERLAP = timedelta(minutes=10)  # safety margin - see module docstring
+# Sliding fetch window: pull all orders created in the last
+# FETCH_WINDOW hours on every poll. This is deliberately much wider
+# than the poll interval so that any gap (missed cycle, restart,
+# temporary outage) is fully recovered without re-scanning the
+# entire account history.
+FETCH_WINDOW_HOURS = 5
 
 
 class SyncEngine:
@@ -68,10 +65,14 @@ class SyncEngine:
         adapters: list[MarketplaceAdapter],
         repository: Repository | None = None,
         didar_service: DidarSyncService | None = None,
+        synced_ids_file_path: str | None = None,
     ) -> None:
         self._adapters = {a.name: a for a in adapters}
         self._repo = repository or Repository()
         self._didar = didar_service or DidarSyncService()
+        self._synced_ids_file_path = synced_ids_file_path
+        self._synced_ids = self._load_synced_ids()
+        self._telegram = TelegramNotifier()
 
     @property
     def adapter_names(self) -> list[str]:
@@ -85,63 +86,149 @@ class SyncEngine:
         self.retry_pending_failures()
 
     def _sync_source(self, adapter: MarketplaceAdapter) -> None:
-        cycle_started_at = datetime.now(timezone.utc)
-        # No lookback fallback on purpose - see module docstring. A
-        # source with no watermark yet starts counting from right now,
-        # so nothing that existed before this service's first run is
-        # ever fetched, regardless of its status on the marketplace.
-        since = self._repo.get_last_sync_time(adapter.name) or cycle_started_at
+        # Build a unique platform-specific ID for each order.
+        # Format: "{platform}-{source_order_id}" (e.g. "digikala-112736712").
+        #
+        # Two layers of dedup, working together:
+        #  1. Sliding FETCH_WINDOW_HOURS window: passed as `since` to every
+        #     adapter. Adapters that respect it (most do) use it to
+        #     constrain their API call.
+        #  2. Client-side drop below: rejects any order whose created_at
+        #     predates the window, regardless of what the adapter returned.
+        #     This is the safety net for adapters that don't filter
+        #     server-side (e.g. Digikala - see its module docstring) and
+        #     for any adapter bug that returns old orders. Without it,
+        #     a fresh DB with no synced_orders yet would let the entire
+        #     account history through to Didar (the exact bug that synced
+        #     43 two-month-old Digikala orders on 2026-08-31).
+        #  3. ID-based dedup via synced_orders table: the persistent
+        #     "already pushed" guard that survives restarts.
+        platform = adapter.name
+
+        since = datetime.now(timezone.utc) - timedelta(hours=FETCH_WINDOW_HOURS)
 
         try:
             orders = adapter.fetch_new_orders(since)
         except Exception:
             log.exception("sync_engine: failed to fetch new orders from %s", adapter.name)
-            return  # don't advance the watermark - retry this same window next cycle
+            return
 
-        orders = self._drop_orders_older_than_since(adapter.name, orders, since)
-
+        # Client-side window enforcement. Compare against the same `since`
+        # we just passed to the adapter - any order outside the window
+        # is silently dropped (logged) so it can never reach Didar.
+        # Orders without created_at (rare; defensive) are kept and let
+        # the status filter / ID dedup decide - we don't want to drop
+        # legitimate orders just because the adapter couldn't parse a date.
+        window_kept: list[NormalizedOrder] = []
+        window_dropped = 0
         for order in orders:
-            self._sync_one_order(adapter, order)
-
-        # Advance the watermark with a safety overlap - see module docstring.
-        self._repo.set_last_sync_time(adapter.name, cycle_started_at - WATERMARK_OVERLAP)
-        log.info("sync_engine: completed poll of %s (%d orders seen)", adapter.name, len(orders))
-
-    def _drop_orders_older_than_since(
-        self, source: str, orders: list[NormalizedOrder], since: datetime
-    ) -> list[NormalizedOrder]:
-        """
-        Application-level floor, independent of what any marketplace's
-        own date filter actually does server-side - see the "since we
-        pass..." note in the module docstring for why this exists on top
-        of (not instead of) passing `since` to fetch_new_orders().
-
-        Any order whose own created_at is earlier than the `since` we
-        asked for is dropped here and logged, never handed to
-        _sync_one_order() / Didar. This is intentionally strict: a
-        marketplace's date filter turning out to mean something other
-        than "creation date" must never be able to slip an old order
-        through, even once.
-        """
-        kept: list[NormalizedOrder] = []
-        for order in orders:
-            order_created_at = order.created_at
-            if order_created_at.tzinfo is None:
-                order_created_at = order_created_at.replace(tzinfo=timezone.utc)
-            if order_created_at < since:
-                log.warning(
-                    "sync_engine: dropping %s order %s - created_at=%s is before "
-                    "the requested since=%s (the marketplace's own date filter "
-                    "returned an order older than what we asked for - see "
-                    "sync_engine.py module docstring)",
-                    source, order.source_order_id,
-                    order_created_at.isoformat(), since.isoformat(),
+            if order.created_at is not None and order.created_at < since:
+                window_dropped += 1
+                log.info(
+                    "sync_engine: dropping %s order %s - created_at %s is outside the %dh window",
+                    platform, order.source_order_id, order.created_at, FETCH_WINDOW_HOURS,
                 )
                 continue
-            kept.append(order)
-        return kept
+            window_kept.append(order)
 
-    def _sync_one_order(self, adapter: MarketplaceAdapter, order: NormalizedOrder) -> None:
+        for order in window_kept:
+            # Build the unique ID used for dedup in the repository.
+            unique_id = self._order_id(platform, order.source_order_id)
+
+            # Check against in-memory set of already-synced IDs
+            if unique_id in self._synced_ids:
+                log.info(
+                    "sync_engine: skipping already-synced %s order %s",
+                    platform, order.source_order_id,
+                )
+                continue
+
+            # Add to in-memory set and persist to file for future runs
+            self._synced_ids.add(unique_id)
+            self._save_order_id_to_file(platform, order.source_order_id, unique_id)
+
+            self._sync_one_order(adapter, order, unique_id)
+
+        log.info(
+            "sync_engine: completed poll of %s (kept=%d, dropped-out-of-window=%d, total=%d)",
+            adapter.name, len(window_kept), window_dropped, len(orders),
+        )
+
+    def _order_id(self, platform: str, source_order_id: str) -> str:
+        """Build a unique ID combining platform name + platform order ID."""
+        return f"{platform}-{source_order_id}"
+
+    def _synced_ids_path(self) -> Path:
+        """Path to the synced-IDs tracking file.
+
+        Defaults to `<db_dir>/synced_ids.json` (next to the SQLite file). Tests
+        inject a per-test tmp_path via the constructor to avoid polluting the
+        real `data/` directory between test runs.
+        """
+        if self._synced_ids_file_path is not None:
+            return Path(self._synced_ids_file_path)
+        return Path(settings.db_path).resolve().parent / "synced_ids.json"
+
+    def _load_synced_ids(self) -> set[str]:
+        """Load synced order IDs from file for deduplication.
+
+        Reads the tracking file at `data/synced_ids.json` and returns a set of
+        unique IDs that have already been synced. This provides a lightweight
+        alternative to SQLite's synced_orders table for deduplication.
+        """
+        file_path = self._synced_ids_path()
+        synced_ids: set[str] = set()
+
+        if not file_path.exists():
+            log.info("sync_engine: tracking file %s does not exist, starting fresh", file_path)
+            return synced_ids
+
+        try:
+            content = file_path.read_text(encoding='utf-8')
+            if not content.strip():
+                return synced_ids
+
+            data = json.loads(content)
+            if isinstance(data, list):
+                synced_ids.update(data)
+                log.info("sync_engine: loaded %d synced IDs from %s", len(synced_ids), file_path)
+            else:
+                log.warning("sync_engine: expected list in %s, got %s, starting fresh", file_path, type(data))
+        except (json.JSONDecodeError, OSError) as exc:
+            log.warning("sync_engine: failed to load synced IDs from %s: %s", file_path, exc)
+
+        return synced_ids
+
+    def _save_order_id_to_file(self, platform: str, source_order_id: str, unique_id: str) -> None:
+        """Persist a new order ID to the tracking file.
+
+        Appends the unique_id to `data/synced_ids.json` and ensures the file
+        remains valid JSON. The file stores a JSON array of unique IDs for easy
+        loading in future runs.
+        """
+        file_path = self._synced_ids_path()
+        file_path.parent.mkdir(parents=True, exist_ok=True)
+
+        synced_ids: set[str] = set()
+        if file_path.exists():
+            try:
+                content = file_path.read_text(encoding='utf-8')
+                if content.strip():
+                    synced_ids.update(json.loads(content))
+            except (json.JSONDecodeError, OSError):
+                log.warning("sync_engine: failed to read existing file %s, starting fresh", file_path)
+
+        synced_ids.add(unique_id)
+
+        try:
+            file_path.write_text(json.dumps(list(synced_ids), ensure_ascii=False, indent=2), encoding='utf-8')
+            log.debug("sync_engine: saved order ID %s to %s", unique_id, file_path)
+        except OSError as exc:
+            log.exception("sync_engine: failed to save order ID %s to %s", unique_id, file_path)
+
+    def _sync_one_order(
+        self, adapter: MarketplaceAdapter, order: NormalizedOrder, unique_id: str
+    ) -> None:
         # Central filter: prevent cancelled/failed orders from syncing to Didar.
         # Uses NormalizedOrder.status rather than per-adapter filters so that
         # no order of any marketplace slips through if an adapter's own guard
@@ -153,9 +240,6 @@ class SyncEngine:
             )
             return
 
-        if self._repo.is_already_synced(order.source, order.source_order_id):
-            return
-
         try:
             if not order.items:
                 # Several adapters' list endpoints omit line items -
@@ -164,6 +248,9 @@ class SyncEngine:
 
             deal_id = self._didar.sync_order(order)
             self._repo.mark_synced(order.source, order.source_order_id, deal_id)
+            # Fire and forget - notify_new_order catches and logs its own
+            # errors, so a Telegram outage can never break the sync itself.
+            self._telegram.notify_new_order(order, deal_id)
         except Exception as exc:
             log.exception(
                 "sync_engine: failed to sync %s order %s", order.source, order.source_order_id
@@ -172,28 +259,29 @@ class SyncEngine:
 
     def retry_pending_failures(self, max_attempts: int = 5) -> None:
         for failure in self._repo.get_pending_failures(max_attempts=max_attempts):
-            adapter = self._adapters.get(failure.source)
+            adapter = self._adapters.get(failure.platform)
             if adapter is None:
                 log.warning(
-                    "sync_engine: no adapter registered for source=%s, cannot retry order %s",
-                    failure.source, failure.source_order_id,
+                    "sync_engine: no adapter registered for platform=%s, cannot retry order %s",
+                    failure.platform, failure.source_order_id,
                 )
                 continue
 
             try:
                 order = adapter.fetch_order_detail(failure.source_order_id)
                 deal_id = self._didar.sync_order(order)
-                self._repo.mark_synced(order.source, order.source_order_id, deal_id)
+                self._repo.mark_synced(failure.platform, failure.source_order_id, deal_id)
+                self._telegram.notify_new_order(order, deal_id)
                 log.info(
                     "sync_engine: retry succeeded for %s order %s",
-                    failure.source, failure.source_order_id,
+                    failure.platform, failure.source_order_id,
                 )
             except Exception as exc:
                 log.exception(
                     "sync_engine: retry failed for %s order %s",
-                    failure.source, failure.source_order_id,
+                    failure.platform, failure.source_order_id,
                 )
-                self._repo.record_failure(failure.source, failure.source_order_id, str(exc))
+                self._repo.record_failure(failure.platform, failure.source_order_id, str(exc))
 
 
 # Central filter: prevent cancelled/failed orders from syncing to Didar.

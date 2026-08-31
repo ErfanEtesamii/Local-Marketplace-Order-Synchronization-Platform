@@ -20,6 +20,7 @@ from src.marketplaces.snappshop import SnappShopAdapter
 from src.marketplaces.tapsishop import TapsiShopAdapter
 from src.reporting import check_health, generate_daily_report
 from src.sync_engine import SyncEngine
+from src.telegram import TelegramNotifier
 
 log = get_logger(__name__)
 
@@ -61,6 +62,7 @@ def _poll_cycle(engine: SyncEngine, repository: Repository) -> None:
 def run_forever() -> None:
     engine, repository = build_engine()
     scheduler = BlockingScheduler(timezone="UTC")
+    telegram = TelegramNotifier()
 
     scheduler.add_job(
         _poll_cycle,
@@ -80,6 +82,32 @@ def run_forever() -> None:
         "cron",
         hour=0,
         minute=5,
+        args=[repository, engine.adapter_names],
+    )
+    # Telegram reports - same data as the daily file plus weekly/monthly
+    # aggregates. Each method is best-effort (logs and swallows errors),
+    # so a Telegram outage can never break the scheduler itself.
+    scheduler.add_job(
+        telegram.notify_daily_report,
+        "cron",
+        hour=0,
+        minute=10,
+        args=[repository, engine.adapter_names],
+    )
+    scheduler.add_job(
+        telegram.notify_weekly_report,
+        "cron",
+        day_of_week="fri",
+        hour=23,
+        minute=55,
+        args=[repository, engine.adapter_names],
+    )
+    scheduler.add_job(
+        telegram.notify_monthly_report,
+        "cron",
+        day=1,
+        hour=0,
+        minute=30,
         args=[repository, engine.adapter_names],
     )
 

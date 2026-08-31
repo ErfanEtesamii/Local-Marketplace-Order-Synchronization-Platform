@@ -1,0 +1,881 @@
+2026-08-29 17:27:43,121 | INFO     | src.marketplaces.basalam | basalam: fetched 1 new orders since 2026-08-01T00:00:00+00:00
+2026-08-29 17:27:43,146 | INFO     | src.marketplaces.basalam | basalam: fetched 1 new orders since 2026-08-01T00:00:00+00:00
+2026-08-29 17:27:43,218 | INFO     | src.marketplaces.basalam | basalam: fetched 0 new orders since 2026-08-01T00:00:00+00:00
+2026-08-29 17:27:43,240 | INFO     | src.marketplaces.basalam | basalam: fetched 0 new orders since 2026-08-01T00:00:00+00:00
+2026-08-29 17:27:43,284 | INFO     | src.marketplaces.basalam | basalam: fetched 1 new orders since 2026-08-01T00:00:00+00:00
+2026-08-29 17:27:43,317 | INFO     | src.didar.activity_client | didar: created activity 'تماس جدید' on deal deal-1 -> Id=a-1
+2026-08-29 17:27:43,339 | INFO     | src.didar.activity_client | didar: created activity 'x' on deal deal-1 -> Id=a-1
+2026-08-29 17:27:43,361 | INFO     | src.didar.activity_client | didar: created activity 'تماس جدید' on deal deal-1 -> Id=a-x
+2026-08-29 17:27:43,362 | INFO     | src.didar.activity_client | didar: created activity 'پیامک 2' on deal deal-1 -> Id=a-x
+2026-08-29 17:27:43,362 | INFO     | src.didar.activity_client | didar: created activity 'پیامک 1' on deal deal-1 -> Id=a-x
+2026-08-29 17:27:43,363 | INFO     | src.didar.activity_client | didar: created activity 'ارسال محصول' on deal deal-1 -> Id=a-x
+2026-08-29 17:27:43,363 | INFO     | src.didar.activity_client | didar: created activity 'پیامک 3' on deal deal-1 -> Id=a-x
+2026-08-29 17:27:43,364 | INFO     | src.didar.activity_client | didar: created activity 'تماس رضایت' on deal deal-1 -> Id=a-x
+2026-08-29 17:27:43,387 | WARNING  | src.didar.activity_client | didar: skipping post-sale checklist for deal deal-1 - no ship_time available for this order (marketplace adapter doesn't expose it yet - see NormalizedOrder.ship_time)
+2026-08-29 17:27:43,409 | INFO     | src.didar.activity_client | didar: created activity 'تماس جدید' on deal deal-1 -> Id=a-x
+2026-08-29 17:27:43,410 | INFO     | src.didar.activity_client | didar: created activity 'پیامک 2' on deal deal-1 -> Id=a-x
+2026-08-29 17:27:43,410 | INFO     | src.didar.activity_client | didar: created activity 'پیامک 1' on deal deal-1 -> Id=a-x
+2026-08-29 17:27:43,411 | INFO     | src.didar.activity_client | didar: created activity 'ارسال محصول' on deal deal-1 -> Id=a-x
+2026-08-29 17:27:43,411 | INFO     | src.didar.activity_client | didar: created activity 'پیامک 3' on deal deal-1 -> Id=a-x
+2026-08-29 17:27:43,412 | INFO     | src.didar.activity_client | didar: created activity 'تماس رضایت' on deal deal-1 -> Id=a-x
+2026-08-29 17:27:43,434 | ERROR    | src.didar.activity_client | didar: failed to upload product photo for deal deal-1 - continuing without it
+Traceback (most recent call last):
+  File "/home/claude/work/Merged/src/didar/activity_client.py", line 234, in create_post_sale_checklist
+    ship_attachment_key = self.upload_attachment(file_bytes, filename, content_type)
+                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/claude/work/Merged/src/didar/activity_client.py", line 170, in upload_attachment
+    raise_for_status_with_body(resp)
+  File "/home/claude/work/Merged/src/http_utils.py", line 41, in raise_for_status_with_body
+    raise httpx.HTTPStatusError(message, request=resp.request, response=resp)
+httpx.HTTPStatusError: 500 Internal Server Error for url 'https://app.didar.me/api/UploadFile?apikey=test-key': 
+2026-08-29 17:27:43,435 | INFO     | src.didar.activity_client | didar: created activity 'تماس جدید' on deal deal-1 -> Id=a-x
+2026-08-29 17:27:43,436 | INFO     | src.didar.activity_client | didar: created activity 'پیامک 2' on deal deal-1 -> Id=a-x
+2026-08-29 17:27:43,436 | INFO     | src.didar.activity_client | didar: created activity 'پیامک 1' on deal deal-1 -> Id=a-x
+2026-08-29 17:27:43,436 | INFO     | src.didar.activity_client | didar: created activity 'ارسال محصول' on deal deal-1 -> Id=a-x
+2026-08-29 17:27:43,437 | INFO     | src.didar.activity_client | didar: created activity 'پیامک 3' on deal deal-1 -> Id=a-x
+2026-08-29 17:27:43,437 | INFO     | src.didar.activity_client | didar: created activity 'تماس رضایت' on deal deal-1 -> Id=a-x
+2026-08-29 17:27:43,458 | WARNING  | src.didar.activity_client | didar: skipping post-sale checklist for deal deal-1 - activity type Id(s) not configured for: activity_type_sms2_id (see DidarConfig.activity_type_*_id / .env.example)
+2026-08-29 17:27:43,482 | INFO     | src.didar.activity_client | didar: created activity 'تماس جدید' on deal deal-1 -> Id=a-x
+2026-08-29 17:27:43,483 | ERROR    | src.didar.activity_client | didar: failed to create checklist activity 'پیامک 2' on deal deal-1 - continuing with the rest of the checklist
+Traceback (most recent call last):
+  File "/home/claude/work/Merged/src/didar/activity_client.py", line 248, in create_post_sale_checklist
+    self.create_activity(
+  File "/home/claude/work/Merged/src/didar/activity_client.py", line 143, in create_activity
+    payload = self._post("/activity/save", json=request_body)
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/tmp/venv/lib/python3.12/site-packages/tenacity/__init__.py", line 331, in wrapped_f
+    return copy(f, *args, **kw)
+           ^^^^^^^^^^^^^^^^^^^^
+  File "/tmp/venv/lib/python3.12/site-packages/tenacity/__init__.py", line 470, in __call__
+    do = self.iter(retry_state=retry_state)
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/tmp/venv/lib/python3.12/site-packages/tenacity/__init__.py", line 371, in iter
+    result = action(retry_state)
+             ^^^^^^^^^^^^^^^^^^^
+  File "/tmp/venv/lib/python3.12/site-packages/tenacity/__init__.py", line 393, in <lambda>
+    self._add_action_func(lambda rs: rs.outcome.result())
+                                     ^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.12/concurrent/futures/_base.py", line 449, in result
+    return self.__get_result()
+           ^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.12/concurrent/futures/_base.py", line 401, in __get_result
+    raise self._exception
+  File "/tmp/venv/lib/python3.12/site-packages/tenacity/__init__.py", line 473, in __call__
+    result = fn(*args, **kwargs)
+             ^^^^^^^^^^^^^^^^^^^
+  File "/home/claude/work/Merged/src/didar/activity_client.py", line 106, in _post
+    raise_for_status_with_body(resp)
+  File "/home/claude/work/Merged/src/http_utils.py", line 41, in raise_for_status_with_body
+    raise httpx.HTTPStatusError(message, request=resp.request, response=resp)
+httpx.HTTPStatusError: 400 Bad Request for url 'https://app.didar.me/api/activity/save?apikey=test-key': {"error":"boom"}
+2026-08-29 17:27:43,484 | INFO     | src.didar.activity_client | didar: created activity 'پیامک 1' on deal deal-1 -> Id=a-x
+2026-08-29 17:27:43,485 | INFO     | src.didar.activity_client | didar: created activity 'ارسال محصول' on deal deal-1 -> Id=a-x
+2026-08-29 17:27:43,485 | INFO     | src.didar.activity_client | didar: created activity 'پیامک 3' on deal deal-1 -> Id=a-x
+2026-08-29 17:27:43,486 | INFO     | src.didar.activity_client | didar: created activity 'تماس رضایت' on deal deal-1 -> Id=a-x
+2026-08-29 17:27:43,524 | INFO     | src.didar.contact_client | didar: upserted contact CustomerCode=tapsishop-999 -> Id=c-123
+2026-08-29 17:27:43,546 | INFO     | src.didar.contact_client | didar: upserted contact CustomerCode=x -> Id=c-flat
+2026-08-29 17:27:43,610 | INFO     | src.didar.contact_client | didar: upserted contact CustomerCode=tapsishop-999 -> Id=c-1
+2026-08-29 17:27:43,633 | INFO     | src.didar.contact_client | didar: upserted contact CustomerCode=basalam-42 -> Id=c-1
+2026-08-29 17:27:43,700 | INFO     | src.didar.contact_client | didar: found existing contact by MobilePhone=09121234567 (CustomerCode=09121234567 didn't match - see find_existing_contact_id docstring) -> Id=c-by-phone
+2026-08-29 17:27:43,723 | INFO     | src.didar.contact_client | didar: found existing contact by MobilePhone=09121234567 (CustomerCode=09121234567 didn't match - see find_existing_contact_id docstring) -> Id=c-by-phone
+2026-08-29 17:27:43,723 | INFO     | src.didar.contact_client | didar: upserted contact CustomerCode=09121234567 -> Id=c-by-phone
+2026-08-29 17:27:43,746 | INFO     | src.didar.contact_client | didar: upserted contact CustomerCode=09121234567 -> Id=c-existing
+2026-08-29 17:27:43,769 | INFO     | src.didar.contact_client | didar: found existing contact by MobilePhone=09121234567 (CustomerCode=09121234567 didn't match - see find_existing_contact_id docstring) -> Id=c-race
+2026-08-29 17:27:43,769 | INFO     | src.didar.contact_client | didar: upserted contact CustomerCode=09121234567 -> Id=c-race
+2026-08-29 17:27:43,813 | INFO     | src.didar.product_client | didar: no keyword in category_mapping.py matched item title 'Product A' - falling back to the default category
+2026-08-29 17:27:43,813 | INFO     | src.didar.product_client | didar: created product Code=SKU-1 Title=Product A CategoryId=cat-default -> Id=p-1
+2026-08-29 17:27:43,814 | INFO     | src.didar.deal_client | didar: created deal for tapsishop order 999 -> Id=d-1
+2026-08-29 17:27:43,855 | INFO     | src.didar.product_client | didar: no keyword in category_mapping.py matched item title 'Product A' - falling back to the default category
+2026-08-29 17:27:43,855 | INFO     | src.didar.product_client | didar: created product Code=SKU-1 Title=Product A CategoryId=cat-default -> Id=p-1
+2026-08-29 17:27:43,856 | INFO     | src.didar.deal_client | didar: created deal for tapsishop order 999 -> Id=d-1
+2026-08-29 17:27:43,898 | INFO     | src.didar.product_client | didar: no keyword in category_mapping.py matched item title 'Product A' - falling back to the default category
+2026-08-29 17:27:43,899 | INFO     | src.didar.product_client | didar: created product Code=SKU-1 Title=Product A CategoryId=cat-default -> Id=p-1
+2026-08-29 17:27:43,899 | INFO     | src.didar.deal_client | didar: created deal for unmapped_source order 999 -> Id=d-1
+2026-08-29 17:27:43,941 | INFO     | src.didar.product_client | didar: no keyword in category_mapping.py matched item title 'Product A' - falling back to the default category
+2026-08-29 17:27:43,942 | INFO     | src.didar.product_client | didar: created product Code=SKU-1 Title=Product A CategoryId=cat-default -> Id=p-1
+2026-08-29 17:27:43,942 | INFO     | src.didar.deal_client | didar: created deal for tapsishop order 999 -> Id=d-1
+2026-08-29 17:27:43,985 | INFO     | src.didar.product_client | didar: no keyword in category_mapping.py matched item title 'Product A' - falling back to the default category
+2026-08-29 17:27:43,986 | INFO     | src.didar.product_client | didar: created product Code=SKU-1 Title=Product A CategoryId=cat-default -> Id=p-1
+2026-08-29 17:27:43,986 | INFO     | src.didar.deal_client | didar: created deal for farazhonar order 555 -> Id=d-1
+2026-08-29 17:27:44,028 | INFO     | src.didar.product_client | didar: no keyword in category_mapping.py matched item title 'Product A' - falling back to the default category
+2026-08-29 17:27:44,029 | INFO     | src.didar.product_client | didar: created product Code=SKU-1 Title=Product A CategoryId=cat-default -> Id=p-999
+2026-08-29 17:27:44,029 | INFO     | src.didar.deal_client | didar: created deal for tapsishop order 999 -> Id=d-1
+2026-08-29 17:27:44,082 | INFO     | src.didar.product_catalog | didar: loaded 1 product catalog entries from /tmp/pytest-of-root/pytest-0/test_deal_item_uses_catalog_co0/catalog.xlsx
+2026-08-29 17:27:44,083 | INFO     | src.didar.product_client | didar: catalog match for title='ست هدیه مسی فراز هنر مدل راستین کد 1 | چند رنگ | گارانتی اصالت و سلامت فیزیکی کالا' -> Code=146 (catalog title='راستین 1')
+2026-08-29 17:27:44,083 | INFO     | src.didar.product_client | didar: found existing product Code=146 -> Id=p-existing (skipping create)
+2026-08-29 17:27:44,083 | INFO     | src.didar.deal_client | didar: created deal for digikala order 1 -> Id=d-1
+2026-08-29 17:27:44,126 | INFO     | src.didar.product_client | didar: no keyword in category_mapping.py matched item title 'Product A' - falling back to the default category
+2026-08-29 17:27:44,127 | INFO     | src.didar.product_client | didar: created product Code=SKU-1 Title=Product A CategoryId=cat-default -> Id=p-1
+2026-08-29 17:27:44,127 | INFO     | src.didar.deal_client | didar: created deal for tapsishop order 999 -> Id=d-1
+2026-08-29 17:27:44,171 | INFO     | src.didar.product_client | didar: no keyword in category_mapping.py matched item title 'Product A' - falling back to the default category
+2026-08-29 17:27:44,171 | INFO     | src.didar.product_client | didar: created product Code=SKU-1 Title=Product A CategoryId=cat-default -> Id=p-1
+2026-08-29 17:27:44,172 | INFO     | src.didar.deal_client | didar: created deal for tapsishop order 999 -> Id=d-1
+2026-08-29 17:27:44,214 | INFO     | src.didar.product_client | didar: no keyword in category_mapping.py matched item title 'Product A' - falling back to the default category
+2026-08-29 17:27:44,215 | INFO     | src.didar.product_client | didar: created product Code=SKU-1 Title=Product A CategoryId=cat-default -> Id=p-1
+2026-08-29 17:27:44,215 | INFO     | src.didar.deal_client | didar: created deal for tapsishop order 999 -> Id=d-1
+2026-08-29 17:27:44,257 | INFO     | src.didar.product_client | didar: no keyword in category_mapping.py matched item title 'Product A' - falling back to the default category
+2026-08-29 17:27:44,258 | INFO     | src.didar.product_client | didar: created product Code=SKU-1 Title=Product A CategoryId=cat-default -> Id=p-1
+2026-08-29 17:27:44,258 | INFO     | src.didar.deal_client | didar: created deal for tapsishop order 999 -> Id=d-1
+2026-08-29 17:27:44,342 | INFO     | src.didar.deal_client | didar: found existing deal for tapsishop order 999 -> Id=d-existing (skipping create - already in Didar)
+2026-08-29 17:27:44,465 | INFO     | src.didar.deal_client | didar: found existing deal for tapsishop order 999 -> Id=d-already-there (skipping create - already in Didar)
+2026-08-29 17:27:44,551 | INFO     | src.didar.contact_client | didar: upserted contact CustomerCode=tapsishop-999 -> Id=c-42
+2026-08-29 17:27:44,551 | INFO     | src.didar.product_client | didar: no keyword in category_mapping.py matched item title 'Product A' - falling back to the default category
+2026-08-29 17:27:44,552 | INFO     | src.didar.product_client | didar: created product Code=SKU-1 Title=Product A CategoryId=cat-default -> Id=p-1
+2026-08-29 17:27:44,552 | INFO     | src.didar.deal_client | didar: created deal for tapsishop order 999 -> Id=d-42
+2026-08-29 17:27:44,552 | INFO     | src.didar.service | didar: synced tapsishop order 999 -> contact=c-42 deal=d-42
+2026-08-29 17:27:44,552 | WARNING  | src.didar.activity_client | didar: skipping post-sale checklist for deal d-42 - activity type Id(s) not configured for: activity_type_new_call_id, activity_type_satisfaction_call_id, activity_type_ship_id, activity_type_sms1_id, activity_type_sms2_id, activity_type_sms3_id (see DidarConfig.activity_type_*_id / .env.example)
+2026-08-29 17:27:44,636 | INFO     | src.didar.contact_client | didar: upserted contact CustomerCode=tapsishop-999 -> Id=c-42
+2026-08-29 17:27:44,636 | INFO     | src.didar.product_client | didar: no keyword in category_mapping.py matched item title 'Product A' - falling back to the default category
+2026-08-29 17:27:44,638 | INFO     | src.didar.product_client | didar: created product Code=SKU-1 Title=Product A CategoryId=cat-default -> Id=p-1
+2026-08-29 17:27:44,638 | INFO     | src.didar.deal_client | didar: created deal for tapsishop order 999 -> Id=d-42
+2026-08-29 17:27:44,638 | INFO     | src.didar.service | didar: synced tapsishop order 999 -> contact=c-42 deal=d-42
+2026-08-29 17:27:44,639 | INFO     | src.didar.activity_client | didar: created activity 'تماس جدید' on deal d-42 -> Id=a-x
+2026-08-29 17:27:44,639 | INFO     | src.didar.activity_client | didar: created activity 'پیامک 2' on deal d-42 -> Id=a-x
+2026-08-29 17:27:44,640 | INFO     | src.didar.activity_client | didar: created activity 'پیامک 1' on deal d-42 -> Id=a-x
+2026-08-29 17:27:44,640 | INFO     | src.didar.activity_client | didar: created activity 'ارسال محصول' on deal d-42 -> Id=a-x
+2026-08-29 17:27:44,640 | INFO     | src.didar.activity_client | didar: created activity 'پیامک 3' on deal d-42 -> Id=a-x
+2026-08-29 17:27:44,641 | INFO     | src.didar.activity_client | didar: created activity 'تماس رضایت' on deal d-42 -> Id=a-x
+2026-08-29 17:27:44,723 | INFO     | src.didar.deal_client | didar: found existing deal for tapsishop order 999 -> Id=d-already-there (skipping create - already in Didar)
+2026-08-29 17:27:44,748 | INFO     | src.didar.product_client | didar: created product Code=SKU-A Title=گلدان خاتم ۳ CategoryId=cat-khatam -> Id=p-1
+2026-08-29 17:27:44,771 | INFO     | src.didar.product_client | didar: created product Code=SKU-A Title=گلدان خاتم ۳ CategoryId=cat-khatam -> Id=p-1
+2026-08-29 17:27:44,793 | INFO     | src.didar.product_client | didar: found existing product Code=SKU-A -> Id=existing-p-1 (skipping create)
+2026-08-29 17:27:44,816 | INFO     | src.didar.product_client | didar: no keyword in category_mapping.py matched item title 'یک محصول کاملا نامرتبط' - falling back to the default category
+2026-08-29 17:27:44,816 | INFO     | src.didar.product_client | didar: created product Code=SKU-A Title=یک محصول کاملا نامرتبط CategoryId=cat-default -> Id=p-created
+2026-08-29 17:27:44,839 | INFO     | src.didar.product_client | didar: no keyword in category_mapping.py matched item title 'یک محصول کاملا نامرتبط' - falling back to the default category
+2026-08-29 17:27:44,840 | INFO     | src.didar.product_client | didar: create raced with another writer for Code=SKU-RACE - recovered existing Id=recovered-id via search
+2026-08-29 17:27:44,862 | INFO     | src.didar.product_client | didar: no keyword in category_mapping.py matched item title 'یک محصول کاملا نامرتبط' - falling back to the default category
+2026-08-29 17:27:44,884 | INFO     | src.didar.product_client | didar: no keyword in category_mapping.py matched item title 'محصول بدون کلیدواژه مرتبط' - falling back to the default category
+2026-08-29 17:27:44,908 | INFO     | src.didar.product_client | didar: created product Code=SKU-C Title=جعبه خاتم CategoryId=cat-mina -> Id=p-2
+2026-08-29 17:27:44,931 | INFO     | src.didar.product_client | didar: no keyword in category_mapping.py matched item title 'یک محصول کاملا نامرتبط' - falling back to the default category
+2026-08-29 17:27:44,931 | INFO     | src.didar.product_client | didar: created product Code=SKU-D Title=یک محصول کاملا نامرتبط CategoryId=cat-default -> Id=p-3
+2026-08-29 17:27:44,953 | INFO     | src.marketplaces.digikala | digikala: fetched 1 new orders since 2026-08-01T00:00:00+00:00
+2026-08-29 17:27:44,976 | INFO     | src.marketplaces.digikala | digikala: fetched 51 new orders since 2026-08-01T00:00:00+00:00
+2026-08-29 17:27:44,998 | INFO     | src.marketplaces.digikala | digikala: fetched 0 new orders since 2026-08-01T00:00:00+00:00
+2026-08-29 17:27:45,022 | INFO     | src.marketplaces.digikala | digikala: fetched 100 new orders since 2026-08-01T00:00:00+00:00
+2026-08-29 17:27:45,049 | INFO     | src.marketplaces.digikala | digikala: access token expired (401), refreshing
+2026-08-29 17:27:45,050 | INFO     | src.marketplaces.digikala | digikala: access token refreshed, new expiry=2026-08-19 00:00:00
+2026-08-29 17:27:45,050 | INFO     | src.marketplaces.digikala | digikala: fetched 0 new orders since 2026-08-01T00:00:00+00:00
+2026-08-29 17:27:45,128 | INFO     | src.marketplaces.farazhonar | farazhonar: fetched 1 new orders since 2026-08-01T00:00:00+00:00
+2026-08-29 17:27:45,156 | INFO     | src.marketplaces.farazhonar | farazhonar: fetched 2 new orders since 2026-08-01T00:00:00+00:00
+2026-08-29 17:27:45,246 | INFO     | src.didar.product_catalog | didar: loaded 3 product catalog entries from /tmp/pytest-of-root/pytest-0/test_short_specific_entry_wins0/catalog.xlsx
+2026-08-29 17:27:45,254 | INFO     | src.didar.product_catalog | didar: loaded 2 product catalog entries from /tmp/pytest-of-root/pytest-0/test_trailing_number_prevents_0/catalog.xlsx
+2026-08-29 17:27:45,261 | INFO     | src.didar.product_catalog | didar: loaded 1 product catalog entries from /tmp/pytest-of-root/pytest-0/test_no_match_returns_none0/catalog.xlsx
+2026-08-29 17:27:45,269 | INFO     | src.didar.product_catalog | didar: loaded 1 product catalog entries from /tmp/pytest-of-root/pytest-0/test_empty_title_returns_none0/catalog.xlsx
+2026-08-29 17:27:45,276 | INFO     | src.didar.product_catalog | didar: loaded 1 product catalog entries from /tmp/pytest-of-root/pytest-0/test_arabic_yeh_normalization_0/catalog.xlsx
+2026-08-29 17:27:45,285 | INFO     | src.didar.product_catalog | didar: loaded 1 product catalog entries from /tmp/pytest-of-root/pytest-0/test_persian_digits_in_catalog0/catalog.xlsx
+2026-08-29 17:27:45,293 | INFO     | src.didar.product_catalog | didar: loaded 1 product catalog entries from /tmp/pytest-of-root/pytest-0/test_float_code_normalized_to_0/catalog.xlsx
+2026-08-29 17:27:45,307 | WARNING  | src.reporting | health_check: tapsishop hasn't completed a poll cycle since never (stale)
+2026-08-29 17:27:45,317 | WARNING  | src.reporting | health_check: basalam hasn't completed a poll cycle since 2026-08-29T12:27:45.316836+00:00 (stale)
+2026-08-29 17:27:45,323 | WARNING  | src.reporting | health_check: snappshop has 1 order(s) stuck in retry
+2026-08-29 17:27:45,330 | WARNING  | src.reporting | health_check: tapsishop hasn't completed a poll cycle since never (stale)
+2026-08-29 17:27:45,331 | INFO     | src.reporting | daily report written to /tmp/pytest-of-root/pytest-0/test_daily_report_is_written_w0/2026-08-29.txt
+2026-08-29 17:27:45,391 | WARNING  | src.marketplaces.snappshop | snappshop: order field schema is UNCONFIRMED (no populated response has been inspected yet - only prose docs, no JSON example). Normalized output may be missing fields until this is verified - see src/marketplaces/snappshop.py module docstring.
+2026-08-29 17:27:45,392 | INFO     | src.marketplaces.snappshop | snappshop: fetched 0 new orders since 2026-08-01T00:00:00+00:00
+2026-08-29 17:27:45,418 | WARNING  | src.marketplaces.snappshop | snappshop: order field schema is UNCONFIRMED (no populated response has been inspected yet - only prose docs, no JSON example). Normalized output may be missing fields until this is verified - see src/marketplaces/snappshop.py module docstring.
+2026-08-29 17:27:45,419 | INFO     | src.marketplaces.snappshop | snappshop: fetched 2 new orders since 2026-08-01T00:00:00+00:00
+2026-08-29 17:27:45,477 | INFO     | src.sync_engine | sync_engine: completed poll of fake1 (1 orders seen)
+2026-08-29 17:27:45,483 | INFO     | src.sync_engine | sync_engine: completed poll of fake1 (1 orders seen)
+2026-08-29 17:27:45,489 | INFO     | src.sync_engine | sync_engine: completed poll of fake1 (1 orders seen)
+2026-08-29 17:27:45,490 | INFO     | src.sync_engine | sync_engine: completed poll of fake1 (1 orders seen)
+2026-08-29 17:27:45,495 | ERROR    | src.sync_engine | sync_engine: failed to fetch new orders from broken
+Traceback (most recent call last):
+  File "/home/claude/work/Merged/src/sync_engine.py", line 96, in _sync_source
+    orders = adapter.fetch_new_orders(since)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/claude/work/Merged/tests/test_sync_engine.py", line 52, in fetch_new_orders
+    raise RuntimeError(f"{self.name}: simulated fetch failure")
+RuntimeError: broken: simulated fetch failure
+2026-08-29 17:27:45,498 | INFO     | src.sync_engine | sync_engine: completed poll of healthy (1 orders seen)
+2026-08-29 17:27:45,507 | ERROR    | src.sync_engine | sync_engine: failed to sync fake1 order 1
+Traceback (most recent call last):
+  File "/home/claude/work/Merged/src/sync_engine.py", line 154, in _sync_one_order
+    deal_id = self._didar.sync_order(order)
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/claude/work/Merged/tests/test_sync_engine.py", line 72, in sync_order
+    raise RuntimeError("simulated Didar failure")
+RuntimeError: simulated Didar failure
+2026-08-29 17:27:45,510 | INFO     | src.sync_engine | sync_engine: completed poll of fake1 (1 orders seen)
+2026-08-29 17:27:45,511 | INFO     | src.sync_engine | sync_engine: retry succeeded for fake1 order 1
+2026-08-29 17:27:45,516 | ERROR    | src.sync_engine | sync_engine: failed to sync fake1 order 1
+Traceback (most recent call last):
+  File "/home/claude/work/Merged/src/sync_engine.py", line 154, in _sync_one_order
+    deal_id = self._didar.sync_order(order)
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/claude/work/Merged/tests/test_sync_engine.py", line 72, in sync_order
+    raise RuntimeError("simulated Didar failure")
+RuntimeError: simulated Didar failure
+2026-08-29 17:27:45,517 | INFO     | src.sync_engine | sync_engine: completed poll of fake1 (1 orders seen)
+2026-08-29 17:27:45,519 | INFO     | src.sync_engine | sync_engine: retry succeeded for fake1 order 1
+2026-08-29 17:27:45,523 | INFO     | src.sync_engine | sync_engine: completed poll of fake1 (0 orders seen)
+2026-08-29 17:27:45,528 | INFO     | src.sync_engine | sync_engine: completed poll of fake1 (0 orders seen)
+2026-08-29 17:27:45,532 | WARNING  | src.sync_engine | sync_engine: dropping fake1 order old-1 - created_at=2026-07-30T17:27:45.532570+00:00 is before the requested since=2026-08-29T17:27:45.532592+00:00 (the marketplace's own date filter returned an order older than what we asked for - see sync_engine.py module docstring)
+2026-08-29 17:27:45,533 | INFO     | src.sync_engine | sync_engine: completed poll of fake1 (0 orders seen)
+2026-08-29 17:27:45,539 | INFO     | src.sync_engine | sync_engine: completed poll of fake1 (1 orders seen)
+2026-08-29 17:27:45,564 | INFO     | src.marketplaces.tapsishop | tapsishop: fetched 1 new orders since 2026-08-29T16:27:45.563911+00:00
+2026-08-29 17:27:45,589 | INFO     | src.marketplaces.tapsishop | tapsishop: fetched 0 new orders since 2026-08-29T16:27:45.589001+00:00
+2026-08-29 17:27:45,614 | INFO     | src.marketplaces.tapsishop | tapsishop: fetched 0 new orders since 2026-08-29T16:27:45.613718+00:00
+2026-08-29 17:27:45,710 | INFO     | src.marketplaces.tapsishop | tapsishop: fetched 51 new orders since 2026-08-29T16:27:45.709584+00:00
+2026-08-29 17:27:45,736 | INFO     | src.marketplaces.tapsishop | tapsishop: fetched 0 new orders since 2026-08-09T17:27:45.735743+00:00
+2026-08-29 18:10:34,900 | INFO     | src.marketplaces.basalam | basalam: fetched 1 new orders since 2026-08-01T00:00:00+00:00
+2026-08-29 18:10:34,944 | INFO     | src.marketplaces.basalam | basalam: fetched 1 new orders since 2026-08-01T00:00:00+00:00
+2026-08-29 18:10:35,028 | INFO     | src.marketplaces.basalam | basalam: fetched 0 new orders since 2026-08-01T00:00:00+00:00
+2026-08-29 18:10:35,056 | INFO     | src.marketplaces.basalam | basalam: fetched 0 new orders since 2026-08-01T00:00:00+00:00
+2026-08-29 18:10:35,114 | INFO     | src.marketplaces.basalam | basalam: fetched 1 new orders since 2026-08-01T00:00:00+00:00
+2026-08-29 18:10:35,171 | INFO     | src.didar.activity_client | didar: created activity 'تماس جدید' on deal deal-1 -> Id=a-1
+2026-08-29 18:10:35,199 | INFO     | src.didar.activity_client | didar: created activity 'x' on deal deal-1 -> Id=a-1
+2026-08-29 18:10:35,227 | INFO     | src.didar.activity_client | didar: created activity 'تماس جدید' on deal deal-1 -> Id=a-x
+2026-08-29 18:10:35,228 | INFO     | src.didar.activity_client | didar: created activity 'پیامک 2' on deal deal-1 -> Id=a-x
+2026-08-29 18:10:35,228 | INFO     | src.didar.activity_client | didar: created activity 'پیامک 1' on deal deal-1 -> Id=a-x
+2026-08-29 18:10:35,229 | INFO     | src.didar.activity_client | didar: created activity 'ارسال محصول' on deal deal-1 -> Id=a-x
+2026-08-29 18:10:35,230 | INFO     | src.didar.activity_client | didar: created activity 'پیامک 3' on deal deal-1 -> Id=a-x
+2026-08-29 18:10:35,230 | INFO     | src.didar.activity_client | didar: created activity 'تماس رضایت' on deal deal-1 -> Id=a-x
+2026-08-29 18:10:35,257 | WARNING  | src.didar.activity_client | didar: skipping post-sale checklist for deal deal-1 - no ship_time available for this order (marketplace adapter doesn't expose it yet - see NormalizedOrder.ship_time)
+2026-08-29 18:10:35,285 | INFO     | src.didar.activity_client | didar: created activity 'تماس جدید' on deal deal-1 -> Id=a-x
+2026-08-29 18:10:35,286 | INFO     | src.didar.activity_client | didar: created activity 'پیامک 2' on deal deal-1 -> Id=a-x
+2026-08-29 18:10:35,286 | INFO     | src.didar.activity_client | didar: created activity 'پیامک 1' on deal deal-1 -> Id=a-x
+2026-08-29 18:10:35,287 | INFO     | src.didar.activity_client | didar: created activity 'ارسال محصول' on deal deal-1 -> Id=a-x
+2026-08-29 18:10:35,288 | INFO     | src.didar.activity_client | didar: created activity 'پیامک 3' on deal deal-1 -> Id=a-x
+2026-08-29 18:10:35,288 | INFO     | src.didar.activity_client | didar: created activity 'تماس رضایت' on deal deal-1 -> Id=a-x
+2026-08-29 18:10:35,316 | ERROR    | src.didar.activity_client | didar: failed to upload product photo for deal deal-1 - continuing without it
+Traceback (most recent call last):
+  File "/home/claude/work/Local Marketplace Order Synchronization Platform/src/didar/activity_client.py", line 234, in create_post_sale_checklist
+    ship_attachment_key = self.upload_attachment(file_bytes, filename, content_type)
+                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/claude/work/Local Marketplace Order Synchronization Platform/src/didar/activity_client.py", line 170, in upload_attachment
+    raise_for_status_with_body(resp)
+  File "/home/claude/work/Local Marketplace Order Synchronization Platform/src/http_utils.py", line 41, in raise_for_status_with_body
+    raise httpx.HTTPStatusError(message, request=resp.request, response=resp)
+httpx.HTTPStatusError: 500 Internal Server Error for url 'https://app.didar.me/api/UploadFile?apikey=test-key': 
+2026-08-29 18:10:35,318 | INFO     | src.didar.activity_client | didar: created activity 'تماس جدید' on deal deal-1 -> Id=a-x
+2026-08-29 18:10:35,319 | INFO     | src.didar.activity_client | didar: created activity 'پیامک 2' on deal deal-1 -> Id=a-x
+2026-08-29 18:10:35,319 | INFO     | src.didar.activity_client | didar: created activity 'پیامک 1' on deal deal-1 -> Id=a-x
+2026-08-29 18:10:35,320 | INFO     | src.didar.activity_client | didar: created activity 'ارسال محصول' on deal deal-1 -> Id=a-x
+2026-08-29 18:10:35,320 | INFO     | src.didar.activity_client | didar: created activity 'پیامک 3' on deal deal-1 -> Id=a-x
+2026-08-29 18:10:35,321 | INFO     | src.didar.activity_client | didar: created activity 'تماس رضایت' on deal deal-1 -> Id=a-x
+2026-08-29 18:10:35,347 | WARNING  | src.didar.activity_client | didar: skipping post-sale checklist for deal deal-1 - activity type Id(s) not configured for: activity_type_sms2_id (see DidarConfig.activity_type_*_id / .env.example)
+2026-08-29 18:10:35,374 | INFO     | src.didar.activity_client | didar: created activity 'تماس جدید' on deal deal-1 -> Id=a-x
+2026-08-29 18:10:35,375 | ERROR    | src.didar.activity_client | didar: failed to create checklist activity 'پیامک 2' on deal deal-1 - continuing with the rest of the checklist
+Traceback (most recent call last):
+  File "/home/claude/work/Local Marketplace Order Synchronization Platform/src/didar/activity_client.py", line 248, in create_post_sale_checklist
+    self.create_activity(
+  File "/home/claude/work/Local Marketplace Order Synchronization Platform/src/didar/activity_client.py", line 143, in create_activity
+    payload = self._post("/activity/save", json=request_body)
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/tmp/venv/lib/python3.12/site-packages/tenacity/__init__.py", line 331, in wrapped_f
+    return copy(f, *args, **kw)
+           ^^^^^^^^^^^^^^^^^^^^
+  File "/tmp/venv/lib/python3.12/site-packages/tenacity/__init__.py", line 470, in __call__
+    do = self.iter(retry_state=retry_state)
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/tmp/venv/lib/python3.12/site-packages/tenacity/__init__.py", line 371, in iter
+    result = action(retry_state)
+             ^^^^^^^^^^^^^^^^^^^
+  File "/tmp/venv/lib/python3.12/site-packages/tenacity/__init__.py", line 393, in <lambda>
+    self._add_action_func(lambda rs: rs.outcome.result())
+                                     ^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.12/concurrent/futures/_base.py", line 449, in result
+    return self.__get_result()
+           ^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.12/concurrent/futures/_base.py", line 401, in __get_result
+    raise self._exception
+  File "/tmp/venv/lib/python3.12/site-packages/tenacity/__init__.py", line 473, in __call__
+    result = fn(*args, **kwargs)
+             ^^^^^^^^^^^^^^^^^^^
+  File "/home/claude/work/Local Marketplace Order Synchronization Platform/src/didar/activity_client.py", line 106, in _post
+    raise_for_status_with_body(resp)
+  File "/home/claude/work/Local Marketplace Order Synchronization Platform/src/http_utils.py", line 41, in raise_for_status_with_body
+    raise httpx.HTTPStatusError(message, request=resp.request, response=resp)
+httpx.HTTPStatusError: 400 Bad Request for url 'https://app.didar.me/api/activity/save?apikey=test-key': {"error":"boom"}
+2026-08-29 18:10:35,378 | INFO     | src.didar.activity_client | didar: created activity 'پیامک 1' on deal deal-1 -> Id=a-x
+2026-08-29 18:10:35,379 | INFO     | src.didar.activity_client | didar: created activity 'ارسال محصول' on deal deal-1 -> Id=a-x
+2026-08-29 18:10:35,379 | INFO     | src.didar.activity_client | didar: created activity 'پیامک 3' on deal deal-1 -> Id=a-x
+2026-08-29 18:10:35,380 | INFO     | src.didar.activity_client | didar: created activity 'تماس رضایت' on deal deal-1 -> Id=a-x
+2026-08-29 18:10:35,413 | INFO     | src.didar.contact_client | didar: upserted contact CustomerCode=tapsishop-999 -> Id=c-123
+2026-08-29 18:10:35,440 | INFO     | src.didar.contact_client | didar: upserted contact CustomerCode=x -> Id=c-flat
+2026-08-29 18:10:35,497 | INFO     | src.didar.contact_client | didar: upserted contact CustomerCode=tapsishop-999 -> Id=c-1
+2026-08-29 18:10:35,525 | INFO     | src.didar.contact_client | didar: upserted contact CustomerCode=basalam-42 -> Id=c-1
+2026-08-29 18:10:35,624 | INFO     | src.didar.contact_client | didar: found existing contact by MobilePhone=09121234567 (CustomerCode=09121234567 didn't match - see find_existing_contact_id docstring) -> Id=c-by-phone
+2026-08-29 18:10:35,651 | INFO     | src.didar.contact_client | didar: found existing contact by MobilePhone=09121234567 (CustomerCode=09121234567 didn't match - see find_existing_contact_id docstring) -> Id=c-by-phone
+2026-08-29 18:10:35,652 | INFO     | src.didar.contact_client | didar: upserted contact CustomerCode=09121234567 -> Id=c-by-phone
+2026-08-29 18:10:35,679 | INFO     | src.didar.contact_client | didar: upserted contact CustomerCode=09121234567 -> Id=c-existing
+2026-08-29 18:10:35,708 | INFO     | src.didar.contact_client | didar: found existing contact by MobilePhone=09121234567 (CustomerCode=09121234567 didn't match - see find_existing_contact_id docstring) -> Id=c-race
+2026-08-29 18:10:35,709 | INFO     | src.didar.contact_client | didar: upserted contact CustomerCode=09121234567 -> Id=c-race
+2026-08-29 18:10:35,759 | INFO     | src.didar.product_client | didar: no keyword in category_mapping.py matched item title 'Product A' - falling back to the default category
+2026-08-29 18:10:35,760 | INFO     | src.didar.product_client | didar: created product Code=SKU-1 Title=Product A CategoryId=cat-default -> Id=p-1
+2026-08-29 18:10:35,761 | INFO     | src.didar.deal_client | didar: created deal for tapsishop order 999 -> Id=d-1
+2026-08-29 18:10:35,814 | INFO     | src.didar.product_client | didar: no keyword in category_mapping.py matched item title 'Product A' - falling back to the default category
+2026-08-29 18:10:35,815 | INFO     | src.didar.product_client | didar: created product Code=SKU-1 Title=Product A CategoryId=cat-default -> Id=p-1
+2026-08-29 18:10:35,816 | INFO     | src.didar.deal_client | didar: created deal for tapsishop order 999 -> Id=d-1
+2026-08-29 18:10:35,874 | INFO     | src.didar.product_client | didar: no keyword in category_mapping.py matched item title 'Product A' - falling back to the default category
+2026-08-29 18:10:35,875 | INFO     | src.didar.product_client | didar: created product Code=SKU-1 Title=Product A CategoryId=cat-default -> Id=p-1
+2026-08-29 18:10:35,875 | INFO     | src.didar.deal_client | didar: created deal for unmapped_source order 999 -> Id=d-1
+2026-08-29 18:10:35,928 | INFO     | src.didar.product_client | didar: no keyword in category_mapping.py matched item title 'Product A' - falling back to the default category
+2026-08-29 18:10:35,929 | INFO     | src.didar.product_client | didar: created product Code=SKU-1 Title=Product A CategoryId=cat-default -> Id=p-1
+2026-08-29 18:10:35,930 | INFO     | src.didar.deal_client | didar: created deal for tapsishop order 999 -> Id=d-1
+2026-08-29 18:10:35,987 | INFO     | src.didar.product_client | didar: no keyword in category_mapping.py matched item title 'Product A' - falling back to the default category
+2026-08-29 18:10:35,988 | INFO     | src.didar.product_client | didar: created product Code=SKU-1 Title=Product A CategoryId=cat-default -> Id=p-1
+2026-08-29 18:10:35,988 | INFO     | src.didar.deal_client | didar: created deal for farazhonar order 555 -> Id=d-1
+2026-08-29 18:10:36,044 | INFO     | src.didar.product_client | didar: no keyword in category_mapping.py matched item title 'Product A' - falling back to the default category
+2026-08-29 18:10:36,045 | INFO     | src.didar.product_client | didar: created product Code=SKU-1 Title=Product A CategoryId=cat-default -> Id=p-999
+2026-08-29 18:10:36,046 | INFO     | src.didar.deal_client | didar: created deal for tapsishop order 999 -> Id=d-1
+2026-08-29 18:10:36,120 | INFO     | src.didar.product_catalog | didar: loaded 1 product catalog entries from /tmp/pytest-of-root/pytest-1/test_deal_item_uses_catalog_co0/catalog.xlsx
+2026-08-29 18:10:36,120 | INFO     | src.didar.product_client | didar: catalog match for title='ست هدیه مسی فراز هنر مدل راستین کد 1 | چند رنگ | گارانتی اصالت و سلامت فیزیکی کالا' -> Code=146 (catalog title='راستین 1')
+2026-08-29 18:10:36,121 | INFO     | src.didar.product_client | didar: found existing product Code=146 -> Id=p-existing (skipping create)
+2026-08-29 18:10:36,121 | INFO     | src.didar.deal_client | didar: created deal for digikala order 1 -> Id=d-1
+2026-08-29 18:10:36,178 | INFO     | src.didar.product_client | didar: no keyword in category_mapping.py matched item title 'Product A' - falling back to the default category
+2026-08-29 18:10:36,179 | INFO     | src.didar.product_client | didar: created product Code=SKU-1 Title=Product A CategoryId=cat-default -> Id=p-1
+2026-08-29 18:10:36,180 | INFO     | src.didar.deal_client | didar: created deal for tapsishop order 999 -> Id=d-1
+2026-08-29 18:10:36,234 | INFO     | src.didar.product_client | didar: no keyword in category_mapping.py matched item title 'Product A' - falling back to the default category
+2026-08-29 18:10:36,235 | INFO     | src.didar.product_client | didar: created product Code=SKU-1 Title=Product A CategoryId=cat-default -> Id=p-1
+2026-08-29 18:10:36,236 | INFO     | src.didar.deal_client | didar: created deal for tapsishop order 999 -> Id=d-1
+2026-08-29 18:10:36,287 | INFO     | src.didar.product_client | didar: no keyword in category_mapping.py matched item title 'Product A' - falling back to the default category
+2026-08-29 18:10:36,288 | INFO     | src.didar.product_client | didar: created product Code=SKU-1 Title=Product A CategoryId=cat-default -> Id=p-1
+2026-08-29 18:10:36,289 | INFO     | src.didar.deal_client | didar: created deal for tapsishop order 999 -> Id=d-1
+2026-08-29 18:10:36,342 | INFO     | src.didar.product_client | didar: no keyword in category_mapping.py matched item title 'Product A' - falling back to the default category
+2026-08-29 18:10:36,343 | INFO     | src.didar.product_client | didar: created product Code=SKU-1 Title=Product A CategoryId=cat-default -> Id=p-1
+2026-08-29 18:10:36,343 | INFO     | src.didar.deal_client | didar: created deal for tapsishop order 999 -> Id=d-1
+2026-08-29 18:10:36,447 | INFO     | src.didar.deal_client | didar: found existing deal for tapsishop order 999 -> Id=d-existing (skipping create - already in Didar)
+2026-08-29 18:10:36,613 | INFO     | src.didar.deal_client | didar: found existing deal for tapsishop order 999 -> Id=d-already-there (skipping create - already in Didar)
+2026-08-29 18:10:36,716 | INFO     | src.didar.contact_client | didar: upserted contact CustomerCode=tapsishop-999 -> Id=c-42
+2026-08-29 18:10:36,718 | INFO     | src.didar.product_client | didar: no keyword in category_mapping.py matched item title 'Product A' - falling back to the default category
+2026-08-29 18:10:36,718 | INFO     | src.didar.product_client | didar: created product Code=SKU-1 Title=Product A CategoryId=cat-default -> Id=p-1
+2026-08-29 18:10:36,719 | INFO     | src.didar.deal_client | didar: created deal for tapsishop order 999 -> Id=d-42
+2026-08-29 18:10:36,719 | INFO     | src.didar.service | didar: synced tapsishop order 999 -> contact=c-42 deal=d-42
+2026-08-29 18:10:36,719 | WARNING  | src.didar.activity_client | didar: skipping post-sale checklist for deal d-42 - activity type Id(s) not configured for: activity_type_new_call_id, activity_type_satisfaction_call_id, activity_type_ship_id, activity_type_sms1_id, activity_type_sms2_id, activity_type_sms3_id (see DidarConfig.activity_type_*_id / .env.example)
+2026-08-29 18:10:36,826 | INFO     | src.didar.contact_client | didar: upserted contact CustomerCode=tapsishop-999 -> Id=c-42
+2026-08-29 18:10:36,828 | INFO     | src.didar.product_client | didar: no keyword in category_mapping.py matched item title 'Product A' - falling back to the default category
+2026-08-29 18:10:36,828 | INFO     | src.didar.product_client | didar: created product Code=SKU-1 Title=Product A CategoryId=cat-default -> Id=p-1
+2026-08-29 18:10:36,829 | INFO     | src.didar.deal_client | didar: created deal for tapsishop order 999 -> Id=d-42
+2026-08-29 18:10:36,829 | INFO     | src.didar.service | didar: synced tapsishop order 999 -> contact=c-42 deal=d-42
+2026-08-29 18:10:36,830 | INFO     | src.didar.activity_client | didar: created activity 'تماس جدید' on deal d-42 -> Id=a-x
+2026-08-29 18:10:36,831 | INFO     | src.didar.activity_client | didar: created activity 'پیامک 2' on deal d-42 -> Id=a-x
+2026-08-29 18:10:36,831 | INFO     | src.didar.activity_client | didar: created activity 'پیامک 1' on deal d-42 -> Id=a-x
+2026-08-29 18:10:36,832 | INFO     | src.didar.activity_client | didar: created activity 'ارسال محصول' on deal d-42 -> Id=a-x
+2026-08-29 18:10:36,833 | INFO     | src.didar.activity_client | didar: created activity 'پیامک 3' on deal d-42 -> Id=a-x
+2026-08-29 18:10:36,833 | INFO     | src.didar.activity_client | didar: created activity 'تماس رضایت' on deal d-42 -> Id=a-x
+2026-08-29 18:10:36,944 | INFO     | src.didar.deal_client | didar: found existing deal for tapsishop order 999 -> Id=d-already-there (skipping create - already in Didar)
+2026-08-29 18:10:36,980 | INFO     | src.didar.product_client | didar: created product Code=SKU-A Title=گلدان خاتم ۳ CategoryId=cat-khatam -> Id=p-1
+2026-08-29 18:10:37,008 | INFO     | src.didar.product_client | didar: created product Code=SKU-A Title=گلدان خاتم ۳ CategoryId=cat-khatam -> Id=p-1
+2026-08-29 18:10:37,036 | INFO     | src.didar.product_client | didar: found existing product Code=SKU-A -> Id=existing-p-1 (skipping create)
+2026-08-29 18:10:37,064 | INFO     | src.didar.product_client | didar: no keyword in category_mapping.py matched item title 'یک محصول کاملا نامرتبط' - falling back to the default category
+2026-08-29 18:10:37,065 | INFO     | src.didar.product_client | didar: created product Code=SKU-A Title=یک محصول کاملا نامرتبط CategoryId=cat-default -> Id=p-created
+2026-08-29 18:10:37,094 | INFO     | src.didar.product_client | didar: no keyword in category_mapping.py matched item title 'یک محصول کاملا نامرتبط' - falling back to the default category
+2026-08-29 18:10:37,095 | INFO     | src.didar.product_client | didar: create raced with another writer for Code=SKU-RACE - recovered existing Id=recovered-id via search
+2026-08-29 18:10:37,123 | INFO     | src.didar.product_client | didar: no keyword in category_mapping.py matched item title 'یک محصول کاملا نامرتبط' - falling back to the default category
+2026-08-29 18:10:37,158 | INFO     | src.didar.product_client | didar: no keyword in category_mapping.py matched item title 'محصول بدون کلیدواژه مرتبط' - falling back to the default category
+2026-08-29 18:10:37,191 | INFO     | src.didar.product_client | didar: created product Code=SKU-C Title=جعبه خاتم CategoryId=cat-mina -> Id=p-2
+2026-08-29 18:10:37,222 | INFO     | src.didar.product_client | didar: no keyword in category_mapping.py matched item title 'یک محصول کاملا نامرتبط' - falling back to the default category
+2026-08-29 18:10:37,233 | INFO     | src.didar.product_client | didar: created product Code=SKU-D Title=یک محصول کاملا نامرتبط CategoryId=cat-default -> Id=p-3
+2026-08-29 18:10:37,264 | INFO     | src.marketplaces.digikala | digikala: fetched 1 new orders since 2026-08-01T00:00:00+00:00
+2026-08-29 18:10:37,296 | INFO     | src.marketplaces.digikala | digikala: fetched 51 new orders since 2026-08-01T00:00:00+00:00
+2026-08-29 18:10:37,327 | INFO     | src.marketplaces.digikala | digikala: fetched 0 new orders since 2026-08-01T00:00:00+00:00
+2026-08-29 18:10:37,362 | INFO     | src.marketplaces.digikala | digikala: fetched 100 new orders since 2026-08-01T00:00:00+00:00
+2026-08-29 18:10:37,393 | INFO     | src.marketplaces.digikala | digikala: access token expired (401), refreshing
+2026-08-29 18:10:37,394 | INFO     | src.marketplaces.digikala | digikala: access token refreshed, new expiry=2026-08-19 00:00:00
+2026-08-29 18:10:37,394 | INFO     | src.marketplaces.digikala | digikala: fetched 0 new orders since 2026-08-01T00:00:00+00:00
+2026-08-29 18:10:37,477 | INFO     | src.marketplaces.farazhonar | farazhonar: fetched 1 new orders since 2026-08-01T00:00:00+00:00
+2026-08-29 18:10:37,508 | INFO     | src.marketplaces.farazhonar | farazhonar: fetched 2 new orders since 2026-08-01T00:00:00+00:00
+2026-08-29 18:10:37,615 | INFO     | src.didar.product_catalog | didar: loaded 3 product catalog entries from /tmp/pytest-of-root/pytest-1/test_short_specific_entry_wins0/catalog.xlsx
+2026-08-29 18:10:37,624 | INFO     | src.didar.product_catalog | didar: loaded 2 product catalog entries from /tmp/pytest-of-root/pytest-1/test_trailing_number_prevents_0/catalog.xlsx
+2026-08-29 18:10:37,632 | INFO     | src.didar.product_catalog | didar: loaded 1 product catalog entries from /tmp/pytest-of-root/pytest-1/test_no_match_returns_none0/catalog.xlsx
+2026-08-29 18:10:37,640 | INFO     | src.didar.product_catalog | didar: loaded 1 product catalog entries from /tmp/pytest-of-root/pytest-1/test_empty_title_returns_none0/catalog.xlsx
+2026-08-29 18:10:37,648 | INFO     | src.didar.product_catalog | didar: loaded 1 product catalog entries from /tmp/pytest-of-root/pytest-1/test_arabic_yeh_normalization_0/catalog.xlsx
+2026-08-29 18:10:37,656 | INFO     | src.didar.product_catalog | didar: loaded 1 product catalog entries from /tmp/pytest-of-root/pytest-1/test_persian_digits_in_catalog0/catalog.xlsx
+2026-08-29 18:10:37,666 | INFO     | src.didar.product_catalog | didar: loaded 1 product catalog entries from /tmp/pytest-of-root/pytest-1/test_float_code_normalized_to_0/catalog.xlsx
+2026-08-29 18:10:37,685 | WARNING  | src.reporting | health_check: tapsishop hasn't completed a poll cycle since never (stale)
+2026-08-29 18:10:37,699 | WARNING  | src.reporting | health_check: basalam hasn't completed a poll cycle since 2026-08-29T13:10:37.698186+00:00 (stale)
+2026-08-29 18:10:37,706 | WARNING  | src.reporting | health_check: snappshop has 1 order(s) stuck in retry
+2026-08-29 18:10:37,716 | WARNING  | src.reporting | health_check: tapsishop hasn't completed a poll cycle since never (stale)
+2026-08-29 18:10:37,717 | INFO     | src.reporting | daily report written to /tmp/pytest-of-root/pytest-1/test_daily_report_is_written_w0/2026-08-29.txt
+2026-08-29 18:10:37,795 | WARNING  | src.marketplaces.snappshop | snappshop: order field schema is UNCONFIRMED (no populated response has been inspected yet - only prose docs, no JSON example). Normalized output may be missing fields until this is verified - see src/marketplaces/snappshop.py module docstring.
+2026-08-29 18:10:37,796 | INFO     | src.marketplaces.snappshop | snappshop: fetched 0 new orders since 2026-08-01T00:00:00+00:00
+2026-08-29 18:10:37,837 | WARNING  | src.marketplaces.snappshop | snappshop: order field schema is UNCONFIRMED (no populated response has been inspected yet - only prose docs, no JSON example). Normalized output may be missing fields until this is verified - see src/marketplaces/snappshop.py module docstring.
+2026-08-29 18:10:37,839 | INFO     | src.marketplaces.snappshop | snappshop: fetched 2 new orders since 2026-08-01T00:00:00+00:00
+2026-08-29 18:10:37,934 | INFO     | src.sync_engine | sync_engine: completed poll of fake1 (1 orders seen)
+2026-08-29 18:10:37,942 | INFO     | src.sync_engine | sync_engine: completed poll of fake1 (1 orders seen)
+2026-08-29 18:10:37,950 | INFO     | src.sync_engine | sync_engine: completed poll of fake1 (1 orders seen)
+2026-08-29 18:10:37,951 | INFO     | src.sync_engine | sync_engine: completed poll of fake1 (1 orders seen)
+2026-08-29 18:10:37,957 | ERROR    | src.sync_engine | sync_engine: failed to fetch new orders from broken
+Traceback (most recent call last):
+  File "/home/claude/work/Local Marketplace Order Synchronization Platform/src/sync_engine.py", line 96, in _sync_source
+    orders = adapter.fetch_new_orders(since)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/claude/work/Merged/tests/test_sync_engine.py", line 52, in fetch_new_orders
+RuntimeError: broken: simulated fetch failure
+2026-08-29 18:10:37,960 | INFO     | src.sync_engine | sync_engine: completed poll of healthy (1 orders seen)
+2026-08-29 18:10:37,967 | ERROR    | src.sync_engine | sync_engine: failed to sync fake1 order 1
+Traceback (most recent call last):
+  File "/home/claude/work/Local Marketplace Order Synchronization Platform/src/sync_engine.py", line 154, in _sync_one_order
+    deal_id = self._didar.sync_order(order)
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/claude/work/Merged/tests/test_sync_engine.py", line 72, in sync_order
+RuntimeError: simulated Didar failure
+2026-08-29 18:10:37,969 | INFO     | src.sync_engine | sync_engine: completed poll of fake1 (1 orders seen)
+2026-08-29 18:10:37,970 | INFO     | src.sync_engine | sync_engine: retry succeeded for fake1 order 1
+2026-08-29 18:10:37,976 | ERROR    | src.sync_engine | sync_engine: failed to sync fake1 order 1
+Traceback (most recent call last):
+  File "/home/claude/work/Local Marketplace Order Synchronization Platform/src/sync_engine.py", line 154, in _sync_one_order
+    deal_id = self._didar.sync_order(order)
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/claude/work/Merged/tests/test_sync_engine.py", line 72, in sync_order
+RuntimeError: simulated Didar failure
+2026-08-29 18:10:37,978 | INFO     | src.sync_engine | sync_engine: completed poll of fake1 (1 orders seen)
+2026-08-29 18:10:37,979 | INFO     | src.sync_engine | sync_engine: retry succeeded for fake1 order 1
+2026-08-29 18:10:37,985 | INFO     | src.sync_engine | sync_engine: completed poll of fake1 (0 orders seen)
+2026-08-29 18:10:37,990 | INFO     | src.sync_engine | sync_engine: completed poll of fake1 (0 orders seen)
+2026-08-29 18:10:37,995 | WARNING  | src.sync_engine | sync_engine: dropping fake1 order old-1 - created_at=2026-07-30T18:10:37.995366+00:00 is before the requested since=2026-08-29T18:10:37.995390+00:00 (the marketplace's own date filter returned an order older than what we asked for - see sync_engine.py module docstring)
+2026-08-29 18:10:37,996 | INFO     | src.sync_engine | sync_engine: completed poll of fake1 (0 orders seen)
+2026-08-29 18:10:38,003 | INFO     | src.sync_engine | sync_engine: completed poll of fake1 (1 orders seen)
+2026-08-29 18:10:38,030 | INFO     | src.marketplaces.tapsishop | tapsishop: fetched 1 new orders since 2026-08-29T17:10:38.029912+00:00
+2026-08-29 18:10:38,058 | INFO     | src.marketplaces.tapsishop | tapsishop: fetched 0 new orders since 2026-08-29T17:10:38.058197+00:00
+2026-08-29 18:10:38,086 | INFO     | src.marketplaces.tapsishop | tapsishop: fetched 0 new orders since 2026-08-29T17:10:38.086050+00:00
+2026-08-29 18:10:38,209 | INFO     | src.marketplaces.tapsishop | tapsishop: fetched 51 new orders since 2026-08-29T17:10:38.207473+00:00
+2026-08-29 18:10:38,241 | INFO     | src.marketplaces.tapsishop | tapsishop: fetched 0 new orders since 2026-08-09T18:10:38.240567+00:00
+2026-08-29 18:13:16,003 | INFO     | src.marketplaces.basalam | basalam: fetched 1 new orders since 2026-08-01T00:00:00+00:00
+2026-08-29 18:13:16,031 | INFO     | src.marketplaces.basalam | basalam: fetched 1 new orders since 2026-08-01T00:00:00+00:00
+2026-08-29 18:13:16,114 | INFO     | src.marketplaces.basalam | basalam: fetched 0 new orders since 2026-08-01T00:00:00+00:00
+2026-08-29 18:13:16,142 | INFO     | src.marketplaces.basalam | basalam: fetched 0 new orders since 2026-08-01T00:00:00+00:00
+2026-08-29 18:13:16,197 | INFO     | src.marketplaces.basalam | basalam: fetched 1 new orders since 2026-08-01T00:00:00+00:00
+2026-08-29 18:13:16,237 | INFO     | src.didar.activity_client | didar: created activity 'تماس جدید' on deal deal-1 -> Id=a-1
+2026-08-29 18:13:16,264 | INFO     | src.didar.activity_client | didar: created activity 'x' on deal deal-1 -> Id=a-1
+2026-08-29 18:13:16,292 | INFO     | src.didar.activity_client | didar: created activity 'تماس جدید' on deal deal-1 -> Id=a-x
+2026-08-29 18:13:16,292 | INFO     | src.didar.activity_client | didar: created activity 'پیامک 2' on deal deal-1 -> Id=a-x
+2026-08-29 18:13:16,293 | INFO     | src.didar.activity_client | didar: created activity 'پیامک 1' on deal deal-1 -> Id=a-x
+2026-08-29 18:13:16,293 | INFO     | src.didar.activity_client | didar: created activity 'ارسال محصول' on deal deal-1 -> Id=a-x
+2026-08-29 18:13:16,294 | INFO     | src.didar.activity_client | didar: created activity 'پیامک 3' on deal deal-1 -> Id=a-x
+2026-08-29 18:13:16,294 | INFO     | src.didar.activity_client | didar: created activity 'تماس رضایت' on deal deal-1 -> Id=a-x
+2026-08-29 18:13:16,321 | INFO     | src.didar.activity_client | didar: no ship_time available for deal deal-1 (marketplace adapter doesn't expose it yet - see NormalizedOrder.ship_time) - defaulting to order_registered_at + 2 days, 0:00:00 per client instruction
+2026-08-29 18:13:16,322 | INFO     | src.didar.activity_client | didar: created activity 'تماس جدید' on deal deal-1 -> Id=a-x
+2026-08-29 18:13:16,322 | INFO     | src.didar.activity_client | didar: created activity 'پیامک 2' on deal deal-1 -> Id=a-x
+2026-08-29 18:13:16,323 | INFO     | src.didar.activity_client | didar: created activity 'پیامک 1' on deal deal-1 -> Id=a-x
+2026-08-29 18:13:16,323 | INFO     | src.didar.activity_client | didar: created activity 'ارسال محصول' on deal deal-1 -> Id=a-x
+2026-08-29 18:13:16,324 | INFO     | src.didar.activity_client | didar: created activity 'پیامک 3' on deal deal-1 -> Id=a-x
+2026-08-29 18:13:16,324 | INFO     | src.didar.activity_client | didar: created activity 'تماس رضایت' on deal deal-1 -> Id=a-x
+2026-08-29 18:13:16,377 | INFO     | src.didar.activity_client | didar: created activity 'تماس جدید' on deal deal-1 -> Id=a-x
+2026-08-29 18:13:16,378 | INFO     | src.didar.activity_client | didar: created activity 'پیامک 2' on deal deal-1 -> Id=a-x
+2026-08-29 18:13:16,378 | INFO     | src.didar.activity_client | didar: created activity 'پیامک 1' on deal deal-1 -> Id=a-x
+2026-08-29 18:13:16,379 | INFO     | src.didar.activity_client | didar: created activity 'ارسال محصول' on deal deal-1 -> Id=a-x
+2026-08-29 18:13:16,379 | INFO     | src.didar.activity_client | didar: created activity 'پیامک 3' on deal deal-1 -> Id=a-x
+2026-08-29 18:13:16,380 | INFO     | src.didar.activity_client | didar: created activity 'تماس رضایت' on deal deal-1 -> Id=a-x
+2026-08-29 18:13:16,408 | ERROR    | src.didar.activity_client | didar: failed to upload product photo for deal deal-1 - continuing without it
+Traceback (most recent call last):
+  File "/home/claude/work/Local Marketplace Order Synchronization Platform/src/didar/activity_client.py", line 246, in create_post_sale_checklist
+    ship_attachment_key = self.upload_attachment(file_bytes, filename, content_type)
+                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/claude/work/Local Marketplace Order Synchronization Platform/src/didar/activity_client.py", line 181, in upload_attachment
+    raise_for_status_with_body(resp)
+  File "/home/claude/work/Local Marketplace Order Synchronization Platform/src/http_utils.py", line 41, in raise_for_status_with_body
+    raise httpx.HTTPStatusError(message, request=resp.request, response=resp)
+httpx.HTTPStatusError: 500 Internal Server Error for url 'https://app.didar.me/api/UploadFile?apikey=test-key': 
+2026-08-29 18:13:16,413 | INFO     | src.didar.activity_client | didar: created activity 'تماس جدید' on deal deal-1 -> Id=a-x
+2026-08-29 18:13:16,413 | INFO     | src.didar.activity_client | didar: created activity 'پیامک 2' on deal deal-1 -> Id=a-x
+2026-08-29 18:13:16,414 | INFO     | src.didar.activity_client | didar: created activity 'پیامک 1' on deal deal-1 -> Id=a-x
+2026-08-29 18:13:16,414 | INFO     | src.didar.activity_client | didar: created activity 'ارسال محصول' on deal deal-1 -> Id=a-x
+2026-08-29 18:13:16,415 | INFO     | src.didar.activity_client | didar: created activity 'پیامک 3' on deal deal-1 -> Id=a-x
+2026-08-29 18:13:16,415 | INFO     | src.didar.activity_client | didar: created activity 'تماس رضایت' on deal deal-1 -> Id=a-x
+2026-08-29 18:13:16,441 | WARNING  | src.didar.activity_client | didar: skipping post-sale checklist for deal deal-1 - activity type Id(s) not configured for: activity_type_sms2_id (see DidarConfig.activity_type_*_id / .env.example)
+2026-08-29 18:13:16,468 | INFO     | src.didar.activity_client | didar: created activity 'تماس جدید' on deal deal-1 -> Id=a-x
+2026-08-29 18:13:16,469 | ERROR    | src.didar.activity_client | didar: failed to create checklist activity 'پیامک 2' on deal deal-1 - continuing with the rest of the checklist
+Traceback (most recent call last):
+  File "/home/claude/work/Local Marketplace Order Synchronization Platform/src/didar/activity_client.py", line 260, in create_post_sale_checklist
+    self.create_activity(
+  File "/home/claude/work/Local Marketplace Order Synchronization Platform/src/didar/activity_client.py", line 154, in create_activity
+    payload = self._post("/activity/save", json=request_body)
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/tmp/venv/lib/python3.12/site-packages/tenacity/__init__.py", line 331, in wrapped_f
+    return copy(f, *args, **kw)
+           ^^^^^^^^^^^^^^^^^^^^
+  File "/tmp/venv/lib/python3.12/site-packages/tenacity/__init__.py", line 470, in __call__
+    do = self.iter(retry_state=retry_state)
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/tmp/venv/lib/python3.12/site-packages/tenacity/__init__.py", line 371, in iter
+    result = action(retry_state)
+             ^^^^^^^^^^^^^^^^^^^
+  File "/tmp/venv/lib/python3.12/site-packages/tenacity/__init__.py", line 393, in <lambda>
+    self._add_action_func(lambda rs: rs.outcome.result())
+                                     ^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.12/concurrent/futures/_base.py", line 449, in result
+    return self.__get_result()
+           ^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.12/concurrent/futures/_base.py", line 401, in __get_result
+    raise self._exception
+  File "/tmp/venv/lib/python3.12/site-packages/tenacity/__init__.py", line 473, in __call__
+    result = fn(*args, **kwargs)
+             ^^^^^^^^^^^^^^^^^^^
+  File "/home/claude/work/Local Marketplace Order Synchronization Platform/src/didar/activity_client.py", line 117, in _post
+    raise_for_status_with_body(resp)
+  File "/home/claude/work/Local Marketplace Order Synchronization Platform/src/http_utils.py", line 41, in raise_for_status_with_body
+    raise httpx.HTTPStatusError(message, request=resp.request, response=resp)
+httpx.HTTPStatusError: 400 Bad Request for url 'https://app.didar.me/api/activity/save?apikey=test-key': {"error":"boom"}
+2026-08-29 18:13:16,470 | INFO     | src.didar.activity_client | didar: created activity 'پیامک 1' on deal deal-1 -> Id=a-x
+2026-08-29 18:13:16,471 | INFO     | src.didar.activity_client | didar: created activity 'ارسال محصول' on deal deal-1 -> Id=a-x
+2026-08-29 18:13:16,472 | INFO     | src.didar.activity_client | didar: created activity 'پیامک 3' on deal deal-1 -> Id=a-x
+2026-08-29 18:13:16,472 | INFO     | src.didar.activity_client | didar: created activity 'تماس رضایت' on deal deal-1 -> Id=a-x
+2026-08-29 18:13:16,501 | INFO     | src.didar.contact_client | didar: upserted contact CustomerCode=tapsishop-999 -> Id=c-123
+2026-08-29 18:13:16,530 | INFO     | src.didar.contact_client | didar: upserted contact CustomerCode=x -> Id=c-flat
+2026-08-29 18:13:16,585 | INFO     | src.didar.contact_client | didar: upserted contact CustomerCode=tapsishop-999 -> Id=c-1
+2026-08-29 18:13:16,612 | INFO     | src.didar.contact_client | didar: upserted contact CustomerCode=basalam-42 -> Id=c-1
+2026-08-29 18:13:16,692 | INFO     | src.didar.contact_client | didar: found existing contact by MobilePhone=09121234567 (CustomerCode=09121234567 didn't match - see find_existing_contact_id docstring) -> Id=c-by-phone
+2026-08-29 18:13:16,720 | INFO     | src.didar.contact_client | didar: found existing contact by MobilePhone=09121234567 (CustomerCode=09121234567 didn't match - see find_existing_contact_id docstring) -> Id=c-by-phone
+2026-08-29 18:13:16,720 | INFO     | src.didar.contact_client | didar: upserted contact CustomerCode=09121234567 -> Id=c-by-phone
+2026-08-29 18:13:16,748 | INFO     | src.didar.contact_client | didar: upserted contact CustomerCode=09121234567 -> Id=c-existing
+2026-08-29 18:13:16,776 | INFO     | src.didar.contact_client | didar: found existing contact by MobilePhone=09121234567 (CustomerCode=09121234567 didn't match - see find_existing_contact_id docstring) -> Id=c-race
+2026-08-29 18:13:16,777 | INFO     | src.didar.contact_client | didar: upserted contact CustomerCode=09121234567 -> Id=c-race
+2026-08-29 18:13:16,829 | INFO     | src.didar.product_client | didar: no keyword in category_mapping.py matched item title 'Product A' - falling back to the default category
+2026-08-29 18:13:16,829 | INFO     | src.didar.product_client | didar: created product Code=SKU-1 Title=Product A CategoryId=cat-default -> Id=p-1
+2026-08-29 18:13:16,830 | INFO     | src.didar.deal_client | didar: created deal for tapsishop order 999 -> Id=d-1
+2026-08-29 18:13:16,883 | INFO     | src.didar.product_client | didar: no keyword in category_mapping.py matched item title 'Product A' - falling back to the default category
+2026-08-29 18:13:16,883 | INFO     | src.didar.product_client | didar: created product Code=SKU-1 Title=Product A CategoryId=cat-default -> Id=p-1
+2026-08-29 18:13:16,884 | INFO     | src.didar.deal_client | didar: created deal for tapsishop order 999 -> Id=d-1
+2026-08-29 18:13:16,937 | INFO     | src.didar.product_client | didar: no keyword in category_mapping.py matched item title 'Product A' - falling back to the default category
+2026-08-29 18:13:16,938 | INFO     | src.didar.product_client | didar: created product Code=SKU-1 Title=Product A CategoryId=cat-default -> Id=p-1
+2026-08-29 18:13:16,938 | INFO     | src.didar.deal_client | didar: created deal for unmapped_source order 999 -> Id=d-1
+2026-08-29 18:13:16,991 | INFO     | src.didar.product_client | didar: no keyword in category_mapping.py matched item title 'Product A' - falling back to the default category
+2026-08-29 18:13:16,992 | INFO     | src.didar.product_client | didar: created product Code=SKU-1 Title=Product A CategoryId=cat-default -> Id=p-1
+2026-08-29 18:13:16,992 | INFO     | src.didar.deal_client | didar: created deal for tapsishop order 999 -> Id=d-1
+2026-08-29 18:13:17,045 | INFO     | src.didar.product_client | didar: no keyword in category_mapping.py matched item title 'Product A' - falling back to the default category
+2026-08-29 18:13:17,046 | INFO     | src.didar.product_client | didar: created product Code=SKU-1 Title=Product A CategoryId=cat-default -> Id=p-1
+2026-08-29 18:13:17,046 | INFO     | src.didar.deal_client | didar: created deal for farazhonar order 555 -> Id=d-1
+2026-08-29 18:13:17,098 | INFO     | src.didar.product_client | didar: no keyword in category_mapping.py matched item title 'Product A' - falling back to the default category
+2026-08-29 18:13:17,098 | INFO     | src.didar.product_client | didar: created product Code=SKU-1 Title=Product A CategoryId=cat-default -> Id=p-999
+2026-08-29 18:13:17,099 | INFO     | src.didar.deal_client | didar: created deal for tapsishop order 999 -> Id=d-1
+2026-08-29 18:13:17,166 | INFO     | src.didar.product_catalog | didar: loaded 1 product catalog entries from /tmp/pytest-of-root/pytest-2/test_deal_item_uses_catalog_co0/catalog.xlsx
+2026-08-29 18:13:17,166 | INFO     | src.didar.product_client | didar: catalog match for title='ست هدیه مسی فراز هنر مدل راستین کد 1 | چند رنگ | گارانتی اصالت و سلامت فیزیکی کالا' -> Code=146 (catalog title='راستین 1')
+2026-08-29 18:13:17,167 | INFO     | src.didar.product_client | didar: found existing product Code=146 -> Id=p-existing (skipping create)
+2026-08-29 18:13:17,167 | INFO     | src.didar.deal_client | didar: created deal for digikala order 1 -> Id=d-1
+2026-08-29 18:13:17,219 | INFO     | src.didar.product_client | didar: no keyword in category_mapping.py matched item title 'Product A' - falling back to the default category
+2026-08-29 18:13:17,220 | INFO     | src.didar.product_client | didar: created product Code=SKU-1 Title=Product A CategoryId=cat-default -> Id=p-1
+2026-08-29 18:13:17,221 | INFO     | src.didar.deal_client | didar: created deal for tapsishop order 999 -> Id=d-1
+2026-08-29 18:13:17,274 | INFO     | src.didar.product_client | didar: no keyword in category_mapping.py matched item title 'Product A' - falling back to the default category
+2026-08-29 18:13:17,274 | INFO     | src.didar.product_client | didar: created product Code=SKU-1 Title=Product A CategoryId=cat-default -> Id=p-1
+2026-08-29 18:13:17,275 | INFO     | src.didar.deal_client | didar: created deal for tapsishop order 999 -> Id=d-1
+2026-08-29 18:13:17,332 | INFO     | src.didar.product_client | didar: no keyword in category_mapping.py matched item title 'Product A' - falling back to the default category
+2026-08-29 18:13:17,332 | INFO     | src.didar.product_client | didar: created product Code=SKU-1 Title=Product A CategoryId=cat-default -> Id=p-1
+2026-08-29 18:13:17,333 | INFO     | src.didar.deal_client | didar: created deal for tapsishop order 999 -> Id=d-1
+2026-08-29 18:13:17,386 | INFO     | src.didar.product_client | didar: no keyword in category_mapping.py matched item title 'Product A' - falling back to the default category
+2026-08-29 18:13:17,387 | INFO     | src.didar.product_client | didar: created product Code=SKU-1 Title=Product A CategoryId=cat-default -> Id=p-1
+2026-08-29 18:13:17,387 | INFO     | src.didar.deal_client | didar: created deal for tapsishop order 999 -> Id=d-1
+2026-08-29 18:13:17,491 | INFO     | src.didar.deal_client | didar: found existing deal for tapsishop order 999 -> Id=d-existing (skipping create - already in Didar)
+2026-08-29 18:13:17,649 | INFO     | src.didar.deal_client | didar: found existing deal for tapsishop order 999 -> Id=d-already-there (skipping create - already in Didar)
+2026-08-29 18:13:17,752 | INFO     | src.didar.contact_client | didar: upserted contact CustomerCode=tapsishop-999 -> Id=c-42
+2026-08-29 18:13:17,753 | INFO     | src.didar.product_client | didar: no keyword in category_mapping.py matched item title 'Product A' - falling back to the default category
+2026-08-29 18:13:17,753 | INFO     | src.didar.product_client | didar: created product Code=SKU-1 Title=Product A CategoryId=cat-default -> Id=p-1
+2026-08-29 18:13:17,755 | INFO     | src.didar.deal_client | didar: created deal for tapsishop order 999 -> Id=d-42
+2026-08-29 18:13:17,755 | INFO     | src.didar.service | didar: synced tapsishop order 999 -> contact=c-42 deal=d-42
+2026-08-29 18:13:17,755 | WARNING  | src.didar.activity_client | didar: skipping post-sale checklist for deal d-42 - activity type Id(s) not configured for: activity_type_new_call_id, activity_type_satisfaction_call_id, activity_type_ship_id, activity_type_sms1_id, activity_type_sms2_id, activity_type_sms3_id (see DidarConfig.activity_type_*_id / .env.example)
+2026-08-29 18:13:17,859 | INFO     | src.didar.contact_client | didar: upserted contact CustomerCode=tapsishop-999 -> Id=c-42
+2026-08-29 18:13:17,860 | INFO     | src.didar.product_client | didar: no keyword in category_mapping.py matched item title 'Product A' - falling back to the default category
+2026-08-29 18:13:17,860 | INFO     | src.didar.product_client | didar: created product Code=SKU-1 Title=Product A CategoryId=cat-default -> Id=p-1
+2026-08-29 18:13:17,861 | INFO     | src.didar.deal_client | didar: created deal for tapsishop order 999 -> Id=d-42
+2026-08-29 18:13:17,861 | INFO     | src.didar.service | didar: synced tapsishop order 999 -> contact=c-42 deal=d-42
+2026-08-29 18:13:17,862 | INFO     | src.didar.activity_client | didar: created activity 'تماس جدید' on deal d-42 -> Id=a-x
+2026-08-29 18:13:17,862 | INFO     | src.didar.activity_client | didar: created activity 'پیامک 2' on deal d-42 -> Id=a-x
+2026-08-29 18:13:17,863 | INFO     | src.didar.activity_client | didar: created activity 'پیامک 1' on deal d-42 -> Id=a-x
+2026-08-29 18:13:17,863 | INFO     | src.didar.activity_client | didar: created activity 'ارسال محصول' on deal d-42 -> Id=a-x
+2026-08-29 18:13:17,864 | INFO     | src.didar.activity_client | didar: created activity 'پیامک 3' on deal d-42 -> Id=a-x
+2026-08-29 18:13:17,864 | INFO     | src.didar.activity_client | didar: created activity 'تماس رضایت' on deal d-42 -> Id=a-x
+2026-08-29 18:13:17,966 | INFO     | src.didar.deal_client | didar: found existing deal for tapsishop order 999 -> Id=d-already-there (skipping create - already in Didar)
+2026-08-29 18:13:17,998 | INFO     | src.didar.product_client | didar: created product Code=SKU-A Title=گلدان خاتم ۳ CategoryId=cat-khatam -> Id=p-1
+2026-08-29 18:13:18,026 | INFO     | src.didar.product_client | didar: created product Code=SKU-A Title=گلدان خاتم ۳ CategoryId=cat-khatam -> Id=p-1
+2026-08-29 18:13:18,053 | INFO     | src.didar.product_client | didar: found existing product Code=SKU-A -> Id=existing-p-1 (skipping create)
+2026-08-29 18:13:18,081 | INFO     | src.didar.product_client | didar: no keyword in category_mapping.py matched item title 'یک محصول کاملا نامرتبط' - falling back to the default category
+2026-08-29 18:13:18,082 | INFO     | src.didar.product_client | didar: created product Code=SKU-A Title=یک محصول کاملا نامرتبط CategoryId=cat-default -> Id=p-created
+2026-08-29 18:13:18,110 | INFO     | src.didar.product_client | didar: no keyword in category_mapping.py matched item title 'یک محصول کاملا نامرتبط' - falling back to the default category
+2026-08-29 18:13:18,112 | INFO     | src.didar.product_client | didar: create raced with another writer for Code=SKU-RACE - recovered existing Id=recovered-id via search
+2026-08-29 18:13:18,139 | INFO     | src.didar.product_client | didar: no keyword in category_mapping.py matched item title 'یک محصول کاملا نامرتبط' - falling back to the default category
+2026-08-29 18:13:18,167 | INFO     | src.didar.product_client | didar: no keyword in category_mapping.py matched item title 'محصول بدون کلیدواژه مرتبط' - falling back to the default category
+2026-08-29 18:13:18,197 | INFO     | src.didar.product_client | didar: created product Code=SKU-C Title=جعبه خاتم CategoryId=cat-mina -> Id=p-2
+2026-08-29 18:13:18,225 | INFO     | src.didar.product_client | didar: no keyword in category_mapping.py matched item title 'یک محصول کاملا نامرتبط' - falling back to the default category
+2026-08-29 18:13:18,226 | INFO     | src.didar.product_client | didar: created product Code=SKU-D Title=یک محصول کاملا نامرتبط CategoryId=cat-default -> Id=p-3
+2026-08-29 18:13:18,253 | INFO     | src.marketplaces.digikala | digikala: fetched 1 new orders since 2026-08-01T00:00:00+00:00
+2026-08-29 18:13:18,283 | INFO     | src.marketplaces.digikala | digikala: fetched 51 new orders since 2026-08-01T00:00:00+00:00
+2026-08-29 18:13:18,310 | INFO     | src.marketplaces.digikala | digikala: fetched 0 new orders since 2026-08-01T00:00:00+00:00
+2026-08-29 18:13:18,340 | INFO     | src.marketplaces.digikala | digikala: fetched 100 new orders since 2026-08-01T00:00:00+00:00
+2026-08-29 18:13:18,369 | INFO     | src.marketplaces.digikala | digikala: access token expired (401), refreshing
+2026-08-29 18:13:18,370 | INFO     | src.marketplaces.digikala | digikala: access token refreshed, new expiry=2026-08-19 00:00:00
+2026-08-29 18:13:18,370 | INFO     | src.marketplaces.digikala | digikala: fetched 0 new orders since 2026-08-01T00:00:00+00:00
+2026-08-29 18:13:18,449 | INFO     | src.marketplaces.farazhonar | farazhonar: fetched 1 new orders since 2026-08-01T00:00:00+00:00
+2026-08-29 18:13:18,478 | INFO     | src.marketplaces.farazhonar | farazhonar: fetched 2 new orders since 2026-08-01T00:00:00+00:00
+2026-08-29 18:13:18,578 | INFO     | src.didar.product_catalog | didar: loaded 3 product catalog entries from /tmp/pytest-of-root/pytest-2/test_short_specific_entry_wins0/catalog.xlsx
+2026-08-29 18:13:18,586 | INFO     | src.didar.product_catalog | didar: loaded 2 product catalog entries from /tmp/pytest-of-root/pytest-2/test_trailing_number_prevents_0/catalog.xlsx
+2026-08-29 18:13:18,594 | INFO     | src.didar.product_catalog | didar: loaded 1 product catalog entries from /tmp/pytest-of-root/pytest-2/test_no_match_returns_none0/catalog.xlsx
+2026-08-29 18:13:18,603 | INFO     | src.didar.product_catalog | didar: loaded 1 product catalog entries from /tmp/pytest-of-root/pytest-2/test_empty_title_returns_none0/catalog.xlsx
+2026-08-29 18:13:18,612 | INFO     | src.didar.product_catalog | didar: loaded 1 product catalog entries from /tmp/pytest-of-root/pytest-2/test_arabic_yeh_normalization_0/catalog.xlsx
+2026-08-29 18:13:18,639 | INFO     | src.didar.product_catalog | didar: loaded 1 product catalog entries from /tmp/pytest-of-root/pytest-2/test_persian_digits_in_catalog0/catalog.xlsx
+2026-08-29 18:13:18,647 | INFO     | src.didar.product_catalog | didar: loaded 1 product catalog entries from /tmp/pytest-of-root/pytest-2/test_float_code_normalized_to_0/catalog.xlsx
+2026-08-29 18:13:18,662 | WARNING  | src.reporting | health_check: tapsishop hasn't completed a poll cycle since never (stale)
+2026-08-29 18:13:18,674 | WARNING  | src.reporting | health_check: basalam hasn't completed a poll cycle since 2026-08-29T13:13:18.672935+00:00 (stale)
+2026-08-29 18:13:18,681 | WARNING  | src.reporting | health_check: snappshop has 1 order(s) stuck in retry
+2026-08-29 18:13:18,688 | WARNING  | src.reporting | health_check: tapsishop hasn't completed a poll cycle since never (stale)
+2026-08-29 18:13:18,689 | INFO     | src.reporting | daily report written to /tmp/pytest-of-root/pytest-2/test_daily_report_is_written_w0/2026-08-29.txt
+2026-08-29 18:13:18,751 | WARNING  | src.marketplaces.snappshop | snappshop: order field schema is UNCONFIRMED (no populated response has been inspected yet - only prose docs, no JSON example). Normalized output may be missing fields until this is verified - see src/marketplaces/snappshop.py module docstring.
+2026-08-29 18:13:18,752 | INFO     | src.marketplaces.snappshop | snappshop: fetched 0 new orders since 2026-08-01T00:00:00+00:00
+2026-08-29 18:13:18,778 | WARNING  | src.marketplaces.snappshop | snappshop: order field schema is UNCONFIRMED (no populated response has been inspected yet - only prose docs, no JSON example). Normalized output may be missing fields until this is verified - see src/marketplaces/snappshop.py module docstring.
+2026-08-29 18:13:18,780 | INFO     | src.marketplaces.snappshop | snappshop: fetched 2 new orders since 2026-08-01T00:00:00+00:00
+2026-08-29 18:13:18,845 | INFO     | src.sync_engine | sync_engine: completed poll of fake1 (1 orders seen)
+2026-08-29 18:13:18,853 | INFO     | src.sync_engine | sync_engine: completed poll of fake1 (1 orders seen)
+2026-08-29 18:13:18,861 | INFO     | src.sync_engine | sync_engine: completed poll of fake1 (1 orders seen)
+2026-08-29 18:13:18,862 | INFO     | src.sync_engine | sync_engine: completed poll of fake1 (1 orders seen)
+2026-08-29 18:13:18,867 | ERROR    | src.sync_engine | sync_engine: failed to fetch new orders from broken
+Traceback (most recent call last):
+  File "/home/claude/work/Local Marketplace Order Synchronization Platform/src/sync_engine.py", line 96, in _sync_source
+    orders = adapter.fetch_new_orders(since)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/claude/work/Local Marketplace Order Synchronization Platform/tests/test_sync_engine.py", line 52, in fetch_new_orders
+    raise RuntimeError(f"{self.name}: simulated fetch failure")
+RuntimeError: broken: simulated fetch failure
+2026-08-29 18:13:18,870 | INFO     | src.sync_engine | sync_engine: completed poll of healthy (1 orders seen)
+2026-08-29 18:13:18,876 | ERROR    | src.sync_engine | sync_engine: failed to sync fake1 order 1
+Traceback (most recent call last):
+  File "/home/claude/work/Local Marketplace Order Synchronization Platform/src/sync_engine.py", line 154, in _sync_one_order
+    deal_id = self._didar.sync_order(order)
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/claude/work/Local Marketplace Order Synchronization Platform/tests/test_sync_engine.py", line 72, in sync_order
+    raise RuntimeError("simulated Didar failure")
+RuntimeError: simulated Didar failure
+2026-08-29 18:13:18,878 | INFO     | src.sync_engine | sync_engine: completed poll of fake1 (1 orders seen)
+2026-08-29 18:13:18,879 | INFO     | src.sync_engine | sync_engine: retry succeeded for fake1 order 1
+2026-08-29 18:13:18,885 | ERROR    | src.sync_engine | sync_engine: failed to sync fake1 order 1
+Traceback (most recent call last):
+  File "/home/claude/work/Local Marketplace Order Synchronization Platform/src/sync_engine.py", line 154, in _sync_one_order
+    deal_id = self._didar.sync_order(order)
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/claude/work/Local Marketplace Order Synchronization Platform/tests/test_sync_engine.py", line 72, in sync_order
+    raise RuntimeError("simulated Didar failure")
+RuntimeError: simulated Didar failure
+2026-08-29 18:13:18,887 | INFO     | src.sync_engine | sync_engine: completed poll of fake1 (1 orders seen)
+2026-08-29 18:13:18,889 | INFO     | src.sync_engine | sync_engine: retry succeeded for fake1 order 1
+2026-08-29 18:13:18,894 | INFO     | src.sync_engine | sync_engine: completed poll of fake1 (0 orders seen)
+2026-08-29 18:13:18,900 | INFO     | src.sync_engine | sync_engine: completed poll of fake1 (0 orders seen)
+2026-08-29 18:13:18,904 | WARNING  | src.sync_engine | sync_engine: dropping fake1 order old-1 - created_at=2026-07-30T18:13:18.904505+00:00 is before the requested since=2026-08-29T18:13:18.904531+00:00 (the marketplace's own date filter returned an order older than what we asked for - see sync_engine.py module docstring)
+2026-08-29 18:13:18,905 | INFO     | src.sync_engine | sync_engine: completed poll of fake1 (0 orders seen)
+2026-08-29 18:13:18,912 | INFO     | src.sync_engine | sync_engine: completed poll of fake1 (1 orders seen)
+2026-08-29 18:13:18,940 | INFO     | src.marketplaces.tapsishop | tapsishop: fetched 1 new orders since 2026-08-29T17:13:18.939518+00:00
+2026-08-29 18:13:18,967 | INFO     | src.marketplaces.tapsishop | tapsishop: fetched 0 new orders since 2026-08-29T17:13:18.967202+00:00
+2026-08-29 18:13:18,995 | INFO     | src.marketplaces.tapsishop | tapsishop: fetched 0 new orders since 2026-08-29T17:13:18.994598+00:00
+2026-08-29 18:13:19,107 | INFO     | src.marketplaces.tapsishop | tapsishop: fetched 51 new orders since 2026-08-29T17:13:19.106447+00:00
+2026-08-29 18:13:19,149 | INFO     | src.marketplaces.tapsishop | tapsishop: fetched 0 new orders since 2026-08-09T18:13:19.147027+00:00
+2026-08-29 18:13:35,854 | INFO     | src.marketplaces.basalam | basalam: fetched 1 new orders since 2026-08-01T00:00:00+00:00
+2026-08-29 18:13:35,888 | INFO     | src.marketplaces.basalam | basalam: fetched 1 new orders since 2026-08-01T00:00:00+00:00
+2026-08-29 18:13:35,990 | INFO     | src.marketplaces.basalam | basalam: fetched 0 new orders since 2026-08-01T00:00:00+00:00
+2026-08-29 18:13:36,024 | INFO     | src.marketplaces.basalam | basalam: fetched 0 new orders since 2026-08-01T00:00:00+00:00
+2026-08-29 18:13:36,089 | INFO     | src.marketplaces.basalam | basalam: fetched 1 new orders since 2026-08-01T00:00:00+00:00
+2026-08-29 18:13:36,137 | INFO     | src.didar.activity_client | didar: created activity 'تماس جدید' on deal deal-1 -> Id=a-1
+2026-08-29 18:13:36,168 | INFO     | src.didar.activity_client | didar: created activity 'x' on deal deal-1 -> Id=a-1
+2026-08-29 18:13:36,200 | INFO     | src.didar.activity_client | didar: created activity 'تماس جدید' on deal deal-1 -> Id=a-x
+2026-08-29 18:13:36,201 | INFO     | src.didar.activity_client | didar: created activity 'پیامک 2' on deal deal-1 -> Id=a-x
+2026-08-29 18:13:36,201 | INFO     | src.didar.activity_client | didar: created activity 'پیامک 1' on deal deal-1 -> Id=a-x
+2026-08-29 18:13:36,202 | INFO     | src.didar.activity_client | didar: created activity 'ارسال محصول' on deal deal-1 -> Id=a-x
+2026-08-29 18:13:36,203 | INFO     | src.didar.activity_client | didar: created activity 'پیامک 3' on deal deal-1 -> Id=a-x
+2026-08-29 18:13:36,203 | INFO     | src.didar.activity_client | didar: created activity 'تماس رضایت' on deal deal-1 -> Id=a-x
+2026-08-29 18:13:36,232 | INFO     | src.didar.activity_client | didar: no ship_time available for deal deal-1 (marketplace adapter doesn't expose it yet - see NormalizedOrder.ship_time) - defaulting to order_registered_at + 2 days, 0:00:00 per client instruction
+2026-08-29 18:13:36,233 | INFO     | src.didar.activity_client | didar: created activity 'تماس جدید' on deal deal-1 -> Id=a-x
+2026-08-29 18:13:36,233 | INFO     | src.didar.activity_client | didar: created activity 'پیامک 2' on deal deal-1 -> Id=a-x
+2026-08-29 18:13:36,234 | INFO     | src.didar.activity_client | didar: created activity 'پیامک 1' on deal deal-1 -> Id=a-x
+2026-08-29 18:13:36,235 | INFO     | src.didar.activity_client | didar: created activity 'ارسال محصول' on deal deal-1 -> Id=a-x
+2026-08-29 18:13:36,236 | INFO     | src.didar.activity_client | didar: created activity 'پیامک 3' on deal deal-1 -> Id=a-x
+2026-08-29 18:13:36,236 | INFO     | src.didar.activity_client | didar: created activity 'تماس رضایت' on deal deal-1 -> Id=a-x
+2026-08-29 18:13:36,265 | INFO     | src.didar.activity_client | didar: created activity 'تماس جدید' on deal deal-1 -> Id=a-x
+2026-08-29 18:13:36,265 | INFO     | src.didar.activity_client | didar: created activity 'پیامک 2' on deal deal-1 -> Id=a-x
+2026-08-29 18:13:36,266 | INFO     | src.didar.activity_client | didar: created activity 'پیامک 1' on deal deal-1 -> Id=a-x
+2026-08-29 18:13:36,266 | INFO     | src.didar.activity_client | didar: created activity 'ارسال محصول' on deal deal-1 -> Id=a-x
+2026-08-29 18:13:36,267 | INFO     | src.didar.activity_client | didar: created activity 'پیامک 3' on deal deal-1 -> Id=a-x
+2026-08-29 18:13:36,267 | INFO     | src.didar.activity_client | didar: created activity 'تماس رضایت' on deal deal-1 -> Id=a-x
+2026-08-29 18:13:36,295 | ERROR    | src.didar.activity_client | didar: failed to upload product photo for deal deal-1 - continuing without it
+Traceback (most recent call last):
+  File "/home/claude/work/Local Marketplace Order Synchronization Platform/src/didar/activity_client.py", line 246, in create_post_sale_checklist
+    ship_attachment_key = self.upload_attachment(file_bytes, filename, content_type)
+                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/claude/work/Local Marketplace Order Synchronization Platform/src/didar/activity_client.py", line 181, in upload_attachment
+    raise_for_status_with_body(resp)
+  File "/home/claude/work/Local Marketplace Order Synchronization Platform/src/http_utils.py", line 41, in raise_for_status_with_body
+    raise httpx.HTTPStatusError(message, request=resp.request, response=resp)
+httpx.HTTPStatusError: 500 Internal Server Error for url 'https://app.didar.me/api/UploadFile?apikey=test-key': 
+2026-08-29 18:13:36,296 | INFO     | src.didar.activity_client | didar: created activity 'تماس جدید' on deal deal-1 -> Id=a-x
+2026-08-29 18:13:36,297 | INFO     | src.didar.activity_client | didar: created activity 'پیامک 2' on deal deal-1 -> Id=a-x
+2026-08-29 18:13:36,297 | INFO     | src.didar.activity_client | didar: created activity 'پیامک 1' on deal deal-1 -> Id=a-x
+2026-08-29 18:13:36,298 | INFO     | src.didar.activity_client | didar: created activity 'ارسال محصول' on deal deal-1 -> Id=a-x
+2026-08-29 18:13:36,298 | INFO     | src.didar.activity_client | didar: created activity 'پیامک 3' on deal deal-1 -> Id=a-x
+2026-08-29 18:13:36,299 | INFO     | src.didar.activity_client | didar: created activity 'تماس رضایت' on deal deal-1 -> Id=a-x
+2026-08-29 18:13:36,325 | WARNING  | src.didar.activity_client | didar: skipping post-sale checklist for deal deal-1 - activity type Id(s) not configured for: activity_type_sms2_id (see DidarConfig.activity_type_*_id / .env.example)
+2026-08-29 18:13:36,353 | INFO     | src.didar.activity_client | didar: created activity 'تماس جدید' on deal deal-1 -> Id=a-x
+2026-08-29 18:13:36,354 | ERROR    | src.didar.activity_client | didar: failed to create checklist activity 'پیامک 2' on deal deal-1 - continuing with the rest of the checklist
+Traceback (most recent call last):
+  File "/home/claude/work/Local Marketplace Order Synchronization Platform/src/didar/activity_client.py", line 260, in create_post_sale_checklist
+    self.create_activity(
+  File "/home/claude/work/Local Marketplace Order Synchronization Platform/src/didar/activity_client.py", line 154, in create_activity
+    payload = self._post("/activity/save", json=request_body)
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/tmp/venv/lib/python3.12/site-packages/tenacity/__init__.py", line 331, in wrapped_f
+    return copy(f, *args, **kw)
+           ^^^^^^^^^^^^^^^^^^^^
+  File "/tmp/venv/lib/python3.12/site-packages/tenacity/__init__.py", line 470, in __call__
+    do = self.iter(retry_state=retry_state)
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/tmp/venv/lib/python3.12/site-packages/tenacity/__init__.py", line 371, in iter
+    result = action(retry_state)
+             ^^^^^^^^^^^^^^^^^^^
+  File "/tmp/venv/lib/python3.12/site-packages/tenacity/__init__.py", line 393, in <lambda>
+    self._add_action_func(lambda rs: rs.outcome.result())
+                                     ^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.12/concurrent/futures/_base.py", line 449, in result
+    return self.__get_result()
+           ^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.12/concurrent/futures/_base.py", line 401, in __get_result
+    raise self._exception
+  File "/tmp/venv/lib/python3.12/site-packages/tenacity/__init__.py", line 473, in __call__
+    result = fn(*args, **kwargs)
+             ^^^^^^^^^^^^^^^^^^^
+  File "/home/claude/work/Local Marketplace Order Synchronization Platform/src/didar/activity_client.py", line 117, in _post
+    raise_for_status_with_body(resp)
+  File "/home/claude/work/Local Marketplace Order Synchronization Platform/src/http_utils.py", line 41, in raise_for_status_with_body
+    raise httpx.HTTPStatusError(message, request=resp.request, response=resp)
+httpx.HTTPStatusError: 400 Bad Request for url 'https://app.didar.me/api/activity/save?apikey=test-key': {"error":"boom"}
+2026-08-29 18:13:36,356 | INFO     | src.didar.activity_client | didar: created activity 'پیامک 1' on deal deal-1 -> Id=a-x
+2026-08-29 18:13:36,356 | INFO     | src.didar.activity_client | didar: created activity 'ارسال محصول' on deal deal-1 -> Id=a-x
+2026-08-29 18:13:36,357 | INFO     | src.didar.activity_client | didar: created activity 'پیامک 3' on deal deal-1 -> Id=a-x
+2026-08-29 18:13:36,357 | INFO     | src.didar.activity_client | didar: created activity 'تماس رضایت' on deal deal-1 -> Id=a-x
+2026-08-29 18:13:36,385 | INFO     | src.didar.contact_client | didar: upserted contact CustomerCode=tapsishop-999 -> Id=c-123
+2026-08-29 18:13:36,413 | INFO     | src.didar.contact_client | didar: upserted contact CustomerCode=x -> Id=c-flat
+2026-08-29 18:13:36,472 | INFO     | src.didar.contact_client | didar: upserted contact CustomerCode=tapsishop-999 -> Id=c-1
+2026-08-29 18:13:36,500 | INFO     | src.didar.contact_client | didar: upserted contact CustomerCode=basalam-42 -> Id=c-1
+2026-08-29 18:13:36,584 | INFO     | src.didar.contact_client | didar: found existing contact by MobilePhone=09121234567 (CustomerCode=09121234567 didn't match - see find_existing_contact_id docstring) -> Id=c-by-phone
+2026-08-29 18:13:36,615 | INFO     | src.didar.contact_client | didar: found existing contact by MobilePhone=09121234567 (CustomerCode=09121234567 didn't match - see find_existing_contact_id docstring) -> Id=c-by-phone
+2026-08-29 18:13:36,616 | INFO     | src.didar.contact_client | didar: upserted contact CustomerCode=09121234567 -> Id=c-by-phone
+2026-08-29 18:13:36,645 | INFO     | src.didar.contact_client | didar: upserted contact CustomerCode=09121234567 -> Id=c-existing
+2026-08-29 18:13:36,675 | INFO     | src.didar.contact_client | didar: found existing contact by MobilePhone=09121234567 (CustomerCode=09121234567 didn't match - see find_existing_contact_id docstring) -> Id=c-race
+2026-08-29 18:13:36,676 | INFO     | src.didar.contact_client | didar: upserted contact CustomerCode=09121234567 -> Id=c-race
+2026-08-29 18:13:36,731 | INFO     | src.didar.product_client | didar: no keyword in category_mapping.py matched item title 'Product A' - falling back to the default category
+2026-08-29 18:13:36,732 | INFO     | src.didar.product_client | didar: created product Code=SKU-1 Title=Product A CategoryId=cat-default -> Id=p-1
+2026-08-29 18:13:36,732 | INFO     | src.didar.deal_client | didar: created deal for tapsishop order 999 -> Id=d-1
+2026-08-29 18:13:36,788 | INFO     | src.didar.product_client | didar: no keyword in category_mapping.py matched item title 'Product A' - falling back to the default category
+2026-08-29 18:13:36,788 | INFO     | src.didar.product_client | didar: created product Code=SKU-1 Title=Product A CategoryId=cat-default -> Id=p-1
+2026-08-29 18:13:36,789 | INFO     | src.didar.deal_client | didar: created deal for tapsishop order 999 -> Id=d-1
+2026-08-29 18:13:36,848 | INFO     | src.didar.product_client | didar: no keyword in category_mapping.py matched item title 'Product A' - falling back to the default category
+2026-08-29 18:13:36,849 | INFO     | src.didar.product_client | didar: created product Code=SKU-1 Title=Product A CategoryId=cat-default -> Id=p-1
+2026-08-29 18:13:36,849 | INFO     | src.didar.deal_client | didar: created deal for unmapped_source order 999 -> Id=d-1
+2026-08-29 18:13:36,903 | INFO     | src.didar.product_client | didar: no keyword in category_mapping.py matched item title 'Product A' - falling back to the default category
+2026-08-29 18:13:36,904 | INFO     | src.didar.product_client | didar: created product Code=SKU-1 Title=Product A CategoryId=cat-default -> Id=p-1
+2026-08-29 18:13:36,905 | INFO     | src.didar.deal_client | didar: created deal for tapsishop order 999 -> Id=d-1
+2026-08-29 18:13:36,963 | INFO     | src.didar.product_client | didar: no keyword in category_mapping.py matched item title 'Product A' - falling back to the default category
+2026-08-29 18:13:36,963 | INFO     | src.didar.product_client | didar: created product Code=SKU-1 Title=Product A CategoryId=cat-default -> Id=p-1
+2026-08-29 18:13:36,964 | INFO     | src.didar.deal_client | didar: created deal for farazhonar order 555 -> Id=d-1
+2026-08-29 18:13:37,021 | INFO     | src.didar.product_client | didar: no keyword in category_mapping.py matched item title 'Product A' - falling back to the default category
+2026-08-29 18:13:37,022 | INFO     | src.didar.product_client | didar: created product Code=SKU-1 Title=Product A CategoryId=cat-default -> Id=p-999
+2026-08-29 18:13:37,023 | INFO     | src.didar.deal_client | didar: created deal for tapsishop order 999 -> Id=d-1
+2026-08-29 18:13:37,089 | INFO     | src.didar.product_catalog | didar: loaded 1 product catalog entries from /tmp/pytest-of-root/pytest-3/test_deal_item_uses_catalog_co0/catalog.xlsx
+2026-08-29 18:13:37,090 | INFO     | src.didar.product_client | didar: catalog match for title='ست هدیه مسی فراز هنر مدل راستین کد 1 | چند رنگ | گارانتی اصالت و سلامت فیزیکی کالا' -> Code=146 (catalog title='راستین 1')
+2026-08-29 18:13:37,090 | INFO     | src.didar.product_client | didar: found existing product Code=146 -> Id=p-existing (skipping create)
+2026-08-29 18:13:37,091 | INFO     | src.didar.deal_client | didar: created deal for digikala order 1 -> Id=d-1
+2026-08-29 18:13:37,144 | INFO     | src.didar.product_client | didar: no keyword in category_mapping.py matched item title 'Product A' - falling back to the default category
+2026-08-29 18:13:37,145 | INFO     | src.didar.product_client | didar: created product Code=SKU-1 Title=Product A CategoryId=cat-default -> Id=p-1
+2026-08-29 18:13:37,145 | INFO     | src.didar.deal_client | didar: created deal for tapsishop order 999 -> Id=d-1
+2026-08-29 18:13:37,203 | INFO     | src.didar.product_client | didar: no keyword in category_mapping.py matched item title 'Product A' - falling back to the default category
+2026-08-29 18:13:37,204 | INFO     | src.didar.product_client | didar: created product Code=SKU-1 Title=Product A CategoryId=cat-default -> Id=p-1
+2026-08-29 18:13:37,205 | INFO     | src.didar.deal_client | didar: created deal for tapsishop order 999 -> Id=d-1
+2026-08-29 18:13:37,257 | INFO     | src.didar.product_client | didar: no keyword in category_mapping.py matched item title 'Product A' - falling back to the default category
+2026-08-29 18:13:37,257 | INFO     | src.didar.product_client | didar: created product Code=SKU-1 Title=Product A CategoryId=cat-default -> Id=p-1
+2026-08-29 18:13:37,258 | INFO     | src.didar.deal_client | didar: created deal for tapsishop order 999 -> Id=d-1
+2026-08-29 18:13:37,311 | INFO     | src.didar.product_client | didar: no keyword in category_mapping.py matched item title 'Product A' - falling back to the default category
+2026-08-29 18:13:37,311 | INFO     | src.didar.product_client | didar: created product Code=SKU-1 Title=Product A CategoryId=cat-default -> Id=p-1
+2026-08-29 18:13:37,312 | INFO     | src.didar.deal_client | didar: created deal for tapsishop order 999 -> Id=d-1
+2026-08-29 18:13:37,426 | INFO     | src.didar.deal_client | didar: found existing deal for tapsishop order 999 -> Id=d-existing (skipping create - already in Didar)
+2026-08-29 18:13:37,586 | INFO     | src.didar.deal_client | didar: found existing deal for tapsishop order 999 -> Id=d-already-there (skipping create - already in Didar)
+2026-08-29 18:13:37,695 | INFO     | src.didar.contact_client | didar: upserted contact CustomerCode=tapsishop-999 -> Id=c-42
+2026-08-29 18:13:37,696 | INFO     | src.didar.product_client | didar: no keyword in category_mapping.py matched item title 'Product A' - falling back to the default category
+2026-08-29 18:13:37,697 | INFO     | src.didar.product_client | didar: created product Code=SKU-1 Title=Product A CategoryId=cat-default -> Id=p-1
+2026-08-29 18:13:37,700 | INFO     | src.didar.deal_client | didar: created deal for tapsishop order 999 -> Id=d-42
+2026-08-29 18:13:37,700 | INFO     | src.didar.service | didar: synced tapsishop order 999 -> contact=c-42 deal=d-42
+2026-08-29 18:13:37,700 | WARNING  | src.didar.activity_client | didar: skipping post-sale checklist for deal d-42 - activity type Id(s) not configured for: activity_type_new_call_id, activity_type_satisfaction_call_id, activity_type_ship_id, activity_type_sms1_id, activity_type_sms2_id, activity_type_sms3_id (see DidarConfig.activity_type_*_id / .env.example)
+2026-08-29 18:13:37,805 | INFO     | src.didar.contact_client | didar: upserted contact CustomerCode=tapsishop-999 -> Id=c-42
+2026-08-29 18:13:37,806 | INFO     | src.didar.product_client | didar: no keyword in category_mapping.py matched item title 'Product A' - falling back to the default category
+2026-08-29 18:13:37,806 | INFO     | src.didar.product_client | didar: created product Code=SKU-1 Title=Product A CategoryId=cat-default -> Id=p-1
+2026-08-29 18:13:37,807 | INFO     | src.didar.deal_client | didar: created deal for tapsishop order 999 -> Id=d-42
+2026-08-29 18:13:37,807 | INFO     | src.didar.service | didar: synced tapsishop order 999 -> contact=c-42 deal=d-42
+2026-08-29 18:13:37,808 | INFO     | src.didar.activity_client | didar: created activity 'تماس جدید' on deal d-42 -> Id=a-x
+2026-08-29 18:13:37,808 | INFO     | src.didar.activity_client | didar: created activity 'پیامک 2' on deal d-42 -> Id=a-x
+2026-08-29 18:13:37,809 | INFO     | src.didar.activity_client | didar: created activity 'پیامک 1' on deal d-42 -> Id=a-x
+2026-08-29 18:13:37,809 | INFO     | src.didar.activity_client | didar: created activity 'ارسال محصول' on deal d-42 -> Id=a-x
+2026-08-29 18:13:37,810 | INFO     | src.didar.activity_client | didar: created activity 'پیامک 3' on deal d-42 -> Id=a-x
+2026-08-29 18:13:37,810 | INFO     | src.didar.activity_client | didar: created activity 'تماس رضایت' on deal d-42 -> Id=a-x
+2026-08-29 18:13:37,912 | INFO     | src.didar.deal_client | didar: found existing deal for tapsishop order 999 -> Id=d-already-there (skipping create - already in Didar)
+2026-08-29 18:13:37,944 | INFO     | src.didar.product_client | didar: created product Code=SKU-A Title=گلدان خاتم ۳ CategoryId=cat-khatam -> Id=p-1
+2026-08-29 18:13:37,973 | INFO     | src.didar.product_client | didar: created product Code=SKU-A Title=گلدان خاتم ۳ CategoryId=cat-khatam -> Id=p-1
+2026-08-29 18:13:38,001 | INFO     | src.didar.product_client | didar: found existing product Code=SKU-A -> Id=existing-p-1 (skipping create)
+2026-08-29 18:13:38,030 | INFO     | src.didar.product_client | didar: no keyword in category_mapping.py matched item title 'یک محصول کاملا نامرتبط' - falling back to the default category
+2026-08-29 18:13:38,031 | INFO     | src.didar.product_client | didar: created product Code=SKU-A Title=یک محصول کاملا نامرتبط CategoryId=cat-default -> Id=p-created
+2026-08-29 18:13:38,059 | INFO     | src.didar.product_client | didar: no keyword in category_mapping.py matched item title 'یک محصول کاملا نامرتبط' - falling back to the default category
+2026-08-29 18:13:38,061 | INFO     | src.didar.product_client | didar: create raced with another writer for Code=SKU-RACE - recovered existing Id=recovered-id via search
+2026-08-29 18:13:38,088 | INFO     | src.didar.product_client | didar: no keyword in category_mapping.py matched item title 'یک محصول کاملا نامرتبط' - falling back to the default category
+2026-08-29 18:13:38,116 | INFO     | src.didar.product_client | didar: no keyword in category_mapping.py matched item title 'محصول بدون کلیدواژه مرتبط' - falling back to the default category
+2026-08-29 18:13:38,147 | INFO     | src.didar.product_client | didar: created product Code=SKU-C Title=جعبه خاتم CategoryId=cat-mina -> Id=p-2
+2026-08-29 18:13:38,176 | INFO     | src.didar.product_client | didar: no keyword in category_mapping.py matched item title 'یک محصول کاملا نامرتبط' - falling back to the default category
+2026-08-29 18:13:38,176 | INFO     | src.didar.product_client | didar: created product Code=SKU-D Title=یک محصول کاملا نامرتبط CategoryId=cat-default -> Id=p-3
+2026-08-29 18:13:38,205 | INFO     | src.marketplaces.digikala | digikala: fetched 1 new orders since 2026-08-01T00:00:00+00:00
+2026-08-29 18:13:38,235 | INFO     | src.marketplaces.digikala | digikala: fetched 51 new orders since 2026-08-01T00:00:00+00:00
+2026-08-29 18:13:38,264 | INFO     | src.marketplaces.digikala | digikala: fetched 0 new orders since 2026-08-01T00:00:00+00:00
+2026-08-29 18:13:38,294 | INFO     | src.marketplaces.digikala | digikala: fetched 100 new orders since 2026-08-01T00:00:00+00:00
+2026-08-29 18:13:38,323 | INFO     | src.marketplaces.digikala | digikala: access token expired (401), refreshing
+2026-08-29 18:13:38,323 | INFO     | src.marketplaces.digikala | digikala: access token refreshed, new expiry=2026-08-19 00:00:00
+2026-08-29 18:13:38,324 | INFO     | src.marketplaces.digikala | digikala: fetched 0 new orders since 2026-08-01T00:00:00+00:00
+2026-08-29 18:13:38,407 | INFO     | src.marketplaces.farazhonar | farazhonar: fetched 1 new orders since 2026-08-01T00:00:00+00:00
+2026-08-29 18:13:38,435 | INFO     | src.marketplaces.farazhonar | farazhonar: fetched 2 new orders since 2026-08-01T00:00:00+00:00
+2026-08-29 18:13:38,533 | INFO     | src.didar.product_catalog | didar: loaded 3 product catalog entries from /tmp/pytest-of-root/pytest-3/test_short_specific_entry_wins0/catalog.xlsx
+2026-08-29 18:13:38,543 | INFO     | src.didar.product_catalog | didar: loaded 2 product catalog entries from /tmp/pytest-of-root/pytest-3/test_trailing_number_prevents_0/catalog.xlsx
+2026-08-29 18:13:38,552 | INFO     | src.didar.product_catalog | didar: loaded 1 product catalog entries from /tmp/pytest-of-root/pytest-3/test_no_match_returns_none0/catalog.xlsx
+2026-08-29 18:13:38,560 | INFO     | src.didar.product_catalog | didar: loaded 1 product catalog entries from /tmp/pytest-of-root/pytest-3/test_empty_title_returns_none0/catalog.xlsx
+2026-08-29 18:13:38,570 | INFO     | src.didar.product_catalog | didar: loaded 1 product catalog entries from /tmp/pytest-of-root/pytest-3/test_arabic_yeh_normalization_0/catalog.xlsx
+2026-08-29 18:13:38,578 | INFO     | src.didar.product_catalog | didar: loaded 1 product catalog entries from /tmp/pytest-of-root/pytest-3/test_persian_digits_in_catalog0/catalog.xlsx
+2026-08-29 18:13:38,586 | INFO     | src.didar.product_catalog | didar: loaded 1 product catalog entries from /tmp/pytest-of-root/pytest-3/test_float_code_normalized_to_0/catalog.xlsx
+2026-08-29 18:13:38,602 | WARNING  | src.reporting | health_check: tapsishop hasn't completed a poll cycle since never (stale)
+2026-08-29 18:13:38,614 | WARNING  | src.reporting | health_check: basalam hasn't completed a poll cycle since 2026-08-29T13:13:38.613189+00:00 (stale)
+2026-08-29 18:13:38,621 | WARNING  | src.reporting | health_check: snappshop has 1 order(s) stuck in retry
+2026-08-29 18:13:38,628 | WARNING  | src.reporting | health_check: tapsishop hasn't completed a poll cycle since never (stale)
+2026-08-29 18:13:38,629 | INFO     | src.reporting | daily report written to /tmp/pytest-of-root/pytest-3/test_daily_report_is_written_w0/2026-08-29.txt
+2026-08-29 18:13:38,694 | WARNING  | src.marketplaces.snappshop | snappshop: order field schema is UNCONFIRMED (no populated response has been inspected yet - only prose docs, no JSON example). Normalized output may be missing fields until this is verified - see src/marketplaces/snappshop.py module docstring.
+2026-08-29 18:13:38,695 | INFO     | src.marketplaces.snappshop | snappshop: fetched 0 new orders since 2026-08-01T00:00:00+00:00
+2026-08-29 18:13:38,722 | WARNING  | src.marketplaces.snappshop | snappshop: order field schema is UNCONFIRMED (no populated response has been inspected yet - only prose docs, no JSON example). Normalized output may be missing fields until this is verified - see src/marketplaces/snappshop.py module docstring.
+2026-08-29 18:13:38,723 | INFO     | src.marketplaces.snappshop | snappshop: fetched 2 new orders since 2026-08-01T00:00:00+00:00
+2026-08-29 18:13:38,788 | INFO     | src.sync_engine | sync_engine: completed poll of fake1 (1 orders seen)
+2026-08-29 18:13:38,798 | INFO     | src.sync_engine | sync_engine: completed poll of fake1 (1 orders seen)
+2026-08-29 18:13:38,807 | INFO     | src.sync_engine | sync_engine: completed poll of fake1 (1 orders seen)
+2026-08-29 18:13:38,808 | INFO     | src.sync_engine | sync_engine: completed poll of fake1 (1 orders seen)
+2026-08-29 18:13:38,815 | ERROR    | src.sync_engine | sync_engine: failed to fetch new orders from broken
+Traceback (most recent call last):
+  File "/home/claude/work/Local Marketplace Order Synchronization Platform/src/sync_engine.py", line 96, in _sync_source
+    orders = adapter.fetch_new_orders(since)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/claude/work/Local Marketplace Order Synchronization Platform/tests/test_sync_engine.py", line 52, in fetch_new_orders
+    raise RuntimeError(f"{self.name}: simulated fetch failure")
+RuntimeError: broken: simulated fetch failure
+2026-08-29 18:13:38,818 | INFO     | src.sync_engine | sync_engine: completed poll of healthy (1 orders seen)
+2026-08-29 18:13:38,825 | ERROR    | src.sync_engine | sync_engine: failed to sync fake1 order 1
+Traceback (most recent call last):
+  File "/home/claude/work/Local Marketplace Order Synchronization Platform/src/sync_engine.py", line 154, in _sync_one_order
+    deal_id = self._didar.sync_order(order)
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/claude/work/Local Marketplace Order Synchronization Platform/tests/test_sync_engine.py", line 72, in sync_order
+    raise RuntimeError("simulated Didar failure")
+RuntimeError: simulated Didar failure
+2026-08-29 18:13:38,827 | INFO     | src.sync_engine | sync_engine: completed poll of fake1 (1 orders seen)
+2026-08-29 18:13:38,829 | INFO     | src.sync_engine | sync_engine: retry succeeded for fake1 order 1
+2026-08-29 18:13:38,835 | ERROR    | src.sync_engine | sync_engine: failed to sync fake1 order 1
+Traceback (most recent call last):
+  File "/home/claude/work/Local Marketplace Order Synchronization Platform/src/sync_engine.py", line 154, in _sync_one_order
+    deal_id = self._didar.sync_order(order)
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/claude/work/Local Marketplace Order Synchronization Platform/tests/test_sync_engine.py", line 72, in sync_order
+    raise RuntimeError("simulated Didar failure")
+RuntimeError: simulated Didar failure
+2026-08-29 18:13:38,837 | INFO     | src.sync_engine | sync_engine: completed poll of fake1 (1 orders seen)
+2026-08-29 18:13:38,838 | INFO     | src.sync_engine | sync_engine: retry succeeded for fake1 order 1
+2026-08-29 18:13:38,844 | INFO     | src.sync_engine | sync_engine: completed poll of fake1 (0 orders seen)
+2026-08-29 18:13:38,850 | INFO     | src.sync_engine | sync_engine: completed poll of fake1 (0 orders seen)
+2026-08-29 18:13:38,855 | WARNING  | src.sync_engine | sync_engine: dropping fake1 order old-1 - created_at=2026-07-30T18:13:38.855535+00:00 is before the requested since=2026-08-29T18:13:38.855561+00:00 (the marketplace's own date filter returned an order older than what we asked for - see sync_engine.py module docstring)
+2026-08-29 18:13:38,856 | INFO     | src.sync_engine | sync_engine: completed poll of fake1 (0 orders seen)
+2026-08-29 18:13:38,864 | INFO     | src.sync_engine | sync_engine: completed poll of fake1 (1 orders seen)
+2026-08-29 18:13:38,891 | INFO     | src.marketplaces.tapsishop | tapsishop: fetched 1 new orders since 2026-08-29T17:13:38.890234+00:00
+2026-08-29 18:13:38,919 | INFO     | src.marketplaces.tapsishop | tapsishop: fetched 0 new orders since 2026-08-29T17:13:38.918534+00:00
+2026-08-29 18:13:38,947 | INFO     | src.marketplaces.tapsishop | tapsishop: fetched 0 new orders since 2026-08-29T17:13:38.946992+00:00
+2026-08-29 18:13:39,061 | INFO     | src.marketplaces.tapsishop | tapsishop: fetched 51 new orders since 2026-08-29T17:13:39.059998+00:00
+2026-08-29 18:13:39,089 | INFO     | src.marketplaces.tapsishop | tapsishop: fetched 0 new orders since 2026-08-09T18:13:39.088421+00:00

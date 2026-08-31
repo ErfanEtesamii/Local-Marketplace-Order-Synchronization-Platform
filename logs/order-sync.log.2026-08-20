@@ -1,0 +1,72 @@
+2026-08-20 01:00:54,567 | INFO     | src.marketplaces.tapsishop | tapsishop: fetched 1 new orders since 2026-08-19T20:30:54.566085+00:00
+2026-08-20 01:00:54,959 | INFO     | src.marketplaces.tapsishop | tapsishop: fetched 0 new orders since 2026-08-19T20:30:54.958632+00:00
+2026-08-20 01:00:56,526 | INFO     | src.marketplaces.tapsishop | tapsishop: fetched 51 new orders since 2026-08-19T20:30:56.524720+00:00
+2026-08-20 01:00:56,930 | INFO     | src.marketplaces.tapsishop | tapsishop: fetched 0 new orders since 2026-07-30T21:30:56.928442+00:00
+2026-08-20 12:57:34,160 | INFO     | src.marketplaces.basalam | basalam: fetched 21 new orders since 2026-05-22T09:27:31.576895+00:00
+2026-08-20 12:57:57,013 | INFO     | src.marketplaces.basalam | basalam: fetched 21 new orders since 2026-05-22T09:27:53.348772+00:00
+2026-08-20 12:58:00,571 | INFO     | src.didar.contact_client | didar: upserted contact CustomerCode=basalam-2784325087 -> Id=9267c703-7c24-4221-8d46-2849ef54f3fd
+2026-08-20 12:58:02,211 | INFO     | src.didar.deal_client | didar: created deal for basalam order 2784325087 -> Id=b62b0239-e0a7-4d12-9987-cd047fa6a75c
+2026-08-20 12:58:02,211 | INFO     | src.didar.service | didar: synced basalam order 2784325087 -> contact=9267c703-7c24-4221-8d46-2849ef54f3fd deal=b62b0239-e0a7-4d12-9987-cd047fa6a75c
+2026-08-20 13:00:18,570 | INFO     | src.marketplaces.basalam | basalam: fetched 1 new orders since 2026-08-01T00:00:00+00:00
+2026-08-20 13:00:19,346 | INFO     | src.marketplaces.basalam | basalam: fetched 0 new orders since 2026-08-01T00:00:00+00:00
+2026-08-20 13:00:19,733 | INFO     | src.marketplaces.basalam | basalam: fetched 0 new orders since 2026-08-01T00:00:00+00:00
+2026-08-20 13:00:20,502 | INFO     | src.didar.contact_client | didar: upserted contact CustomerCode=tapsishop-999 -> Id=c-123
+2026-08-20 13:00:20,899 | INFO     | src.didar.contact_client | didar: upserted contact CustomerCode=x -> Id=c-1
+2026-08-20 13:00:21,286 | INFO     | src.didar.contact_client | didar: upserted contact CustomerCode=x -> Id=c-flat
+2026-08-20 13:00:22,066 | INFO     | src.didar.contact_client | didar: upserted contact CustomerCode=tapsishop-999 -> Id=c-1
+2026-08-20 13:00:22,453 | INFO     | src.didar.contact_client | didar: upserted contact CustomerCode=basalam-42 -> Id=c-1
+2026-08-20 13:00:22,839 | INFO     | src.didar.deal_client | didar: created deal for tapsishop order 999 -> Id=d-1
+2026-08-20 13:00:23,598 | INFO     | src.didar.contact_client | didar: upserted contact CustomerCode=tapsishop-999 -> Id=c-42
+2026-08-20 13:00:23,600 | INFO     | src.didar.deal_client | didar: created deal for tapsishop order 999 -> Id=d-42
+2026-08-20 13:00:23,600 | INFO     | src.didar.service | didar: synced tapsishop order 999 -> contact=c-42 deal=d-42
+2026-08-20 13:00:23,988 | INFO     | src.marketplaces.digikala | digikala: fetched 1 new orders since 2026-08-01T00:00:00+00:00
+2026-08-20 13:00:24,376 | INFO     | src.marketplaces.digikala | digikala: fetched 51 new orders since 2026-08-01T00:00:00+00:00
+2026-08-20 13:00:24,776 | INFO     | src.marketplaces.digikala | digikala: access token expired (401), refreshing
+2026-08-20 13:00:24,778 | INFO     | src.marketplaces.digikala | digikala: access token refreshed, new expiry=2026-08-19 00:00:00
+2026-08-20 13:00:24,779 | INFO     | src.marketplaces.digikala | digikala: fetched 0 new orders since 2026-08-01T00:00:00+00:00
+2026-08-20 13:00:25,987 | INFO     | src.marketplaces.farazhonar | farazhonar: fetched 1 new orders since 2026-08-01T00:00:00+00:00
+2026-08-20 13:00:26,376 | INFO     | src.marketplaces.farazhonar | farazhonar: fetched 2 new orders since 2026-08-01T00:00:00+00:00
+2026-08-20 13:00:26,795 | WARNING  | src.reporting | health_check: tapsishop hasn't completed a poll cycle since never (stale)
+2026-08-20 13:00:26,864 | WARNING  | src.reporting | health_check: basalam hasn't completed a poll cycle since 2026-08-20T04:30:26.854162+00:00 (stale)
+2026-08-20 13:00:26,903 | WARNING  | src.reporting | health_check: snappshop has 1 order(s) stuck in retry
+2026-08-20 13:00:26,952 | WARNING  | src.reporting | health_check: tapsishop hasn't completed a poll cycle since never (stale)
+2026-08-20 13:00:26,954 | INFO     | src.reporting | daily report written to C:\Users\OMEN\AppData\Local\Temp\pytest-of-OMEN\pytest-4\test_daily_report_is_written_w0\2026-08-20.txt
+2026-08-20 13:00:27,566 | WARNING  | src.marketplaces.snappshop | snappshop: order field schema is UNCONFIRMED (no populated response has been inspected yet - only prose docs, no JSON example). Normalized output may be missing fields until this is verified - see src/marketplaces/snappshop.py module docstring.
+2026-08-20 13:00:27,567 | INFO     | src.marketplaces.snappshop | snappshop: fetched 0 new orders since 2026-08-01T00:00:00+00:00
+2026-08-20 13:00:27,947 | WARNING  | src.marketplaces.snappshop | snappshop: order field schema is UNCONFIRMED (no populated response has been inspected yet - only prose docs, no JSON example). Normalized output may be missing fields until this is verified - see src/marketplaces/snappshop.py module docstring.
+2026-08-20 13:00:27,949 | INFO     | src.marketplaces.snappshop | snappshop: fetched 2 new orders since 2026-08-01T00:00:00+00:00
+2026-08-20 13:00:28,755 | INFO     | src.sync_engine | sync_engine: completed poll of fake1 (1 orders seen)
+2026-08-20 13:00:28,794 | INFO     | src.sync_engine | sync_engine: completed poll of fake1 (1 orders seen)
+2026-08-20 13:00:28,834 | INFO     | src.sync_engine | sync_engine: completed poll of fake1 (1 orders seen)
+2026-08-20 13:00:28,843 | INFO     | src.sync_engine | sync_engine: completed poll of fake1 (1 orders seen)
+2026-08-20 13:00:28,871 | ERROR    | src.sync_engine | sync_engine: failed to fetch new orders from broken
+Traceback (most recent call last):
+  File "C:\Users\OMEN\Desktop\Local Marketplace Order Synchronization Platform\src\sync_engine.py", line 71, in _sync_source
+    orders = adapter.fetch_new_orders(since)
+  File "C:\Users\OMEN\Desktop\Local Marketplace Order Synchronization Platform\tests\test_sync_engine.py", line 39, in fetch_new_orders
+    raise RuntimeError(f"{self.name}: simulated fetch failure")
+RuntimeError: broken: simulated fetch failure
+2026-08-20 13:00:28,886 | INFO     | src.sync_engine | sync_engine: completed poll of healthy (1 orders seen)
+2026-08-20 13:00:28,913 | ERROR    | src.sync_engine | sync_engine: failed to sync fake1 order 1
+Traceback (most recent call last):
+  File "C:\Users\OMEN\Desktop\Local Marketplace Order Synchronization Platform\src\sync_engine.py", line 93, in _sync_one_order
+    deal_id = self._didar.sync_order(order)
+  File "C:\Users\OMEN\Desktop\Local Marketplace Order Synchronization Platform\tests\test_sync_engine.py", line 59, in sync_order
+    raise RuntimeError("simulated Didar failure")
+RuntimeError: simulated Didar failure
+2026-08-20 13:00:28,927 | INFO     | src.sync_engine | sync_engine: completed poll of fake1 (1 orders seen)
+2026-08-20 13:00:28,935 | INFO     | src.sync_engine | sync_engine: retry succeeded for fake1 order 1
+2026-08-20 13:00:28,962 | ERROR    | src.sync_engine | sync_engine: failed to sync fake1 order 1
+Traceback (most recent call last):
+  File "C:\Users\OMEN\Desktop\Local Marketplace Order Synchronization Platform\src\sync_engine.py", line 93, in _sync_one_order
+    deal_id = self._didar.sync_order(order)
+  File "C:\Users\OMEN\Desktop\Local Marketplace Order Synchronization Platform\tests\test_sync_engine.py", line 59, in sync_order
+    raise RuntimeError("simulated Didar failure")
+RuntimeError: simulated Didar failure
+2026-08-20 13:00:28,977 | INFO     | src.sync_engine | sync_engine: completed poll of fake1 (1 orders seen)
+2026-08-20 13:00:28,984 | INFO     | src.sync_engine | sync_engine: retry succeeded for fake1 order 1
+2026-08-20 13:00:29,018 | INFO     | src.sync_engine | sync_engine: completed poll of fake1 (0 orders seen)
+2026-08-20 13:00:29,396 | INFO     | src.marketplaces.tapsishop | tapsishop: fetched 1 new orders since 2026-08-20T08:30:29.395786+00:00
+2026-08-20 13:00:29,778 | INFO     | src.marketplaces.tapsishop | tapsishop: fetched 0 new orders since 2026-08-20T08:30:29.777489+00:00
+2026-08-20 13:00:31,299 | INFO     | src.marketplaces.tapsishop | tapsishop: fetched 51 new orders since 2026-08-20T08:30:31.297181+00:00
+2026-08-20 13:00:31,677 | INFO     | src.marketplaces.tapsishop | tapsishop: fetched 0 new orders since 2026-07-31T09:30:31.675133+00:00

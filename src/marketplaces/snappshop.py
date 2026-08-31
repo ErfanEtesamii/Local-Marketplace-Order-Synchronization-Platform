@@ -43,7 +43,7 @@ domain scope, not stated in the docs we have - see .env.example.
 """
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 
 import httpx
@@ -87,7 +87,7 @@ class SnappShopAdapter(MarketplaceAdapter):
         raise_for_status_with_body(resp)
         return resp.json()
 
-    def fetch_new_orders(self, since: datetime) -> list[NormalizedOrder]:
+    def fetch_new_orders(self, since: datetime | None) -> list[NormalizedOrder]:
         if not _SCHEMA_CONFIRMED:
             log.warning(
                 "snappshop: order field schema is UNCONFIRMED (no populated response "
@@ -102,7 +102,7 @@ class SnappShopAdapter(MarketplaceAdapter):
 
         while True:
             params = {
-                "start_date": since.date().isoformat(),
+                "start_date": (since or datetime.now(timezone.utc) - timedelta(hours=5)).date().isoformat(),
                 "end_date": datetime.now(timezone.utc).date().isoformat(),
             }
             if cursor:
@@ -117,7 +117,7 @@ class SnappShopAdapter(MarketplaceAdapter):
             if not pagination.get("has_more") or not raw_orders:
                 break
 
-        log.info("snappshop: fetched %d new orders since %s", len(orders), since.isoformat())
+        log.info("snappshop: fetched %d orders", len(orders))
         return orders
 
     def fetch_order_detail(self, source_order_id: str) -> NormalizedOrder:

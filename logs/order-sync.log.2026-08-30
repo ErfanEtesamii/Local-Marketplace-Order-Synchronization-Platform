@@ -1,0 +1,769 @@
+2026-08-30 22:59:20,195 | INFO     | src.marketplaces.digikala | digikala: fetched 1 new orders since 2026-08-01T00:00:00+00:00
+2026-08-30 22:59:20,220 | INFO     | src.marketplaces.digikala | digikala: fetched 51 new orders since 2026-08-01T00:00:00+00:00
+2026-08-30 22:59:20,240 | INFO     | src.marketplaces.digikala | digikala: fetched 0 new orders since 2026-08-01T00:00:00+00:00
+2026-08-30 22:59:20,262 | INFO     | src.marketplaces.digikala | digikala: fetched 100 new orders since 2026-08-01T00:00:00+00:00
+2026-08-30 22:59:20,289 | INFO     | src.marketplaces.digikala | digikala: access token expired (401), refreshing
+2026-08-30 22:59:20,292 | INFO     | src.marketplaces.digikala | digikala: access token refreshed, new expiry=2026-08-19 00:00:00
+2026-08-30 22:59:20,293 | INFO     | src.marketplaces.digikala | digikala: fetched 0 new orders since 2026-08-01T00:00:00+00:00
+2026-08-30 23:01:00,877 | INFO     | src.marketplaces.basalam | basalam: fetched 1 new orders since 2026-08-01T00:00:00+00:00
+2026-08-30 23:01:00,896 | INFO     | src.marketplaces.basalam | basalam: fetched 1 new orders since 2026-08-01T00:00:00+00:00
+2026-08-30 23:01:00,950 | INFO     | src.marketplaces.basalam | basalam: fetched 0 new orders since 2026-08-01T00:00:00+00:00
+2026-08-30 23:01:00,968 | INFO     | src.marketplaces.basalam | basalam: fetched 0 new orders since 2026-08-01T00:00:00+00:00
+2026-08-30 23:01:01,004 | INFO     | src.marketplaces.basalam | basalam: fetched 1 new orders since 2026-08-01T00:00:00+00:00
+2026-08-30 23:01:01,052 | INFO     | src.didar.activity_client | didar: created activity 'تماس جدید' on deal deal-1 -> Id=a-1
+2026-08-30 23:01:01,070 | INFO     | src.didar.activity_client | didar: created activity 'x' on deal deal-1 -> Id=a-1
+2026-08-30 23:01:01,088 | INFO     | src.didar.activity_client | didar: created activity 'تماس جدید' on deal deal-1 -> Id=a-x
+2026-08-30 23:01:01,089 | INFO     | src.didar.activity_client | didar: created activity 'پیامک 2' on deal deal-1 -> Id=a-x
+2026-08-30 23:01:01,090 | INFO     | src.didar.activity_client | didar: created activity 'پیامک 1' on deal deal-1 -> Id=a-x
+2026-08-30 23:01:01,091 | INFO     | src.didar.activity_client | didar: created activity 'ارسال محصول' on deal deal-1 -> Id=a-x
+2026-08-30 23:01:01,092 | INFO     | src.didar.activity_client | didar: created activity 'پیامک 3' on deal deal-1 -> Id=a-x
+2026-08-30 23:01:01,096 | INFO     | src.didar.activity_client | didar: created activity 'تماس رضایت' on deal deal-1 -> Id=a-x
+2026-08-30 23:01:01,114 | INFO     | src.didar.activity_client | didar: no ship_time available for deal deal-1 (marketplace adapter doesn't expose it yet - see NormalizedOrder.ship_time) - defaulting to order_registered_at + 2 days, 0:00:00 per client instruction
+2026-08-30 23:01:01,116 | INFO     | src.didar.activity_client | didar: created activity 'تماس جدید' on deal deal-1 -> Id=a-x
+2026-08-30 23:01:01,117 | INFO     | src.didar.activity_client | didar: created activity 'پیامک 2' on deal deal-1 -> Id=a-x
+2026-08-30 23:01:01,117 | INFO     | src.didar.activity_client | didar: created activity 'پیامک 1' on deal deal-1 -> Id=a-x
+2026-08-30 23:01:01,118 | INFO     | src.didar.activity_client | didar: created activity 'ارسال محصول' on deal deal-1 -> Id=a-x
+2026-08-30 23:01:01,119 | INFO     | src.didar.activity_client | didar: created activity 'پیامک 3' on deal deal-1 -> Id=a-x
+2026-08-30 23:01:01,120 | INFO     | src.didar.activity_client | didar: created activity 'تماس رضایت' on deal deal-1 -> Id=a-x
+2026-08-30 23:01:01,140 | INFO     | src.didar.activity_client | didar: created activity 'تماس جدید' on deal deal-1 -> Id=a-x
+2026-08-30 23:01:01,141 | INFO     | src.didar.activity_client | didar: created activity 'پیامک 2' on deal deal-1 -> Id=a-x
+2026-08-30 23:01:01,142 | INFO     | src.didar.activity_client | didar: created activity 'پیامک 1' on deal deal-1 -> Id=a-x
+2026-08-30 23:01:01,142 | INFO     | src.didar.activity_client | didar: created activity 'ارسال محصول' on deal deal-1 -> Id=a-x
+2026-08-30 23:01:01,143 | INFO     | src.didar.activity_client | didar: created activity 'پیامک 3' on deal deal-1 -> Id=a-x
+2026-08-30 23:01:01,144 | INFO     | src.didar.activity_client | didar: created activity 'تماس رضایت' on deal deal-1 -> Id=a-x
+2026-08-30 23:01:01,163 | ERROR    | src.didar.activity_client | didar: failed to upload product photo for deal deal-1 - continuing without it
+Traceback (most recent call last):
+  File "C:\Users\OMEN\Desktop\Local Marketplace Order Synchronization Platform\src\didar\activity_client.py", line 246, in create_post_sale_checklist
+    ship_attachment_key = self.upload_attachment(file_bytes, filename, content_type)
+  File "C:\Users\OMEN\Desktop\Local Marketplace Order Synchronization Platform\src\didar\activity_client.py", line 181, in upload_attachment
+    raise_for_status_with_body(resp)
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "C:\Users\OMEN\Desktop\Local Marketplace Order Synchronization Platform\src\http_utils.py", line 41, in raise_for_status_with_body
+    raise httpx.HTTPStatusError(message, request=resp.request, response=resp)
+httpx.HTTPStatusError: 500 Internal Server Error for url 'https://app.didar.me/api/UploadFile?apikey=test-key': 
+2026-08-30 23:01:01,166 | INFO     | src.didar.activity_client | didar: created activity 'تماس جدید' on deal deal-1 -> Id=a-x
+2026-08-30 23:01:01,167 | INFO     | src.didar.activity_client | didar: created activity 'پیامک 2' on deal deal-1 -> Id=a-x
+2026-08-30 23:01:01,168 | INFO     | src.didar.activity_client | didar: created activity 'پیامک 1' on deal deal-1 -> Id=a-x
+2026-08-30 23:01:01,168 | INFO     | src.didar.activity_client | didar: created activity 'ارسال محصول' on deal deal-1 -> Id=a-x
+2026-08-30 23:01:01,169 | INFO     | src.didar.activity_client | didar: created activity 'پیامک 3' on deal deal-1 -> Id=a-x
+2026-08-30 23:01:01,170 | INFO     | src.didar.activity_client | didar: created activity 'تماس رضایت' on deal deal-1 -> Id=a-x
+2026-08-30 23:01:01,187 | WARNING  | src.didar.activity_client | didar: skipping post-sale checklist for deal deal-1 - activity type Id(s) not configured for: activity_type_sms2_id (see DidarConfig.activity_type_*_id / .env.example)
+2026-08-30 23:01:01,206 | INFO     | src.didar.activity_client | didar: created activity 'تماس جدید' on deal deal-1 -> Id=a-x
+2026-08-30 23:01:01,208 | ERROR    | src.didar.activity_client | didar: failed to create checklist activity 'پیامک 2' on deal deal-1 - continuing with the rest of the checklist
+Traceback (most recent call last):
+  File "C:\Users\OMEN\Desktop\Local Marketplace Order Synchronization Platform\src\didar\activity_client.py", line 260, in create_post_sale_checklist
+    self.create_activity(
+    ~~~~~~~~~~~~~~~~~~~~^
+        deal_id=deal_id,
+        ^^^^^^^^^^^^^^^^
+    ...<3 lines>...
+        new_attachments=new_attachments,
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "C:\Users\OMEN\Desktop\Local Marketplace Order Synchronization Platform\src\didar\activity_client.py", line 154, in create_activity
+    payload = self._post("/activity/save", json=request_body)
+  File "C:\Users\OMEN\AppData\Roaming\Python\Python314\site-packages\tenacity\__init__.py", line 331, in wrapped_f
+    return copy(f, *args, **kw)
+  File "C:\Users\OMEN\AppData\Roaming\Python\Python314\site-packages\tenacity\__init__.py", line 470, in __call__
+    do = self.iter(retry_state=retry_state)
+  File "C:\Users\OMEN\AppData\Roaming\Python\Python314\site-packages\tenacity\__init__.py", line 371, in iter
+    result = action(retry_state)
+  File "C:\Users\OMEN\AppData\Roaming\Python\Python314\site-packages\tenacity\__init__.py", line 393, in <lambda>
+    self._add_action_func(lambda rs: rs.outcome.result())
+                                     ~~~~~~~~~~~~~~~~~^^
+  File "C:\Python314\Lib\concurrent\futures\_base.py", line 447, in result
+    return self.__get_result()
+           ~~~~~~~~~~~~~~~~~^^
+  File "C:\Python314\Lib\concurrent\futures\_base.py", line 396, in __get_result
+    raise self._exception
+  File "C:\Users\OMEN\AppData\Roaming\Python\Python314\site-packages\tenacity\__init__.py", line 473, in __call__
+    result = fn(*args, **kwargs)
+  File "C:\Users\OMEN\Desktop\Local Marketplace Order Synchronization Platform\src\didar\activity_client.py", line 117, in _post
+    raise_for_status_with_body(resp)
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "C:\Users\OMEN\Desktop\Local Marketplace Order Synchronization Platform\src\http_utils.py", line 41, in raise_for_status_with_body
+    raise httpx.HTTPStatusError(message, request=resp.request, response=resp)
+httpx.HTTPStatusError: 400 Bad Request for url 'https://app.didar.me/api/activity/save?apikey=test-key': {"error":"boom"}
+2026-08-30 23:01:01,212 | INFO     | src.didar.activity_client | didar: created activity 'پیامک 1' on deal deal-1 -> Id=a-x
+2026-08-30 23:01:01,212 | INFO     | src.didar.activity_client | didar: created activity 'ارسال محصول' on deal deal-1 -> Id=a-x
+2026-08-30 23:01:01,213 | INFO     | src.didar.activity_client | didar: created activity 'پیامک 3' on deal deal-1 -> Id=a-x
+2026-08-30 23:01:01,214 | INFO     | src.didar.activity_client | didar: created activity 'تماس رضایت' on deal deal-1 -> Id=a-x
+2026-08-30 23:01:01,233 | INFO     | src.didar.contact_client | didar: upserted contact CustomerCode=tapsishop-999 -> Id=c-123
+2026-08-30 23:01:01,252 | INFO     | src.didar.contact_client | didar: upserted contact CustomerCode=x -> Id=c-flat
+2026-08-30 23:01:01,290 | INFO     | src.didar.contact_client | didar: upserted contact CustomerCode=tapsishop-999 -> Id=c-1
+2026-08-30 23:01:01,310 | INFO     | src.didar.contact_client | didar: upserted contact CustomerCode=basalam-42 -> Id=c-1
+2026-08-30 23:01:01,365 | INFO     | src.didar.contact_client | didar: found existing contact by MobilePhone=09121234567 (CustomerCode=09121234567 didn't match - see find_existing_contact_id docstring) -> Id=c-by-phone
+2026-08-30 23:01:01,384 | INFO     | src.didar.contact_client | didar: found existing contact by MobilePhone=09121234567 (CustomerCode=09121234567 didn't match - see find_existing_contact_id docstring) -> Id=c-by-phone
+2026-08-30 23:01:01,385 | INFO     | src.didar.contact_client | didar: upserted contact CustomerCode=09121234567 -> Id=c-by-phone
+2026-08-30 23:01:01,405 | INFO     | src.didar.contact_client | didar: upserted contact CustomerCode=09121234567 -> Id=c-existing
+2026-08-30 23:01:01,427 | INFO     | src.didar.contact_client | didar: found existing contact by MobilePhone=09121234567 (CustomerCode=09121234567 didn't match - see find_existing_contact_id docstring) -> Id=c-race
+2026-08-30 23:01:01,428 | INFO     | src.didar.contact_client | didar: upserted contact CustomerCode=09121234567 -> Id=c-race
+2026-08-30 23:01:01,973 | INFO     | src.didar.product_catalog | didar: loaded 3310 product catalog entries from data\didar_product_catalog.xlsx
+2026-08-30 23:01:01,975 | INFO     | src.didar.product_client | didar: no keyword in category_mapping.py matched item title 'Product A' - falling back to the default category
+2026-08-30 23:01:01,976 | INFO     | src.didar.product_client | didar: created product Code=SKU-1 Title=Product A CategoryId=cat-default -> Id=p-1
+2026-08-30 23:01:01,977 | INFO     | src.didar.deal_client | didar: created deal for tapsishop order 999 -> Id=d-1
+2026-08-30 23:01:02,485 | INFO     | src.didar.product_catalog | didar: loaded 3310 product catalog entries from data\didar_product_catalog.xlsx
+2026-08-30 23:01:02,487 | INFO     | src.didar.product_client | didar: no keyword in category_mapping.py matched item title 'Product A' - falling back to the default category
+2026-08-30 23:01:02,488 | INFO     | src.didar.product_client | didar: created product Code=SKU-1 Title=Product A CategoryId=cat-default -> Id=p-1
+2026-08-30 23:01:02,489 | INFO     | src.didar.deal_client | didar: created deal for tapsishop order 999 -> Id=d-1
+2026-08-30 23:01:03,009 | INFO     | src.didar.product_catalog | didar: loaded 3310 product catalog entries from data\didar_product_catalog.xlsx
+2026-08-30 23:01:03,012 | INFO     | src.didar.product_client | didar: no keyword in category_mapping.py matched item title 'Product A' - falling back to the default category
+2026-08-30 23:01:03,013 | INFO     | src.didar.product_client | didar: created product Code=SKU-1 Title=Product A CategoryId=cat-default -> Id=p-1
+2026-08-30 23:01:03,014 | INFO     | src.didar.deal_client | didar: created deal for unmapped_source order 999 -> Id=d-1
+2026-08-30 23:01:03,539 | INFO     | src.didar.product_catalog | didar: loaded 3310 product catalog entries from data\didar_product_catalog.xlsx
+2026-08-30 23:01:03,542 | INFO     | src.didar.product_client | didar: no keyword in category_mapping.py matched item title 'Product A' - falling back to the default category
+2026-08-30 23:01:03,543 | INFO     | src.didar.product_client | didar: created product Code=SKU-1 Title=Product A CategoryId=cat-default -> Id=p-1
+2026-08-30 23:01:03,544 | INFO     | src.didar.deal_client | didar: created deal for tapsishop order 999 -> Id=d-1
+2026-08-30 23:01:04,046 | INFO     | src.didar.product_catalog | didar: loaded 3310 product catalog entries from data\didar_product_catalog.xlsx
+2026-08-30 23:01:04,049 | INFO     | src.didar.product_client | didar: no keyword in category_mapping.py matched item title 'Product A' - falling back to the default category
+2026-08-30 23:01:04,050 | INFO     | src.didar.product_client | didar: created product Code=SKU-1 Title=Product A CategoryId=cat-default -> Id=p-1
+2026-08-30 23:01:04,051 | INFO     | src.didar.deal_client | didar: created deal for farazhonar order 555 -> Id=d-1
+2026-08-30 23:01:04,553 | INFO     | src.didar.product_catalog | didar: loaded 3310 product catalog entries from data\didar_product_catalog.xlsx
+2026-08-30 23:01:04,556 | INFO     | src.didar.product_client | didar: no keyword in category_mapping.py matched item title 'Product A' - falling back to the default category
+2026-08-30 23:01:04,557 | INFO     | src.didar.product_client | didar: created product Code=SKU-1 Title=Product A CategoryId=cat-default -> Id=p-999
+2026-08-30 23:01:04,558 | INFO     | src.didar.deal_client | didar: created deal for tapsishop order 999 -> Id=d-1
+2026-08-30 23:01:04,647 | INFO     | src.didar.product_catalog | didar: loaded 1 product catalog entries from C:\Users\OMEN\AppData\Local\Temp\pytest-of-OMEN\pytest-16\test_deal_item_uses_catalog_co0\catalog.xlsx
+2026-08-30 23:01:04,647 | INFO     | src.didar.product_client | didar: catalog match for title='ست هدیه مسی فراز هنر مدل راستین کد 1 | چند رنگ | گارانتی اصالت و سلامت فیزیکی کالا' -> Code=146 (catalog title='راستین 1')
+2026-08-30 23:01:04,648 | INFO     | src.didar.product_client | didar: found existing product Code=146 -> Id=p-existing (skipping create)
+2026-08-30 23:01:04,649 | INFO     | src.didar.deal_client | didar: created deal for digikala order 1 -> Id=d-1
+2026-08-30 23:01:05,150 | INFO     | src.didar.product_catalog | didar: loaded 3310 product catalog entries from data\didar_product_catalog.xlsx
+2026-08-30 23:01:05,152 | INFO     | src.didar.product_client | didar: no keyword in category_mapping.py matched item title 'Product A' - falling back to the default category
+2026-08-30 23:01:05,153 | INFO     | src.didar.product_client | didar: created product Code=SKU-1 Title=Product A CategoryId=cat-default -> Id=p-1
+2026-08-30 23:01:05,154 | INFO     | src.didar.deal_client | didar: created deal for tapsishop order 999 -> Id=d-1
+2026-08-30 23:01:05,655 | INFO     | src.didar.product_catalog | didar: loaded 3310 product catalog entries from data\didar_product_catalog.xlsx
+2026-08-30 23:01:05,658 | INFO     | src.didar.product_client | didar: no keyword in category_mapping.py matched item title 'Product A' - falling back to the default category
+2026-08-30 23:01:05,659 | INFO     | src.didar.product_client | didar: created product Code=SKU-1 Title=Product A CategoryId=cat-default -> Id=p-1
+2026-08-30 23:01:05,660 | INFO     | src.didar.deal_client | didar: created deal for tapsishop order 999 -> Id=d-1
+2026-08-30 23:01:06,158 | INFO     | src.didar.product_catalog | didar: loaded 3310 product catalog entries from data\didar_product_catalog.xlsx
+2026-08-30 23:01:06,160 | INFO     | src.didar.product_client | didar: no keyword in category_mapping.py matched item title 'Product A' - falling back to the default category
+2026-08-30 23:01:06,161 | INFO     | src.didar.product_client | didar: created product Code=SKU-1 Title=Product A CategoryId=cat-default -> Id=p-1
+2026-08-30 23:01:06,162 | INFO     | src.didar.deal_client | didar: created deal for tapsishop order 999 -> Id=d-1
+2026-08-30 23:01:06,664 | INFO     | src.didar.product_catalog | didar: loaded 3310 product catalog entries from data\didar_product_catalog.xlsx
+2026-08-30 23:01:06,667 | INFO     | src.didar.product_client | didar: no keyword in category_mapping.py matched item title 'Product A' - falling back to the default category
+2026-08-30 23:01:06,668 | INFO     | src.didar.product_client | didar: created product Code=SKU-1 Title=Product A CategoryId=cat-default -> Id=p-1
+2026-08-30 23:01:06,669 | INFO     | src.didar.deal_client | didar: created deal for tapsishop order 999 -> Id=d-1
+2026-08-30 23:01:06,736 | INFO     | src.didar.deal_client | didar: found existing deal for tapsishop order 999 -> Id=d-existing (skipping create - already in Didar)
+2026-08-30 23:01:06,827 | INFO     | src.didar.deal_client | didar: found existing deal for tapsishop order 999 -> Id=d-already-there (skipping create - already in Didar)
+2026-08-30 23:01:06,892 | INFO     | src.didar.contact_client | didar: upserted contact CustomerCode=tapsishop-999 -> Id=c-42
+2026-08-30 23:01:07,363 | INFO     | src.didar.product_catalog | didar: loaded 3310 product catalog entries from data\didar_product_catalog.xlsx
+2026-08-30 23:01:07,366 | INFO     | src.didar.product_client | didar: no keyword in category_mapping.py matched item title 'Product A' - falling back to the default category
+2026-08-30 23:01:07,367 | INFO     | src.didar.product_client | didar: created product Code=SKU-1 Title=Product A CategoryId=cat-default -> Id=p-1
+2026-08-30 23:01:07,367 | INFO     | src.didar.deal_client | didar: created deal for tapsishop order 999 -> Id=d-42
+2026-08-30 23:01:07,368 | INFO     | src.didar.service | didar: synced tapsishop order 999 -> contact=c-42 deal=d-42
+2026-08-30 23:01:07,368 | INFO     | src.didar.activity_client | didar: no ship_time available for deal d-42 (marketplace adapter doesn't expose it yet - see NormalizedOrder.ship_time) - defaulting to order_registered_at + 2 days, 0:00:00 per client instruction
+2026-08-30 23:01:07,368 | ERROR    | src.didar.activity_client | didar: failed to create checklist activity 'تماس جدید' on deal d-42 - continuing with the rest of the checklist
+Traceback (most recent call last):
+  File "C:\Users\OMEN\Desktop\Local Marketplace Order Synchronization Platform\src\didar\activity_client.py", line 260, in create_post_sale_checklist
+    self.create_activity(
+    ~~~~~~~~~~~~~~~~~~~~^
+        deal_id=deal_id,
+        ^^^^^^^^^^^^^^^^
+    ...<3 lines>...
+        new_attachments=new_attachments,
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "C:\Users\OMEN\Desktop\Local Marketplace Order Synchronization Platform\src\didar\activity_client.py", line 154, in create_activity
+    payload = self._post("/activity/save", json=request_body)
+  File "C:\Users\OMEN\AppData\Roaming\Python\Python314\site-packages\tenacity\__init__.py", line 331, in wrapped_f
+    return copy(f, *args, **kw)
+  File "C:\Users\OMEN\AppData\Roaming\Python\Python314\site-packages\tenacity\__init__.py", line 470, in __call__
+    do = self.iter(retry_state=retry_state)
+  File "C:\Users\OMEN\AppData\Roaming\Python\Python314\site-packages\tenacity\__init__.py", line 371, in iter
+    result = action(retry_state)
+  File "C:\Users\OMEN\AppData\Roaming\Python\Python314\site-packages\tenacity\__init__.py", line 393, in <lambda>
+    self._add_action_func(lambda rs: rs.outcome.result())
+                                     ~~~~~~~~~~~~~~~~~^^
+  File "C:\Python314\Lib\concurrent\futures\_base.py", line 447, in result
+    return self.__get_result()
+           ~~~~~~~~~~~~~~~~~^^
+  File "C:\Python314\Lib\concurrent\futures\_base.py", line 396, in __get_result
+    raise self._exception
+  File "C:\Users\OMEN\AppData\Roaming\Python\Python314\site-packages\tenacity\__init__.py", line 473, in __call__
+    result = fn(*args, **kwargs)
+  File "C:\Users\OMEN\Desktop\Local Marketplace Order Synchronization Platform\src\didar\activity_client.py", line 116, in _post
+    resp = self._client.post(path, params={"apikey": self._config.api_key}, json=json)
+  File "C:\Users\OMEN\AppData\Roaming\Python\Python314\site-packages\httpx\_client.py", line 1144, in post
+    return self.request(
+           ~~~~~~~~~~~~^
+        "POST",
+        ^^^^^^^
+    ...<11 lines>...
+        extensions=extensions,
+        ^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "C:\Users\OMEN\AppData\Roaming\Python\Python314\site-packages\httpx\_client.py", line 825, in request
+    return self.send(request, auth=auth, follow_redirects=follow_redirects)
+           ~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\OMEN\AppData\Roaming\Python\Python314\site-packages\httpx\_client.py", line 914, in send
+    response = self._send_handling_auth(
+        request,
+    ...<2 lines>...
+        history=[],
+    )
+  File "C:\Users\OMEN\AppData\Roaming\Python\Python314\site-packages\httpx\_client.py", line 942, in _send_handling_auth
+    response = self._send_handling_redirects(
+        request,
+        follow_redirects=follow_redirects,
+        history=history,
+    )
+  File "C:\Users\OMEN\AppData\Roaming\Python\Python314\site-packages\httpx\_client.py", line 979, in _send_handling_redirects
+    response = self._send_single_request(request)
+  File "C:\Users\OMEN\AppData\Roaming\Python\Python314\site-packages\httpx\_client.py", line 1014, in _send_single_request
+    response = transport.handle_request(request)
+  File "C:\Users\OMEN\AppData\Roaming\Python\Python314\site-packages\httpx\_transports\default.py", line 250, in handle_request
+    resp = self._pool.handle_request(req)
+  File "C:\Users\OMEN\AppData\Roaming\Python\Python314\site-packages\respx\mocks.py", line 181, in mock
+    response = cls._send_sync_request(
+        request, target_spec=spec, instance=self, **kwargs
+    )
+  File "C:\Users\OMEN\AppData\Roaming\Python\Python314\site-packages\respx\mocks.py", line 212, in _send_sync_request
+    httpx_response = cls.handler(httpx_request)
+  File "C:\Users\OMEN\AppData\Roaming\Python\Python314\site-packages\respx\mocks.py", line 120, in handler
+    raise assertion_error
+  File "C:\Users\OMEN\AppData\Roaming\Python\Python314\site-packages\respx\mocks.py", line 113, in handler
+    httpx_response = router.handler(httpx_request)
+  File "C:\Users\OMEN\AppData\Roaming\Python\Python314\site-packages\respx\router.py", line 313, in handler
+    resolved = self.resolve(request)
+  File "C:\Users\OMEN\AppData\Roaming\Python\Python314\site-packages\respx\router.py", line 277, in resolve
+    with self.resolver(request) as resolved:
+         ~~~~~~~~~~~~~^^^^^^^^^
+  File "C:\Python314\Lib\contextlib.py", line 148, in __exit__
+    next(self.gen)
+    ~~~~^^^^^^^^^^
+  File "C:\Users\OMEN\AppData\Roaming\Python\Python314\site-packages\respx\router.py", line 250, in resolver
+    raise AllMockedAssertionError(f"RESPX: {request!r} not mocked!")
+respx.models.AllMockedAssertionError: RESPX: <Request('POST', 'https://app.didar.me/api/activity/save?apikey=h0xv02a1yxvvzzked09caf1bfu3avdv3')> not mocked!
+2026-08-30 23:01:07,403 | ERROR    | src.didar.activity_client | didar: failed to create checklist activity 'پیامک 2' on deal d-42 - continuing with the rest of the checklist
+Traceback (most recent call last):
+  File "C:\Users\OMEN\Desktop\Local Marketplace Order Synchronization Platform\src\didar\activity_client.py", line 260, in create_post_sale_checklist
+    self.create_activity(
+    ~~~~~~~~~~~~~~~~~~~~^
+        deal_id=deal_id,
+        ^^^^^^^^^^^^^^^^
+    ...<3 lines>...
+        new_attachments=new_attachments,
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "C:\Users\OMEN\Desktop\Local Marketplace Order Synchronization Platform\src\didar\activity_client.py", line 154, in create_activity
+    payload = self._post("/activity/save", json=request_body)
+  File "C:\Users\OMEN\AppData\Roaming\Python\Python314\site-packages\tenacity\__init__.py", line 331, in wrapped_f
+    return copy(f, *args, **kw)
+  File "C:\Users\OMEN\AppData\Roaming\Python\Python314\site-packages\tenacity\__init__.py", line 470, in __call__
+    do = self.iter(retry_state=retry_state)
+  File "C:\Users\OMEN\AppData\Roaming\Python\Python314\site-packages\tenacity\__init__.py", line 371, in iter
+    result = action(retry_state)
+  File "C:\Users\OMEN\AppData\Roaming\Python\Python314\site-packages\tenacity\__init__.py", line 393, in <lambda>
+    self._add_action_func(lambda rs: rs.outcome.result())
+                                     ~~~~~~~~~~~~~~~~~^^
+  File "C:\Python314\Lib\concurrent\futures\_base.py", line 447, in result
+    return self.__get_result()
+           ~~~~~~~~~~~~~~~~~^^
+  File "C:\Python314\Lib\concurrent\futures\_base.py", line 396, in __get_result
+    raise self._exception
+  File "C:\Users\OMEN\AppData\Roaming\Python\Python314\site-packages\tenacity\__init__.py", line 473, in __call__
+    result = fn(*args, **kwargs)
+  File "C:\Users\OMEN\Desktop\Local Marketplace Order Synchronization Platform\src\didar\activity_client.py", line 116, in _post
+    resp = self._client.post(path, params={"apikey": self._config.api_key}, json=json)
+  File "C:\Users\OMEN\AppData\Roaming\Python\Python314\site-packages\httpx\_client.py", line 1144, in post
+    return self.request(
+           ~~~~~~~~~~~~^
+        "POST",
+        ^^^^^^^
+    ...<11 lines>...
+        extensions=extensions,
+        ^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "C:\Users\OMEN\AppData\Roaming\Python\Python314\site-packages\httpx\_client.py", line 825, in request
+    return self.send(request, auth=auth, follow_redirects=follow_redirects)
+           ~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\OMEN\AppData\Roaming\Python\Python314\site-packages\httpx\_client.py", line 914, in send
+    response = self._send_handling_auth(
+        request,
+    ...<2 lines>...
+        history=[],
+    )
+  File "C:\Users\OMEN\AppData\Roaming\Python\Python314\site-packages\httpx\_client.py", line 942, in _send_handling_auth
+    response = self._send_handling_redirects(
+        request,
+        follow_redirects=follow_redirects,
+        history=history,
+    )
+  File "C:\Users\OMEN\AppData\Roaming\Python\Python314\site-packages\httpx\_client.py", line 979, in _send_handling_redirects
+    response = self._send_single_request(request)
+  File "C:\Users\OMEN\AppData\Roaming\Python\Python314\site-packages\httpx\_client.py", line 1014, in _send_single_request
+    response = transport.handle_request(request)
+  File "C:\Users\OMEN\AppData\Roaming\Python\Python314\site-packages\httpx\_transports\default.py", line 250, in handle_request
+    resp = self._pool.handle_request(req)
+  File "C:\Users\OMEN\AppData\Roaming\Python\Python314\site-packages\respx\mocks.py", line 181, in mock
+    response = cls._send_sync_request(
+        request, target_spec=spec, instance=self, **kwargs
+    )
+  File "C:\Users\OMEN\AppData\Roaming\Python\Python314\site-packages\respx\mocks.py", line 212, in _send_sync_request
+    httpx_response = cls.handler(httpx_request)
+  File "C:\Users\OMEN\AppData\Roaming\Python\Python314\site-packages\respx\mocks.py", line 120, in handler
+    raise assertion_error
+  File "C:\Users\OMEN\AppData\Roaming\Python\Python314\site-packages\respx\mocks.py", line 113, in handler
+    httpx_response = router.handler(httpx_request)
+  File "C:\Users\OMEN\AppData\Roaming\Python\Python314\site-packages\respx\router.py", line 313, in handler
+    resolved = self.resolve(request)
+  File "C:\Users\OMEN\AppData\Roaming\Python\Python314\site-packages\respx\router.py", line 277, in resolve
+    with self.resolver(request) as resolved:
+         ~~~~~~~~~~~~~^^^^^^^^^
+  File "C:\Python314\Lib\contextlib.py", line 148, in __exit__
+    next(self.gen)
+    ~~~~^^^^^^^^^^
+  File "C:\Users\OMEN\AppData\Roaming\Python\Python314\site-packages\respx\router.py", line 250, in resolver
+    raise AllMockedAssertionError(f"RESPX: {request!r} not mocked!")
+respx.models.AllMockedAssertionError: RESPX: <Request('POST', 'https://app.didar.me/api/activity/save?apikey=h0xv02a1yxvvzzked09caf1bfu3avdv3')> not mocked!
+2026-08-30 23:01:07,408 | ERROR    | src.didar.activity_client | didar: failed to create checklist activity 'پیامک 1' on deal d-42 - continuing with the rest of the checklist
+Traceback (most recent call last):
+  File "C:\Users\OMEN\Desktop\Local Marketplace Order Synchronization Platform\src\didar\activity_client.py", line 260, in create_post_sale_checklist
+    self.create_activity(
+    ~~~~~~~~~~~~~~~~~~~~^
+        deal_id=deal_id,
+        ^^^^^^^^^^^^^^^^
+    ...<3 lines>...
+        new_attachments=new_attachments,
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "C:\Users\OMEN\Desktop\Local Marketplace Order Synchronization Platform\src\didar\activity_client.py", line 154, in create_activity
+    payload = self._post("/activity/save", json=request_body)
+  File "C:\Users\OMEN\AppData\Roaming\Python\Python314\site-packages\tenacity\__init__.py", line 331, in wrapped_f
+    return copy(f, *args, **kw)
+  File "C:\Users\OMEN\AppData\Roaming\Python\Python314\site-packages\tenacity\__init__.py", line 470, in __call__
+    do = self.iter(retry_state=retry_state)
+  File "C:\Users\OMEN\AppData\Roaming\Python\Python314\site-packages\tenacity\__init__.py", line 371, in iter
+    result = action(retry_state)
+  File "C:\Users\OMEN\AppData\Roaming\Python\Python314\site-packages\tenacity\__init__.py", line 393, in <lambda>
+    self._add_action_func(lambda rs: rs.outcome.result())
+                                     ~~~~~~~~~~~~~~~~~^^
+  File "C:\Python314\Lib\concurrent\futures\_base.py", line 447, in result
+    return self.__get_result()
+           ~~~~~~~~~~~~~~~~~^^
+  File "C:\Python314\Lib\concurrent\futures\_base.py", line 396, in __get_result
+    raise self._exception
+  File "C:\Users\OMEN\AppData\Roaming\Python\Python314\site-packages\tenacity\__init__.py", line 473, in __call__
+    result = fn(*args, **kwargs)
+  File "C:\Users\OMEN\Desktop\Local Marketplace Order Synchronization Platform\src\didar\activity_client.py", line 116, in _post
+    resp = self._client.post(path, params={"apikey": self._config.api_key}, json=json)
+  File "C:\Users\OMEN\AppData\Roaming\Python\Python314\site-packages\httpx\_client.py", line 1144, in post
+    return self.request(
+           ~~~~~~~~~~~~^
+        "POST",
+        ^^^^^^^
+    ...<11 lines>...
+        extensions=extensions,
+        ^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "C:\Users\OMEN\AppData\Roaming\Python\Python314\site-packages\httpx\_client.py", line 825, in request
+    return self.send(request, auth=auth, follow_redirects=follow_redirects)
+           ~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\OMEN\AppData\Roaming\Python\Python314\site-packages\httpx\_client.py", line 914, in send
+    response = self._send_handling_auth(
+        request,
+    ...<2 lines>...
+        history=[],
+    )
+  File "C:\Users\OMEN\AppData\Roaming\Python\Python314\site-packages\httpx\_client.py", line 942, in _send_handling_auth
+    response = self._send_handling_redirects(
+        request,
+        follow_redirects=follow_redirects,
+        history=history,
+    )
+  File "C:\Users\OMEN\AppData\Roaming\Python\Python314\site-packages\httpx\_client.py", line 979, in _send_handling_redirects
+    response = self._send_single_request(request)
+  File "C:\Users\OMEN\AppData\Roaming\Python\Python314\site-packages\httpx\_client.py", line 1014, in _send_single_request
+    response = transport.handle_request(request)
+  File "C:\Users\OMEN\AppData\Roaming\Python\Python314\site-packages\httpx\_transports\default.py", line 250, in handle_request
+    resp = self._pool.handle_request(req)
+  File "C:\Users\OMEN\AppData\Roaming\Python\Python314\site-packages\respx\mocks.py", line 181, in mock
+    response = cls._send_sync_request(
+        request, target_spec=spec, instance=self, **kwargs
+    )
+  File "C:\Users\OMEN\AppData\Roaming\Python\Python314\site-packages\respx\mocks.py", line 212, in _send_sync_request
+    httpx_response = cls.handler(httpx_request)
+  File "C:\Users\OMEN\AppData\Roaming\Python\Python314\site-packages\respx\mocks.py", line 120, in handler
+    raise assertion_error
+  File "C:\Users\OMEN\AppData\Roaming\Python\Python314\site-packages\respx\mocks.py", line 113, in handler
+    httpx_response = router.handler(httpx_request)
+  File "C:\Users\OMEN\AppData\Roaming\Python\Python314\site-packages\respx\router.py", line 313, in handler
+    resolved = self.resolve(request)
+  File "C:\Users\OMEN\AppData\Roaming\Python\Python314\site-packages\respx\router.py", line 277, in resolve
+    with self.resolver(request) as resolved:
+         ~~~~~~~~~~~~~^^^^^^^^^
+  File "C:\Python314\Lib\contextlib.py", line 148, in __exit__
+    next(self.gen)
+    ~~~~^^^^^^^^^^
+  File "C:\Users\OMEN\AppData\Roaming\Python\Python314\site-packages\respx\router.py", line 250, in resolver
+    raise AllMockedAssertionError(f"RESPX: {request!r} not mocked!")
+respx.models.AllMockedAssertionError: RESPX: <Request('POST', 'https://app.didar.me/api/activity/save?apikey=h0xv02a1yxvvzzked09caf1bfu3avdv3')> not mocked!
+2026-08-30 23:01:07,412 | ERROR    | src.didar.activity_client | didar: failed to create checklist activity 'ارسال محصول' on deal d-42 - continuing with the rest of the checklist
+Traceback (most recent call last):
+  File "C:\Users\OMEN\Desktop\Local Marketplace Order Synchronization Platform\src\didar\activity_client.py", line 260, in create_post_sale_checklist
+    self.create_activity(
+    ~~~~~~~~~~~~~~~~~~~~^
+        deal_id=deal_id,
+        ^^^^^^^^^^^^^^^^
+    ...<3 lines>...
+        new_attachments=new_attachments,
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "C:\Users\OMEN\Desktop\Local Marketplace Order Synchronization Platform\src\didar\activity_client.py", line 154, in create_activity
+    payload = self._post("/activity/save", json=request_body)
+  File "C:\Users\OMEN\AppData\Roaming\Python\Python314\site-packages\tenacity\__init__.py", line 331, in wrapped_f
+    return copy(f, *args, **kw)
+  File "C:\Users\OMEN\AppData\Roaming\Python\Python314\site-packages\tenacity\__init__.py", line 470, in __call__
+    do = self.iter(retry_state=retry_state)
+  File "C:\Users\OMEN\AppData\Roaming\Python\Python314\site-packages\tenacity\__init__.py", line 371, in iter
+    result = action(retry_state)
+  File "C:\Users\OMEN\AppData\Roaming\Python\Python314\site-packages\tenacity\__init__.py", line 393, in <lambda>
+    self._add_action_func(lambda rs: rs.outcome.result())
+                                     ~~~~~~~~~~~~~~~~~^^
+  File "C:\Python314\Lib\concurrent\futures\_base.py", line 447, in result
+    return self.__get_result()
+           ~~~~~~~~~~~~~~~~~^^
+  File "C:\Python314\Lib\concurrent\futures\_base.py", line 396, in __get_result
+    raise self._exception
+  File "C:\Users\OMEN\AppData\Roaming\Python\Python314\site-packages\tenacity\__init__.py", line 473, in __call__
+    result = fn(*args, **kwargs)
+  File "C:\Users\OMEN\Desktop\Local Marketplace Order Synchronization Platform\src\didar\activity_client.py", line 116, in _post
+    resp = self._client.post(path, params={"apikey": self._config.api_key}, json=json)
+  File "C:\Users\OMEN\AppData\Roaming\Python\Python314\site-packages\httpx\_client.py", line 1144, in post
+    return self.request(
+           ~~~~~~~~~~~~^
+        "POST",
+        ^^^^^^^
+    ...<11 lines>...
+        extensions=extensions,
+        ^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "C:\Users\OMEN\AppData\Roaming\Python\Python314\site-packages\httpx\_client.py", line 825, in request
+    return self.send(request, auth=auth, follow_redirects=follow_redirects)
+           ~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\OMEN\AppData\Roaming\Python\Python314\site-packages\httpx\_client.py", line 914, in send
+    response = self._send_handling_auth(
+        request,
+    ...<2 lines>...
+        history=[],
+    )
+  File "C:\Users\OMEN\AppData\Roaming\Python\Python314\site-packages\httpx\_client.py", line 942, in _send_handling_auth
+    response = self._send_handling_redirects(
+        request,
+        follow_redirects=follow_redirects,
+        history=history,
+    )
+  File "C:\Users\OMEN\AppData\Roaming\Python\Python314\site-packages\httpx\_client.py", line 979, in _send_handling_redirects
+    response = self._send_single_request(request)
+  File "C:\Users\OMEN\AppData\Roaming\Python\Python314\site-packages\httpx\_client.py", line 1014, in _send_single_request
+    response = transport.handle_request(request)
+  File "C:\Users\OMEN\AppData\Roaming\Python\Python314\site-packages\httpx\_transports\default.py", line 250, in handle_request
+    resp = self._pool.handle_request(req)
+  File "C:\Users\OMEN\AppData\Roaming\Python\Python314\site-packages\respx\mocks.py", line 181, in mock
+    response = cls._send_sync_request(
+        request, target_spec=spec, instance=self, **kwargs
+    )
+  File "C:\Users\OMEN\AppData\Roaming\Python\Python314\site-packages\respx\mocks.py", line 212, in _send_sync_request
+    httpx_response = cls.handler(httpx_request)
+  File "C:\Users\OMEN\AppData\Roaming\Python\Python314\site-packages\respx\mocks.py", line 120, in handler
+    raise assertion_error
+  File "C:\Users\OMEN\AppData\Roaming\Python\Python314\site-packages\respx\mocks.py", line 113, in handler
+    httpx_response = router.handler(httpx_request)
+  File "C:\Users\OMEN\AppData\Roaming\Python\Python314\site-packages\respx\router.py", line 313, in handler
+    resolved = self.resolve(request)
+  File "C:\Users\OMEN\AppData\Roaming\Python\Python314\site-packages\respx\router.py", line 277, in resolve
+    with self.resolver(request) as resolved:
+         ~~~~~~~~~~~~~^^^^^^^^^
+  File "C:\Python314\Lib\contextlib.py", line 148, in __exit__
+    next(self.gen)
+    ~~~~^^^^^^^^^^
+  File "C:\Users\OMEN\AppData\Roaming\Python\Python314\site-packages\respx\router.py", line 250, in resolver
+    raise AllMockedAssertionError(f"RESPX: {request!r} not mocked!")
+respx.models.AllMockedAssertionError: RESPX: <Request('POST', 'https://app.didar.me/api/activity/save?apikey=h0xv02a1yxvvzzked09caf1bfu3avdv3')> not mocked!
+2026-08-30 23:01:07,416 | ERROR    | src.didar.activity_client | didar: failed to create checklist activity 'پیامک 3' on deal d-42 - continuing with the rest of the checklist
+Traceback (most recent call last):
+  File "C:\Users\OMEN\Desktop\Local Marketplace Order Synchronization Platform\src\didar\activity_client.py", line 260, in create_post_sale_checklist
+    self.create_activity(
+    ~~~~~~~~~~~~~~~~~~~~^
+        deal_id=deal_id,
+        ^^^^^^^^^^^^^^^^
+    ...<3 lines>...
+        new_attachments=new_attachments,
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "C:\Users\OMEN\Desktop\Local Marketplace Order Synchronization Platform\src\didar\activity_client.py", line 154, in create_activity
+    payload = self._post("/activity/save", json=request_body)
+  File "C:\Users\OMEN\AppData\Roaming\Python\Python314\site-packages\tenacity\__init__.py", line 331, in wrapped_f
+    return copy(f, *args, **kw)
+  File "C:\Users\OMEN\AppData\Roaming\Python\Python314\site-packages\tenacity\__init__.py", line 470, in __call__
+    do = self.iter(retry_state=retry_state)
+  File "C:\Users\OMEN\AppData\Roaming\Python\Python314\site-packages\tenacity\__init__.py", line 371, in iter
+    result = action(retry_state)
+  File "C:\Users\OMEN\AppData\Roaming\Python\Python314\site-packages\tenacity\__init__.py", line 393, in <lambda>
+    self._add_action_func(lambda rs: rs.outcome.result())
+                                     ~~~~~~~~~~~~~~~~~^^
+  File "C:\Python314\Lib\concurrent\futures\_base.py", line 447, in result
+    return self.__get_result()
+           ~~~~~~~~~~~~~~~~~^^
+  File "C:\Python314\Lib\concurrent\futures\_base.py", line 396, in __get_result
+    raise self._exception
+  File "C:\Users\OMEN\AppData\Roaming\Python\Python314\site-packages\tenacity\__init__.py", line 473, in __call__
+    result = fn(*args, **kwargs)
+  File "C:\Users\OMEN\Desktop\Local Marketplace Order Synchronization Platform\src\didar\activity_client.py", line 116, in _post
+    resp = self._client.post(path, params={"apikey": self._config.api_key}, json=json)
+  File "C:\Users\OMEN\AppData\Roaming\Python\Python314\site-packages\httpx\_client.py", line 1144, in post
+    return self.request(
+           ~~~~~~~~~~~~^
+        "POST",
+        ^^^^^^^
+    ...<11 lines>...
+        extensions=extensions,
+        ^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "C:\Users\OMEN\AppData\Roaming\Python\Python314\site-packages\httpx\_client.py", line 825, in request
+    return self.send(request, auth=auth, follow_redirects=follow_redirects)
+           ~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\OMEN\AppData\Roaming\Python\Python314\site-packages\httpx\_client.py", line 914, in send
+    response = self._send_handling_auth(
+        request,
+    ...<2 lines>...
+        history=[],
+    )
+  File "C:\Users\OMEN\AppData\Roaming\Python\Python314\site-packages\httpx\_client.py", line 942, in _send_handling_auth
+    response = self._send_handling_redirects(
+        request,
+        follow_redirects=follow_redirects,
+        history=history,
+    )
+  File "C:\Users\OMEN\AppData\Roaming\Python\Python314\site-packages\httpx\_client.py", line 979, in _send_handling_redirects
+    response = self._send_single_request(request)
+  File "C:\Users\OMEN\AppData\Roaming\Python\Python314\site-packages\httpx\_client.py", line 1014, in _send_single_request
+    response = transport.handle_request(request)
+  File "C:\Users\OMEN\AppData\Roaming\Python\Python314\site-packages\httpx\_transports\default.py", line 250, in handle_request
+    resp = self._pool.handle_request(req)
+  File "C:\Users\OMEN\AppData\Roaming\Python\Python314\site-packages\respx\mocks.py", line 181, in mock
+    response = cls._send_sync_request(
+        request, target_spec=spec, instance=self, **kwargs
+    )
+  File "C:\Users\OMEN\AppData\Roaming\Python\Python314\site-packages\respx\mocks.py", line 212, in _send_sync_request
+    httpx_response = cls.handler(httpx_request)
+  File "C:\Users\OMEN\AppData\Roaming\Python\Python314\site-packages\respx\mocks.py", line 120, in handler
+    raise assertion_error
+  File "C:\Users\OMEN\AppData\Roaming\Python\Python314\site-packages\respx\mocks.py", line 113, in handler
+    httpx_response = router.handler(httpx_request)
+  File "C:\Users\OMEN\AppData\Roaming\Python\Python314\site-packages\respx\router.py", line 313, in handler
+    resolved = self.resolve(request)
+  File "C:\Users\OMEN\AppData\Roaming\Python\Python314\site-packages\respx\router.py", line 277, in resolve
+    with self.resolver(request) as resolved:
+         ~~~~~~~~~~~~~^^^^^^^^^
+  File "C:\Python314\Lib\contextlib.py", line 148, in __exit__
+    next(self.gen)
+    ~~~~^^^^^^^^^^
+  File "C:\Users\OMEN\AppData\Roaming\Python\Python314\site-packages\respx\router.py", line 250, in resolver
+    raise AllMockedAssertionError(f"RESPX: {request!r} not mocked!")
+respx.models.AllMockedAssertionError: RESPX: <Request('POST', 'https://app.didar.me/api/activity/save?apikey=h0xv02a1yxvvzzked09caf1bfu3avdv3')> not mocked!
+2026-08-30 23:01:07,421 | ERROR    | src.didar.activity_client | didar: failed to create checklist activity 'تماس رضایت' on deal d-42 - continuing with the rest of the checklist
+Traceback (most recent call last):
+  File "C:\Users\OMEN\Desktop\Local Marketplace Order Synchronization Platform\src\didar\activity_client.py", line 260, in create_post_sale_checklist
+    self.create_activity(
+    ~~~~~~~~~~~~~~~~~~~~^
+        deal_id=deal_id,
+        ^^^^^^^^^^^^^^^^
+    ...<3 lines>...
+        new_attachments=new_attachments,
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "C:\Users\OMEN\Desktop\Local Marketplace Order Synchronization Platform\src\didar\activity_client.py", line 154, in create_activity
+    payload = self._post("/activity/save", json=request_body)
+  File "C:\Users\OMEN\AppData\Roaming\Python\Python314\site-packages\tenacity\__init__.py", line 331, in wrapped_f
+    return copy(f, *args, **kw)
+  File "C:\Users\OMEN\AppData\Roaming\Python\Python314\site-packages\tenacity\__init__.py", line 470, in __call__
+    do = self.iter(retry_state=retry_state)
+  File "C:\Users\OMEN\AppData\Roaming\Python\Python314\site-packages\tenacity\__init__.py", line 371, in iter
+    result = action(retry_state)
+  File "C:\Users\OMEN\AppData\Roaming\Python\Python314\site-packages\tenacity\__init__.py", line 393, in <lambda>
+    self._add_action_func(lambda rs: rs.outcome.result())
+                                     ~~~~~~~~~~~~~~~~~^^
+  File "C:\Python314\Lib\concurrent\futures\_base.py", line 447, in result
+    return self.__get_result()
+           ~~~~~~~~~~~~~~~~~^^
+  File "C:\Python314\Lib\concurrent\futures\_base.py", line 396, in __get_result
+    raise self._exception
+  File "C:\Users\OMEN\AppData\Roaming\Python\Python314\site-packages\tenacity\__init__.py", line 473, in __call__
+    result = fn(*args, **kwargs)
+  File "C:\Users\OMEN\Desktop\Local Marketplace Order Synchronization Platform\src\didar\activity_client.py", line 116, in _post
+    resp = self._client.post(path, params={"apikey": self._config.api_key}, json=json)
+  File "C:\Users\OMEN\AppData\Roaming\Python\Python314\site-packages\httpx\_client.py", line 1144, in post
+    return self.request(
+           ~~~~~~~~~~~~^
+        "POST",
+        ^^^^^^^
+    ...<11 lines>...
+        extensions=extensions,
+        ^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "C:\Users\OMEN\AppData\Roaming\Python\Python314\site-packages\httpx\_client.py", line 825, in request
+    return self.send(request, auth=auth, follow_redirects=follow_redirects)
+           ~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\OMEN\AppData\Roaming\Python\Python314\site-packages\httpx\_client.py", line 914, in send
+    response = self._send_handling_auth(
+        request,
+    ...<2 lines>...
+        history=[],
+    )
+  File "C:\Users\OMEN\AppData\Roaming\Python\Python314\site-packages\httpx\_client.py", line 942, in _send_handling_auth
+    response = self._send_handling_redirects(
+        request,
+        follow_redirects=follow_redirects,
+        history=history,
+    )
+  File "C:\Users\OMEN\AppData\Roaming\Python\Python314\site-packages\httpx\_client.py", line 979, in _send_handling_redirects
+    response = self._send_single_request(request)
+  File "C:\Users\OMEN\AppData\Roaming\Python\Python314\site-packages\httpx\_client.py", line 1014, in _send_single_request
+    response = transport.handle_request(request)
+  File "C:\Users\OMEN\AppData\Roaming\Python\Python314\site-packages\httpx\_transports\default.py", line 250, in handle_request
+    resp = self._pool.handle_request(req)
+  File "C:\Users\OMEN\AppData\Roaming\Python\Python314\site-packages\respx\mocks.py", line 181, in mock
+    response = cls._send_sync_request(
+        request, target_spec=spec, instance=self, **kwargs
+    )
+  File "C:\Users\OMEN\AppData\Roaming\Python\Python314\site-packages\respx\mocks.py", line 212, in _send_sync_request
+    httpx_response = cls.handler(httpx_request)
+  File "C:\Users\OMEN\AppData\Roaming\Python\Python314\site-packages\respx\mocks.py", line 120, in handler
+    raise assertion_error
+  File "C:\Users\OMEN\AppData\Roaming\Python\Python314\site-packages\respx\mocks.py", line 113, in handler
+    httpx_response = router.handler(httpx_request)
+  File "C:\Users\OMEN\AppData\Roaming\Python\Python314\site-packages\respx\router.py", line 313, in handler
+    resolved = self.resolve(request)
+  File "C:\Users\OMEN\AppData\Roaming\Python\Python314\site-packages\respx\router.py", line 277, in resolve
+    with self.resolver(request) as resolved:
+         ~~~~~~~~~~~~~^^^^^^^^^
+  File "C:\Python314\Lib\contextlib.py", line 148, in __exit__
+    next(self.gen)
+    ~~~~^^^^^^^^^^
+  File "C:\Users\OMEN\AppData\Roaming\Python\Python314\site-packages\respx\router.py", line 250, in resolver
+    raise AllMockedAssertionError(f"RESPX: {request!r} not mocked!")
+respx.models.AllMockedAssertionError: RESPX: <Request('POST', 'https://app.didar.me/api/activity/save?apikey=h0xv02a1yxvvzzked09caf1bfu3avdv3')> not mocked!
+2026-08-30 23:01:07,485 | INFO     | src.didar.contact_client | didar: upserted contact CustomerCode=tapsishop-999 -> Id=c-42
+2026-08-30 23:01:07,964 | INFO     | src.didar.product_catalog | didar: loaded 3310 product catalog entries from data\didar_product_catalog.xlsx
+2026-08-30 23:01:07,967 | INFO     | src.didar.product_client | didar: no keyword in category_mapping.py matched item title 'Product A' - falling back to the default category
+2026-08-30 23:01:07,968 | INFO     | src.didar.product_client | didar: created product Code=SKU-1 Title=Product A CategoryId=cat-default -> Id=p-1
+2026-08-30 23:01:07,968 | INFO     | src.didar.deal_client | didar: created deal for tapsishop order 999 -> Id=d-42
+2026-08-30 23:01:07,969 | INFO     | src.didar.service | didar: synced tapsishop order 999 -> contact=c-42 deal=d-42
+2026-08-30 23:01:07,970 | INFO     | src.didar.activity_client | didar: created activity 'تماس جدید' on deal d-42 -> Id=a-x
+2026-08-30 23:01:07,970 | INFO     | src.didar.activity_client | didar: created activity 'پیامک 2' on deal d-42 -> Id=a-x
+2026-08-30 23:01:07,971 | INFO     | src.didar.activity_client | didar: created activity 'پیامک 1' on deal d-42 -> Id=a-x
+2026-08-30 23:01:07,972 | INFO     | src.didar.activity_client | didar: created activity 'ارسال محصول' on deal d-42 -> Id=a-x
+2026-08-30 23:01:07,973 | INFO     | src.didar.activity_client | didar: created activity 'پیامک 3' on deal d-42 -> Id=a-x
+2026-08-30 23:01:07,974 | INFO     | src.didar.activity_client | didar: created activity 'تماس رضایت' on deal d-42 -> Id=a-x
+2026-08-30 23:01:08,044 | INFO     | src.didar.deal_client | didar: found existing deal for tapsishop order 999 -> Id=d-already-there (skipping create - already in Didar)
+2026-08-30 23:01:08,068 | INFO     | src.didar.product_client | didar: created product Code=SKU-A Title=گلدان خاتم ۳ CategoryId=cat-khatam -> Id=p-1
+2026-08-30 23:01:08,088 | INFO     | src.didar.product_client | didar: created product Code=SKU-A Title=گلدان خاتم ۳ CategoryId=cat-khatam -> Id=p-1
+2026-08-30 23:01:08,107 | INFO     | src.didar.product_client | didar: found existing product Code=SKU-A -> Id=existing-p-1 (skipping create)
+2026-08-30 23:01:08,126 | INFO     | src.didar.product_client | didar: no keyword in category_mapping.py matched item title 'یک محصول کاملا نامرتبط' - falling back to the default category
+2026-08-30 23:01:08,127 | INFO     | src.didar.product_client | didar: created product Code=SKU-A Title=یک محصول کاملا نامرتبط CategoryId=cat-default -> Id=p-created
+2026-08-30 23:01:08,146 | INFO     | src.didar.product_client | didar: no keyword in category_mapping.py matched item title 'یک محصول کاملا نامرتبط' - falling back to the default category
+2026-08-30 23:01:08,148 | INFO     | src.didar.product_client | didar: create raced with another writer for Code=SKU-RACE - recovered existing Id=recovered-id via search
+2026-08-30 23:01:08,167 | INFO     | src.didar.product_client | didar: no keyword in category_mapping.py matched item title 'یک محصول کاملا نامرتبط' - falling back to the default category
+2026-08-30 23:01:08,189 | INFO     | src.didar.product_client | didar: no keyword in category_mapping.py matched item title 'محصول بدون کلیدواژه مرتبط' - falling back to the default category
+2026-08-30 23:01:08,210 | INFO     | src.didar.product_client | didar: created product Code=SKU-C Title=جعبه خاتم CategoryId=cat-mina -> Id=p-2
+2026-08-30 23:01:08,229 | INFO     | src.didar.product_client | didar: no keyword in category_mapping.py matched item title 'یک محصول کاملا نامرتبط' - falling back to the default category
+2026-08-30 23:01:08,231 | INFO     | src.didar.product_client | didar: created product Code=SKU-D Title=یک محصول کاملا نامرتبط CategoryId=cat-default -> Id=p-3
+2026-08-30 23:01:08,251 | INFO     | src.marketplaces.digikala | digikala: fetched 1 new orders since 2026-08-01T00:00:00+00:00
+2026-08-30 23:01:08,272 | INFO     | src.marketplaces.digikala | digikala: fetched 51 new orders since 2026-08-01T00:00:00+00:00
+2026-08-30 23:01:08,292 | INFO     | src.marketplaces.digikala | digikala: fetched 0 new orders since 2026-08-01T00:00:00+00:00
+2026-08-30 23:01:08,314 | INFO     | src.marketplaces.digikala | digikala: fetched 100 new orders since 2026-08-01T00:00:00+00:00
+2026-08-30 23:01:08,335 | INFO     | src.marketplaces.digikala | digikala: access token expired (401), refreshing
+2026-08-30 23:01:08,337 | INFO     | src.marketplaces.digikala | digikala: access token refreshed, new expiry=2026-08-19 00:00:00
+2026-08-30 23:01:08,338 | INFO     | src.marketplaces.digikala | digikala: fetched 0 new orders since 2026-08-01T00:00:00+00:00
+2026-08-30 23:01:08,453 | INFO     | src.marketplaces.farazhonar | farazhonar: fetched 1 new orders since 2026-08-01T00:00:00+00:00
+2026-08-30 23:01:08,472 | INFO     | src.marketplaces.farazhonar | farazhonar: fetched 2 new orders since 2026-08-01T00:00:00+00:00
+2026-08-30 23:01:08,589 | INFO     | src.didar.product_catalog | didar: loaded 3 product catalog entries from C:\Users\OMEN\AppData\Local\Temp\pytest-of-OMEN\pytest-16\test_short_specific_entry_wins0\catalog.xlsx
+2026-08-30 23:01:08,644 | INFO     | src.didar.product_catalog | didar: loaded 2 product catalog entries from C:\Users\OMEN\AppData\Local\Temp\pytest-of-OMEN\pytest-16\test_trailing_number_prevents_0\catalog.xlsx
+2026-08-30 23:01:08,685 | INFO     | src.didar.product_catalog | didar: loaded 1 product catalog entries from C:\Users\OMEN\AppData\Local\Temp\pytest-of-OMEN\pytest-16\test_no_match_returns_none0\catalog.xlsx
+2026-08-30 23:01:08,705 | INFO     | src.didar.product_catalog | didar: loaded 1 product catalog entries from C:\Users\OMEN\AppData\Local\Temp\pytest-of-OMEN\pytest-16\test_empty_title_returns_none0\catalog.xlsx
+2026-08-30 23:01:08,750 | INFO     | src.didar.product_catalog | didar: loaded 1 product catalog entries from C:\Users\OMEN\AppData\Local\Temp\pytest-of-OMEN\pytest-16\test_arabic_yeh_normalization_0\catalog.xlsx
+2026-08-30 23:01:08,796 | INFO     | src.didar.product_catalog | didar: loaded 1 product catalog entries from C:\Users\OMEN\AppData\Local\Temp\pytest-of-OMEN\pytest-16\test_persian_digits_in_catalog0\catalog.xlsx
+2026-08-30 23:01:08,849 | INFO     | src.didar.product_catalog | didar: loaded 1 product catalog entries from C:\Users\OMEN\AppData\Local\Temp\pytest-of-OMEN\pytest-16\test_float_code_normalized_to_0\catalog.xlsx
+2026-08-30 23:01:08,937 | WARNING  | src.reporting | health_check: tapsishop hasn't completed a poll cycle since never (stale)
+2026-08-30 23:01:09,004 | WARNING  | src.reporting | health_check: basalam hasn't completed a poll cycle since 2026-08-30T14:31:08.992379+00:00 (stale)
+2026-08-30 23:01:09,052 | WARNING  | src.reporting | health_check: snappshop has 1 order(s) stuck in retry
+2026-08-30 23:01:09,102 | WARNING  | src.reporting | health_check: tapsishop hasn't completed a poll cycle since never (stale)
+2026-08-30 23:01:09,105 | INFO     | src.reporting | daily report written to C:\Users\OMEN\AppData\Local\Temp\pytest-of-OMEN\pytest-16\test_daily_report_is_written_w0\2026-08-30.txt
+2026-08-30 23:01:09,369 | WARNING  | src.marketplaces.snappshop | snappshop: order field schema is UNCONFIRMED (no populated response has been inspected yet - only prose docs, no JSON example). Normalized output may be missing fields until this is verified - see src/marketplaces/snappshop.py module docstring.
+2026-08-30 23:01:09,370 | INFO     | src.marketplaces.snappshop | snappshop: fetched 0 new orders since 2026-08-01T00:00:00+00:00
+2026-08-30 23:01:09,387 | WARNING  | src.marketplaces.snappshop | snappshop: order field schema is UNCONFIRMED (no populated response has been inspected yet - only prose docs, no JSON example). Normalized output may be missing fields until this is verified - see src/marketplaces/snappshop.py module docstring.
+2026-08-30 23:01:09,389 | INFO     | src.marketplaces.snappshop | snappshop: fetched 2 new orders since 2026-08-01T00:00:00+00:00
+2026-08-30 23:01:09,475 | INFO     | src.sync_engine | sync_engine: completed poll of fake1 (1 orders seen)
+2026-08-30 23:01:09,529 | INFO     | src.sync_engine | sync_engine: completed poll of fake1 (1 orders seen)
+2026-08-30 23:01:09,580 | INFO     | src.sync_engine | sync_engine: completed poll of fake1 (1 orders seen)
+2026-08-30 23:01:09,589 | INFO     | src.sync_engine | sync_engine: completed poll of fake1 (1 orders seen)
+2026-08-30 23:01:09,624 | ERROR    | src.sync_engine | sync_engine: failed to fetch new orders from broken
+Traceback (most recent call last):
+  File "C:\Users\OMEN\Desktop\Local Marketplace Order Synchronization Platform\src\sync_engine.py", line 96, in _sync_source
+    orders = adapter.fetch_new_orders(since)
+  File "C:\Users\OMEN\Desktop\Local Marketplace Order Synchronization Platform\tests\test_sync_engine.py", line 52, in fetch_new_orders
+    raise RuntimeError(f"{self.name}: simulated fetch failure")
+RuntimeError: broken: simulated fetch failure
+2026-08-30 23:01:09,641 | INFO     | src.sync_engine | sync_engine: completed poll of healthy (1 orders seen)
+2026-08-30 23:01:09,677 | ERROR    | src.sync_engine | sync_engine: failed to sync fake1 order 1
+Traceback (most recent call last):
+  File "C:\Users\OMEN\Desktop\Local Marketplace Order Synchronization Platform\src\sync_engine.py", line 154, in _sync_one_order
+    deal_id = self._didar.sync_order(order)
+  File "C:\Users\OMEN\Desktop\Local Marketplace Order Synchronization Platform\tests\test_sync_engine.py", line 72, in sync_order
+    raise RuntimeError("simulated Didar failure")
+RuntimeError: simulated Didar failure
+2026-08-30 23:01:09,691 | INFO     | src.sync_engine | sync_engine: completed poll of fake1 (1 orders seen)
+2026-08-30 23:01:09,699 | INFO     | src.sync_engine | sync_engine: retry succeeded for fake1 order 1
+2026-08-30 23:01:09,734 | ERROR    | src.sync_engine | sync_engine: failed to sync fake1 order 1
+Traceback (most recent call last):
+  File "C:\Users\OMEN\Desktop\Local Marketplace Order Synchronization Platform\src\sync_engine.py", line 154, in _sync_one_order
+    deal_id = self._didar.sync_order(order)
+  File "C:\Users\OMEN\Desktop\Local Marketplace Order Synchronization Platform\tests\test_sync_engine.py", line 72, in sync_order
+    raise RuntimeError("simulated Didar failure")
+RuntimeError: simulated Didar failure
+2026-08-30 23:01:09,748 | INFO     | src.sync_engine | sync_engine: completed poll of fake1 (1 orders seen)
+2026-08-30 23:01:09,756 | INFO     | src.sync_engine | sync_engine: retry succeeded for fake1 order 1
+2026-08-30 23:01:09,793 | INFO     | src.sync_engine | sync_engine: completed poll of fake1 (0 orders seen)
+2026-08-30 23:01:09,829 | INFO     | src.sync_engine | sync_engine: completed poll of fake1 (0 orders seen)
+2026-08-30 23:01:09,857 | WARNING  | src.sync_engine | sync_engine: dropping fake1 order old-1 - created_at=2026-07-31T19:31:09.855772+00:00 is before the requested since=2026-08-30T19:31:09.855813+00:00 (the marketplace's own date filter returned an order older than what we asked for - see sync_engine.py module docstring)
+2026-08-30 23:01:09,863 | INFO     | src.sync_engine | sync_engine: completed poll of fake1 (0 orders seen)
+2026-08-30 23:01:09,912 | INFO     | src.sync_engine | sync_engine: completed poll of fake1 (1 orders seen)
+2026-08-30 23:01:09,932 | INFO     | src.marketplaces.tapsishop | tapsishop: fetched 1 new orders since 2026-08-30T18:31:09.931832+00:00
+2026-08-30 23:01:09,951 | INFO     | src.marketplaces.tapsishop | tapsishop: fetched 0 new orders since 2026-08-30T18:31:09.950079+00:00
+2026-08-30 23:01:09,970 | INFO     | src.marketplaces.tapsishop | tapsishop: fetched 0 new orders since 2026-08-30T18:31:09.969372+00:00
+2026-08-30 23:01:10,042 | INFO     | src.marketplaces.tapsishop | tapsishop: fetched 51 new orders since 2026-08-30T18:31:10.040487+00:00
+2026-08-30 23:01:10,061 | INFO     | src.marketplaces.tapsishop | tapsishop: fetched 0 new orders since 2026-08-10T19:31:10.059686+00:00
+2026-08-30 23:06:53,922 | INFO     | src.didar.product_client | didar: created product Code=SKU-A Title=گلدان خاتم ۳ CategoryId=cat-khatam -> Id=p-1
+2026-08-30 23:06:53,943 | INFO     | src.didar.product_client | didar: created product Code=SKU-A Title=گلدان خاتم ۳ CategoryId=cat-khatam -> Id=p-1
+2026-08-30 23:06:53,961 | INFO     | src.didar.product_client | didar: found existing product Code=SKU-A -> Id=existing-p-1 (skipping create)
+2026-08-30 23:06:53,980 | INFO     | src.didar.product_client | didar: no keyword in category_mapping.py matched item title 'یک محصول کاملا نامرتبط' - falling back to the default category
+2026-08-30 23:06:53,981 | INFO     | src.didar.product_client | didar: created product Code=SKU-A Title=یک محصول کاملا نامرتبط CategoryId=cat-default -> Id=p-created
+2026-08-30 23:06:54,000 | INFO     | src.didar.product_client | didar: no keyword in category_mapping.py matched item title 'یک محصول کاملا نامرتبط' - falling back to the default category
+2026-08-30 23:06:54,002 | INFO     | src.didar.product_client | didar: create raced with another writer for Code=SKU-RACE - recovered existing Id=recovered-id via search
+2026-08-30 23:06:54,021 | INFO     | src.didar.product_client | didar: no keyword in category_mapping.py matched item title 'یک محصول کاملا نامرتبط' - falling back to the default category
+2026-08-30 23:06:54,040 | INFO     | src.didar.product_client | didar: no keyword in category_mapping.py matched item title 'محصول بدون کلیدواژه مرتبط' - falling back to the default category
+2026-08-30 23:06:54,062 | INFO     | src.didar.product_client | didar: created product Code=SKU-C Title=جعبه خاتم CategoryId=cat-mina -> Id=p-2
+2026-08-30 23:06:54,082 | INFO     | src.didar.product_client | didar: no keyword in category_mapping.py matched item title 'یک محصول کاملا نامرتبط' - falling back to the default category
+2026-08-30 23:06:54,083 | INFO     | src.didar.product_client | didar: created product Code=SKU-D Title=یک محصول کاملا نامرتبط CategoryId=cat-default -> Id=p-3
+2026-08-30 23:09:14,187 | INFO     | src.didar.product_catalog | didar: loaded 3310 product catalog entries from data\didar_product_catalog.xlsx
+2026-08-30 23:10:41,385 | INFO     | src.didar.product_catalog | didar: loaded 3310 product catalog entries from data\didar_product_catalog.xlsx
+2026-08-30 23:23:05,062 | INFO     | src.marketplaces.digikala | digikala: fetched 1 new orders since 2026-08-01T00:00:00+00:00
+2026-08-30 23:23:05,092 | INFO     | src.marketplaces.digikala | digikala: fetched 51 new orders since 2026-08-01T00:00:00+00:00
+2026-08-30 23:23:05,116 | INFO     | src.marketplaces.digikala | digikala: fetched 0 new orders since 2026-08-01T00:00:00+00:00
+2026-08-30 23:23:05,141 | INFO     | src.marketplaces.digikala | digikala: fetched 100 new orders since 2026-08-01T00:00:00+00:00
+2026-08-30 23:23:05,170 | INFO     | src.marketplaces.digikala | digikala: access token expired (401), refreshing
+2026-08-30 23:23:05,172 | INFO     | src.marketplaces.digikala | digikala: access token refreshed, new expiry=2026-08-19 00:00:00
+2026-08-30 23:23:05,173 | INFO     | src.marketplaces.digikala | digikala: fetched 0 new orders since 2026-08-01T00:00:00+00:00

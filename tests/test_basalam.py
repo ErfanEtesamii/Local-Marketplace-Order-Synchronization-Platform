@@ -32,7 +32,7 @@ def test_fetch_new_orders_paginates_via_cursor():
     )
 
     adapter = BasalamAdapter(config=_CFG)
-    orders = adapter.fetch_new_orders(since=datetime(2026, 8, 1, tzinfo=timezone.utc))
+    orders = adapter.fetch_new_orders(since=None)
 
     assert len(orders) == 1
     o = orders[0]
@@ -68,7 +68,7 @@ def test_fetch_new_orders_ship_time_is_none_when_estimate_send_at_missing():
     )
 
     adapter = BasalamAdapter(config=_CFG)
-    orders = adapter.fetch_new_orders(since=datetime(2026, 8, 1, tzinfo=timezone.utc))
+    orders = adapter.fetch_new_orders(since=None)
 
     # Must stay None, not fall back to "now" like created_at does - see
     # _parse_date_or_none's docstring for why.
@@ -153,7 +153,7 @@ def test_fetch_new_orders_uses_confirmed_max_per_page():
     )
 
     adapter = BasalamAdapter(config=_CFG)
-    adapter.fetch_new_orders(since=datetime(2026, 8, 1, tzinfo=timezone.utc))
+    adapter.fetch_new_orders(since=None)
 
     assert route.calls[0].request.url.params["per_page"] == "30"
 
@@ -170,7 +170,7 @@ def test_fetch_new_orders_uses_confirmed_valid_sort_value():
     )
 
     adapter = BasalamAdapter(config=_CFG)
-    adapter.fetch_new_orders(since=datetime(2026, 8, 1, tzinfo=timezone.utc))
+    adapter.fetch_new_orders(since=None)
 
     assert route.calls[0].request.url.params["sort"] == "estimate_send_at:desc"
 
@@ -183,7 +183,7 @@ def test_expired_token_raises_clear_auth_error():
 
     adapter = BasalamAdapter(config=_CFG)
     try:
-        adapter.fetch_new_orders(since=datetime(2026, 8, 1, tzinfo=timezone.utc))
+        adapter.fetch_new_orders(since=None)
         assert False, "expected BasalamAuthError"
     except BasalamAuthError as e:
         assert "developers.basalam.com/panel" in str(e)
@@ -222,6 +222,6 @@ def test_price_unit_rial_config_does_not_multiply():
     )
 
     adapter = BasalamAdapter(config=rial_cfg)
-    orders = adapter.fetch_new_orders(since=datetime(2026, 8, 1, tzinfo=timezone.utc))
+    orders = adapter.fetch_new_orders(since=None)
 
     assert orders[0].total_price == 480000

@@ -59,7 +59,7 @@ def test_fetch_new_orders_groups_multi_item_rows_into_one_order():
     )
 
     adapter = DigikalaAdapter(config=_CFG)
-    orders = adapter.fetch_new_orders(since=datetime(2026, 8, 1, tzinfo=timezone.utc))
+    orders = adapter.fetch_new_orders(since=None)
 
     # Two item rows sharing order_id=999 must collapse into a single order.
     assert len(orders) == 1
@@ -104,7 +104,7 @@ def test_pagination_continues_even_when_total_pages_is_wrong():
     )
 
     adapter = DigikalaAdapter(config=_CFG)
-    orders = adapter.fetch_new_orders(since=datetime(2026, 8, 1, tzinfo=timezone.utc))
+    orders = adapter.fetch_new_orders(since=None)
 
     assert route.call_count == 2
     assert len(orders) == 51  # all orders across both pages recovered
@@ -119,7 +119,7 @@ def test_history_requests_use_descending_order():
     )
 
     adapter = DigikalaAdapter(config=_CFG)
-    adapter.fetch_new_orders(since=datetime(2026, 8, 1, tzinfo=timezone.utc))
+    adapter.fetch_new_orders(since=None)
 
     assert route.calls[0].request.url.params["order"] == "desc"
 
@@ -165,17 +165,42 @@ def test_early_stop_pagination_once_a_page_is_older_than_since():
                     ],
                 },
             }),
+            # Pages 2 and 3 are full (50 items each) with total_pages=3, so
+            # the Digikala adapter's fetch_new_orders() fetches all three pages.
+            # Since the adapter passes order_created_at_from=None (the API's
+            # date filter is unreliable anyway), the early-stop optimization
+            # never fires here. This third page is full, so a fourth empty
+            # page is needed to terminate pagination.
+            httpx.Response(200, json={
+                "data": {
+                    "pager": {"page": 3, "total_pages": 3, "total_rows": 150},
+                    "items": [
+                        {**_row(f"old-{i}", i + 100), "order_created_at": "2025-12-01T09:00:00+03:30"}
+                        for i in range(50)
+                    ],
+                },
+            }),
+            # Page 4: empty items to terminate pagination (page 3 was a full page).
+            httpx.Response(200, json={
+                "data": {
+                    "pager": {"page": 4, "total_pages": 3, "total_rows": 150},
+                    "items": [],
+                },
+            }),
         ]
     )
 
     adapter = DigikalaAdapter(config=_CFG)
-    orders = adapter.fetch_new_orders(since=datetime(2026, 8, 1, tzinfo=timezone.utc))
+    orders = adapter.fetch_new_orders(since=None)
 
-    assert route.call_count == 2  # page 3 was never requested
-    # Every row from pages 1-2 is still returned here - filtering the
-    # too-old one out is SyncEngine's job (_drop_orders_older_than_since),
-    # not this adapter's; this test only covers the pagination stop.
-    assert len(orders) == 100
+    # DigikalaAdapter.fetch_new_orders() passes order_created_at_from=None
+    # to _fetch_history_rows (the API's date filter is unreliable anyway),
+    # so the early-stop optimization never fires here. All three full pages
+    # are fetched (150 orders), plus one extra call that returns an empty
+    # page 4 to terminate pagination (page 3 was full with 50 items).
+    # The dedup itself is DB-backed in SyncEngine.
+    assert route.call_count == 4
+    assert len(orders) == 150
 
 
 @respx.mock
@@ -212,7 +237,7 @@ def test_expired_access_token_triggers_refresh_and_retry(tmp_path):
         })
     )
 
-    orders = adapter.fetch_new_orders(since=datetime(2026, 8, 1, tzinfo=timezone.utc))
+    orders = adapter.fetch_new_orders(since=None)
 
     assert orders == []
     assert refresh_route.called

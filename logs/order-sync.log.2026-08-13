@@ -1,0 +1,21 @@
+2026-08-13 13:23:09,823 | INFO     | src.marketplaces.digikala | digikala: fetched 1 new orders since 2026-08-01T00:00:00+00:00
+2026-08-13 13:23:10,211 | INFO     | src.marketplaces.digikala | digikala: fetched 51 new orders since 2026-08-01T00:00:00+00:00
+2026-08-13 13:23:10,590 | INFO     | src.marketplaces.tapsishop | tapsishop: fetched 1 new orders since 2026-08-01T00:00:00+00:00
+2026-08-13 13:23:15,173 | INFO     | src.marketplaces.tapsishop | tapsishop: fetched 51 new orders since 2026-08-01T00:00:00+00:00
+2026-08-13 13:25:42,274 | INFO     | src.marketplaces.basalam | basalam: fetched 1 new orders since 2026-08-01T00:00:00+00:00
+2026-08-13 13:25:43,454 | INFO     | src.marketplaces.digikala | digikala: fetched 1 new orders since 2026-08-01T00:00:00+00:00
+2026-08-13 13:25:43,833 | INFO     | src.marketplaces.digikala | digikala: fetched 51 new orders since 2026-08-01T00:00:00+00:00
+2026-08-13 13:25:44,223 | INFO     | src.marketplaces.tapsishop | tapsishop: fetched 1 new orders since 2026-08-01T00:00:00+00:00
+2026-08-13 13:25:48,732 | INFO     | src.marketplaces.tapsishop | tapsishop: fetched 51 new orders since 2026-08-01T00:00:00+00:00
+2026-08-13 13:36:34,861 | INFO     | src.marketplaces.basalam | basalam: fetched 1 new orders since 2026-08-01T00:00:00+00:00
+2026-08-13 13:36:36,016 | INFO     | src.didar.contact_client | didar: upserted contact CustomerCode=tapsishop-999 -> Id=c-123
+2026-08-13 13:36:36,400 | INFO     | src.didar.contact_client | didar: upserted contact CustomerCode=x -> Id=c-1
+2026-08-13 13:36:36,783 | INFO     | src.didar.contact_client | didar: upserted contact CustomerCode=x -> Id=c-flat
+2026-08-13 13:36:37,562 | INFO     | src.didar.deal_client | didar: created deal for tapsishop order 999 -> Id=d-1
+2026-08-13 13:36:38,317 | INFO     | src.didar.contact_client | didar: upserted contact CustomerCode=tapsishop-999 -> Id=c-42
+2026-08-13 13:36:38,318 | INFO     | src.didar.deal_client | didar: created deal for tapsishop order 999 -> Id=d-42
+2026-08-13 13:36:38,318 | INFO     | src.didar.service | didar: synced tapsishop order 999 -> contact=c-42 deal=d-42
+2026-08-13 13:36:38,696 | INFO     | src.marketplaces.digikala | digikala: fetched 1 new orders since 2026-08-01T00:00:00+00:00
+2026-08-13 13:36:39,077 | INFO     | src.marketplaces.digikala | digikala: fetched 51 new orders since 2026-08-01T00:00:00+00:00
+2026-08-13 13:36:39,457 | INFO     | src.marketplaces.tapsishop | tapsishop: fetched 1 new orders since 2026-08-01T00:00:00+00:00
+2026-08-13 13:36:43,969 | INFO     | src.marketplaces.tapsishop | tapsishop: fetched 51 new orders since 2026-08-01T00:00:00+00:00

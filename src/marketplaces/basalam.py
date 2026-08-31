@@ -33,7 +33,7 @@ issue a fresh token from the developer panel.
 """
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 
 import httpx
@@ -108,13 +108,13 @@ class BasalamAdapter(MarketplaceAdapter):
         raise_for_status_with_body(resp)
         return resp.json()
 
-    def fetch_new_orders(self, since: datetime) -> list[NormalizedOrder]:
+    def fetch_new_orders(self, since: datetime | None) -> list[NormalizedOrder]:
         orders: list[NormalizedOrder] = []
         cursor = None
 
         while True:
             params = {
-                "created_at[gte]": since.astimezone(timezone.utc).isoformat(),
+                "created_at[gte]": (since or datetime.now(timezone.utc) - timedelta(hours=5)).astimezone(timezone.utc).isoformat(),
                 # Confirmed via live 422s ("مرتب سازی معتبر نمی باشد"):
                 # created_at:desc and id:desc are both rejected. Only
                 # estimate_send_at:desc (the documented default) works -
@@ -138,7 +138,7 @@ class BasalamAdapter(MarketplaceAdapter):
             if not cursor or not raw_parcels:
                 break
 
-        log.info("basalam: fetched %d new orders since %s", len(orders), since.isoformat())
+        log.info("basalam: fetched %d orders", len(orders))
         return orders
 
     def fetch_order_detail(self, source_order_id: str) -> NormalizedOrder:

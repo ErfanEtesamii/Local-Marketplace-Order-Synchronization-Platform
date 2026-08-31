@@ -24,7 +24,7 @@ def test_fetch_new_orders_sends_confirmed_auth_headers():
     )
 
     adapter = SnappShopAdapter(config=_CFG)
-    adapter.fetch_new_orders(since=datetime(2026, 8, 1, tzinfo=timezone.utc))
+    adapter.fetch_new_orders(since=None)
 
     request = route.calls[0].request
     assert request.headers["Authorization"] == "Bearer test-token"
@@ -55,7 +55,7 @@ def test_fetch_new_orders_paginates_via_cursor_and_has_more():
     )
 
     adapter = SnappShopAdapter(config=_CFG)
-    orders = adapter.fetch_new_orders(since=datetime(2026, 8, 1, tzinfo=timezone.utc))
+    orders = adapter.fetch_new_orders(since=None)
 
     assert route.call_count == 2
     assert len(orders) == 2

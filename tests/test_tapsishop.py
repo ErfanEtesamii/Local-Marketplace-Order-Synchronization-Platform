@@ -22,12 +22,6 @@ def _no_real_sleep(monkeypatch):
     monkeypatch.setattr("src.marketplaces.tapsishop.time.sleep", lambda seconds: None)
 
 
-def _recent_since(**kwargs) -> datetime:
-    """A `since` that's always well within the confirmed 7-day window
-    cap, regardless of when the suite actually runs."""
-    return datetime.now(timezone.utc) - timedelta(**(kwargs or {"hours": 1}))
-
-
 @respx.mock
 def test_fetch_new_orders_paginates_and_normalizes():
     respx.post("https://vendorgw.tapsi.shop/Web/Hub/vendors/v1/orders").mock(
@@ -54,7 +48,7 @@ def test_fetch_new_orders_paginates_and_normalizes():
     )
 
     adapter = TapsiShopAdapter(config=_CFG)
-    orders = adapter.fetch_new_orders(since=_recent_since())
+    orders = adapter.fetch_new_orders(since=None)
 
     assert len(orders) == 1
     o = orders[0]
@@ -77,7 +71,7 @@ def test_request_body_includes_confirmed_date_filter_type():
     )
 
     adapter = TapsiShopAdapter(config=_CFG)
-    adapter.fetch_new_orders(since=_recent_since())
+    adapter.fetch_new_orders(since=None)
 
     assert b'"dateFilterTypeCode":1' in route.calls[0].request.content
 
@@ -95,7 +89,7 @@ def test_request_body_filters_to_active_orders_only():
     )
 
     adapter = TapsiShopAdapter(config=_CFG)
-    adapter.fetch_new_orders(since=_recent_since())
+    adapter.fetch_new_orders(since=None)
 
     assert b'"orderStatusId":[4]' in route.calls[0].request.content
 
@@ -146,7 +140,7 @@ def test_client_errors_are_not_retried():
 
     adapter = TapsiShopAdapter(config=_CFG)
     with pytest.raises(httpx.HTTPStatusError):
-        adapter.fetch_new_orders(since=_recent_since())
+        adapter.fetch_new_orders(since=None)
 
     assert route.call_count == 1  # no retries for a 4xx client error
 
@@ -159,7 +153,7 @@ def test_server_errors_are_retried():
 
     adapter = TapsiShopAdapter(config=_CFG)
     with pytest.raises(httpx.HTTPStatusError):
-        adapter.fetch_new_orders(since=_recent_since())
+        adapter.fetch_new_orders(since=None)
 
     assert route.call_count == 3  # stop_after_attempt(3)
 
@@ -183,7 +177,7 @@ def test_pagination_continues_even_when_total_items_is_wrong():
     )
 
     adapter = TapsiShopAdapter(config=_CFG)
-    orders = adapter.fetch_new_orders(since=_recent_since())
+    orders = adapter.fetch_new_orders(since=None)
 
     assert route.call_count == 2
     assert len(orders) == 51
@@ -200,8 +194,9 @@ def test_long_date_range_is_split_into_7_day_windows():
         return_value=httpx.Response(200, json={"data": {"totalItems": 0, "items": []}})
     )
 
+    now = datetime.now(timezone.utc)
     adapter = TapsiShopAdapter(config=_CFG)
-    adapter.fetch_new_orders(since=_recent_since(days=20))
+    adapter.fetch_new_orders(since=now - timedelta(days=20))
 
     # ceil(20 / 7) = 3 separate windows
     assert route.call_count == 3

@@ -47,7 +47,7 @@ by inspecting wp-admin directly).
 """
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from decimal import Decimal, InvalidOperation
 
 import httpx
@@ -88,7 +88,7 @@ class FarazHonarAdapter(MarketplaceAdapter):
         raise_for_status_with_body(resp)
         return resp
 
-    def fetch_new_orders(self, since: datetime) -> list[NormalizedOrder]:
+    def fetch_new_orders(self, since: datetime | None) -> list[NormalizedOrder]:
         orders: list[NormalizedOrder] = []
         page = 1
         total_pages = 1
@@ -97,7 +97,7 @@ class FarazHonarAdapter(MarketplaceAdapter):
             resp = self._get(
                 "/wp-json/wc/v3/orders",
                 params={
-                    "after": since.astimezone(timezone.utc).isoformat(),
+                    "after": (since or datetime.now(timezone.utc) - timedelta(hours=5)).astimezone(timezone.utc).isoformat(),
                     "per_page": 100,
                     "page": page,
                     "orderby": "date",
@@ -111,7 +111,7 @@ class FarazHonarAdapter(MarketplaceAdapter):
             total_pages = int(resp.headers.get("X-WP-TotalPages", 1))
             page += 1
 
-        log.info("farazhonar: fetched %d new orders since %s", len(orders), since.isoformat())
+        log.info("farazhonar: fetched %d orders", len(orders))
         return orders
 
     def fetch_order_detail(self, source_order_id: str) -> NormalizedOrder:

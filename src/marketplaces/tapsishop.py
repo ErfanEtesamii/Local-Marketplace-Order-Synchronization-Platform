@@ -105,17 +105,21 @@ class TapsiShopAdapter(MarketplaceAdapter):
         raise_for_status_with_body(resp)
         return resp.json()
 
-    def fetch_new_orders(self, since: datetime) -> list[NormalizedOrder]:
+    def fetch_new_orders(self, since: datetime | None) -> list[NormalizedOrder]:
         orders: list[NormalizedOrder] = []
         now = datetime.now(timezone.utc)
-        window_start = since.astimezone(timezone.utc)
+        # When since is None, default to the FETCH_WINDOW_HOURS lookback
+        # so that orders are always fetched from a recent window.
+        # The sync engine relies on ID-based dedup to prevent duplicates
+        # across repeated runs.
+        window_start = (since or now - timedelta(hours=5)).astimezone(timezone.utc)
 
         while window_start < now:
             window_end = min(window_start + _MAX_WINDOW, now)
             orders.extend(self._fetch_orders_in_window(window_start, window_end))
             window_start = window_end
 
-        log.info("tapsishop: fetched %d new orders since %s", len(orders), since.isoformat())
+        log.info("tapsishop: fetched %d orders", len(orders))
         return orders
 
     def _fetch_orders_in_window(

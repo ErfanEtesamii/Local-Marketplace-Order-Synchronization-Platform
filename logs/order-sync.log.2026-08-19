@@ -1,0 +1,64 @@
+2026-08-19 01:36:40,429 | INFO     | src.marketplaces.tapsishop | tapsishop: fetched 1 new orders since 2026-08-01T00:00:00+00:00
+2026-08-19 01:36:44,949 | INFO     | src.marketplaces.tapsishop | tapsishop: fetched 51 new orders since 2026-08-01T00:00:00+00:00
+2026-08-19 12:17:11,715 | INFO     | src.marketplaces.tapsishop | tapsishop: fetched 101 new orders since 2026-08-13T08:46:58.505360+00:00
+2026-08-19 12:21:54,353 | INFO     | src.marketplaces.tapsishop | tapsishop: fetched 101 new orders since 2026-08-13T08:51:42.874960+00:00
+2026-08-19 12:24:10,570 | INFO     | src.marketplaces.tapsishop | tapsishop: fetched 101 new orders since 2026-08-13T08:53:59.190993+00:00
+2026-08-19 12:24:17,750 | INFO     | src.didar.contact_client | didar: upserted contact CustomerCode=tapsishop-1539551304270446592 -> Id=73b10481-49db-447b-b510-56f034d23d73
+2026-08-19 12:24:19,246 | INFO     | src.didar.deal_client | didar: created deal for tapsishop order 1539551304270446592 -> Id=72026046-4a9c-49e8-ac63-3c086551d980
+2026-08-19 12:24:19,246 | INFO     | src.didar.service | didar: synced tapsishop order 1539551304270446592 -> contact=73b10481-49db-447b-b510-56f034d23d73 deal=72026046-4a9c-49e8-ac63-3c086551d980
+2026-08-19 12:28:17,855 | INFO     | src.marketplaces.basalam | basalam: fetched 1 new orders since 2026-08-01T00:00:00+00:00
+2026-08-19 12:28:19,049 | INFO     | src.didar.contact_client | didar: upserted contact CustomerCode=tapsishop-999 -> Id=c-123
+2026-08-19 12:28:19,438 | INFO     | src.didar.contact_client | didar: upserted contact CustomerCode=x -> Id=c-1
+2026-08-19 12:28:19,828 | INFO     | src.didar.contact_client | didar: upserted contact CustomerCode=x -> Id=c-flat
+2026-08-19 12:28:20,614 | INFO     | src.didar.contact_client | didar: upserted contact CustomerCode=tapsishop-999 -> Id=c-1
+2026-08-19 12:28:21,000 | INFO     | src.didar.contact_client | didar: upserted contact CustomerCode=basalam-42 -> Id=c-1
+2026-08-19 12:28:21,390 | INFO     | src.didar.deal_client | didar: created deal for tapsishop order 999 -> Id=d-1
+2026-08-19 12:28:22,180 | INFO     | src.didar.contact_client | didar: upserted contact CustomerCode=tapsishop-999 -> Id=c-42
+2026-08-19 12:28:22,181 | INFO     | src.didar.deal_client | didar: created deal for tapsishop order 999 -> Id=d-42
+2026-08-19 12:28:22,181 | INFO     | src.didar.service | didar: synced tapsishop order 999 -> contact=c-42 deal=d-42
+2026-08-19 12:28:22,572 | INFO     | src.marketplaces.digikala | digikala: fetched 1 new orders since 2026-08-01T00:00:00+00:00
+2026-08-19 12:28:22,962 | INFO     | src.marketplaces.digikala | digikala: fetched 51 new orders since 2026-08-01T00:00:00+00:00
+2026-08-19 12:28:23,358 | INFO     | src.marketplaces.digikala | digikala: access token expired (401), refreshing
+2026-08-19 12:28:23,360 | INFO     | src.marketplaces.digikala | digikala: access token refreshed, new expiry=2026-08-19 00:00:00
+2026-08-19 12:28:23,361 | INFO     | src.marketplaces.digikala | digikala: fetched 0 new orders since 2026-08-01T00:00:00+00:00
+2026-08-19 12:28:24,525 | INFO     | src.marketplaces.farazhonar | farazhonar: fetched 1 new orders since 2026-08-01T00:00:00+00:00
+2026-08-19 12:28:24,917 | INFO     | src.marketplaces.farazhonar | farazhonar: fetched 2 new orders since 2026-08-01T00:00:00+00:00
+2026-08-19 12:28:25,695 | WARNING  | src.marketplaces.snappshop | snappshop: order field schema is UNCONFIRMED (no populated response has been inspected yet - only prose docs, no JSON example). Normalized output may be missing fields until this is verified - see src/marketplaces/snappshop.py module docstring.
+2026-08-19 12:28:25,696 | INFO     | src.marketplaces.snappshop | snappshop: fetched 0 new orders since 2026-08-01T00:00:00+00:00
+2026-08-19 12:28:26,080 | WARNING  | src.marketplaces.snappshop | snappshop: order field schema is UNCONFIRMED (no populated response has been inspected yet - only prose docs, no JSON example). Normalized output may be missing fields until this is verified - see src/marketplaces/snappshop.py module docstring.
+2026-08-19 12:28:26,082 | INFO     | src.marketplaces.snappshop | snappshop: fetched 2 new orders since 2026-08-01T00:00:00+00:00
+2026-08-19 12:28:26,905 | INFO     | src.sync_engine | sync_engine: completed poll of fake1 (1 orders seen)
+2026-08-19 12:28:26,947 | INFO     | src.sync_engine | sync_engine: completed poll of fake1 (1 orders seen)
+2026-08-19 12:28:26,989 | INFO     | src.sync_engine | sync_engine: completed poll of fake1 (1 orders seen)
+2026-08-19 12:28:26,998 | INFO     | src.sync_engine | sync_engine: completed poll of fake1 (1 orders seen)
+2026-08-19 12:28:27,026 | ERROR    | src.sync_engine | sync_engine: failed to fetch new orders from broken
+Traceback (most recent call last):
+  File "C:\Users\OMEN\Desktop\Local Marketplace Order Synchronization Platform\src\sync_engine.py", line 67, in _sync_source
+    orders = adapter.fetch_new_orders(since)
+  File "C:\Users\OMEN\Desktop\Local Marketplace Order Synchronization Platform\tests\test_sync_engine.py", line 39, in fetch_new_orders
+    raise RuntimeError(f"{self.name}: simulated fetch failure")
+RuntimeError: broken: simulated fetch failure
+2026-08-19 12:28:27,042 | INFO     | src.sync_engine | sync_engine: completed poll of healthy (1 orders seen)
+2026-08-19 12:28:27,070 | ERROR    | src.sync_engine | sync_engine: failed to sync fake1 order 1
+Traceback (most recent call last):
+  File "C:\Users\OMEN\Desktop\Local Marketplace Order Synchronization Platform\src\sync_engine.py", line 89, in _sync_one_order
+    deal_id = self._didar.sync_order(order)
+  File "C:\Users\OMEN\Desktop\Local Marketplace Order Synchronization Platform\tests\test_sync_engine.py", line 59, in sync_order
+    raise RuntimeError("simulated Didar failure")
+RuntimeError: simulated Didar failure
+2026-08-19 12:28:27,084 | INFO     | src.sync_engine | sync_engine: completed poll of fake1 (1 orders seen)
+2026-08-19 12:28:27,093 | INFO     | src.sync_engine | sync_engine: retry succeeded for fake1 order 1
+2026-08-19 12:28:27,123 | ERROR    | src.sync_engine | sync_engine: failed to sync fake1 order 1
+Traceback (most recent call last):
+  File "C:\Users\OMEN\Desktop\Local Marketplace Order Synchronization Platform\src\sync_engine.py", line 89, in _sync_one_order
+    deal_id = self._didar.sync_order(order)
+  File "C:\Users\OMEN\Desktop\Local Marketplace Order Synchronization Platform\tests\test_sync_engine.py", line 59, in sync_order
+    raise RuntimeError("simulated Didar failure")
+RuntimeError: simulated Didar failure
+2026-08-19 12:28:27,139 | INFO     | src.sync_engine | sync_engine: completed poll of fake1 (1 orders seen)
+2026-08-19 12:28:27,149 | INFO     | src.sync_engine | sync_engine: retry succeeded for fake1 order 1
+2026-08-19 12:28:27,182 | INFO     | src.sync_engine | sync_engine: completed poll of fake1 (0 orders seen)
+2026-08-19 12:28:27,574 | INFO     | src.marketplaces.tapsishop | tapsishop: fetched 1 new orders since 2026-08-19T07:58:27.573886+00:00
+2026-08-19 12:28:27,958 | INFO     | src.marketplaces.tapsishop | tapsishop: fetched 0 new orders since 2026-08-19T07:58:27.957069+00:00
+2026-08-19 12:28:29,506 | INFO     | src.marketplaces.tapsishop | tapsishop: fetched 51 new orders since 2026-08-19T07:58:29.505010+00:00
+2026-08-19 12:28:29,889 | INFO     | src.marketplaces.tapsishop | tapsishop: fetched 0 new orders since 2026-07-30T08:58:29.887392+00:00

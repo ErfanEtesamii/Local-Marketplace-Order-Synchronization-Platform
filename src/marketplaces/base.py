@@ -76,6 +76,11 @@ class NormalizedOrder:
     # attachment is uploaded for that order (not an error).
     product_image_url: str | None = None
 
+    # Shipping cost for the order. This field is needed by the Telegram
+    # notification to display shipping information. Some adapters may not
+    # expose this field, in which case it will be None.
+    shipping_cost: Decimal | None = None
+
 
 class MarketplaceAdapter(ABC):
     """
@@ -89,9 +94,13 @@ class MarketplaceAdapter(ABC):
     name: str
 
     @abstractmethod
-    def fetch_new_orders(self, since: datetime) -> list[NormalizedOrder]:
+    def fetch_new_orders(self, since: datetime | None) -> list[NormalizedOrder]:
         """
         Return all orders created at or after `since`, already normalized.
+
+        If `since` is None, the adapter should fetch orders from a reasonable
+        recent window (typically the last 5 hours) - the Sync Engine handles
+        sliding window logic and deduplication via the repository.
 
         Implementations own their own pagination - callers just get the
         full list back. Must raise on transport/auth errors rather than

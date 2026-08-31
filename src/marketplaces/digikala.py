@@ -172,14 +172,23 @@ class DigikalaAdapter(MarketplaceAdapter):
         raise_for_status_with_body(resp)
         return resp.json()
 
-    def fetch_new_orders(self, since: datetime) -> list[NormalizedOrder]:
+    def fetch_new_orders(self, since: datetime | None) -> list[NormalizedOrder]:
+        # The sync_engine now passes `since = now - 5h` and also drops
+        # orders outside the window client-side. We keep passing None for
+        # order_created_at_from so the adapter can use full-history mode
+        # (its API does not filter server-side) while still letting
+        # SyncEngine._sync_source enforce the window below. We DO pass
+        # order_type so that cancelled/failed orders can be mapped to
+        # status strings and filtered by the central filter in
+        # sync_engine.py.
+        now = datetime.now(timezone.utc)
         rows = self._fetch_history_rows(
-            order_created_at_from=since,
-            order_created_at_to=datetime.now(timezone.utc),
-            order_type=None,  # fetch all order types; sync_engine filters cancelled/failed
+            order_created_at_from=None,  # fetch all orders (API returns all; client-side window drops old)
+            order_created_at_to=now,
+            order_type=None,  # sync_engine handles order_type filtering via status mapping
         )
         orders = self._group_rows_into_orders(rows, order_type=None)
-        log.info("digikala: fetched %d new orders since %s", len(orders), since.isoformat())
+        log.info("digikala: fetched %d orders for sync window", len(orders))
         return orders
 
     def fetch_order_detail(self, source_order_id: str) -> NormalizedOrder:

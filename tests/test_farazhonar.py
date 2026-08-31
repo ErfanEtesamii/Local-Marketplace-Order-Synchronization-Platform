@@ -38,7 +38,7 @@ def test_fetch_new_orders_uses_basic_auth_and_includes_line_items_directly():
     )
 
     adapter = FarazHonarAdapter(config=_CFG)
-    orders = adapter.fetch_new_orders(since=datetime(2026, 8, 1, tzinfo=timezone.utc))
+    orders = adapter.fetch_new_orders(since=None)
 
     assert len(orders) == 1
     order = orders[0]
@@ -66,7 +66,7 @@ def test_fetch_new_orders_paginates_using_wp_total_pages_header():
     )
 
     adapter = FarazHonarAdapter(config=_CFG)
-    orders = adapter.fetch_new_orders(since=datetime(2026, 8, 1, tzinfo=timezone.utc))
+    orders = adapter.fetch_new_orders(since=None)
 
     assert route.call_count == 2
     assert {o.source_order_id for o in orders} == {"501", "502"}
