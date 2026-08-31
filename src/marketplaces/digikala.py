@@ -203,6 +203,39 @@ class DigikalaAdapter(MarketplaceAdapter):
                 return order
         raise ValueError(f"digikala: order {source_order_id} not found in history")
 
+    def fetch_sbs_customer_details(self, shipment_id: str) -> dict:
+        """Fetch customer details for a Digikala Ship-by-Seller (SBS) order.
+
+        Calls GET /open-api/v1/ship-by-seller-orders/customer/{shipment_id}
+        with Bearer token and extracts customer data (name, phoneNumber,
+        state, city, address, postalCode).
+
+        Returns a dict with keys:
+            customer_full_name: str | None
+            customer_mobile: str | None
+
+        On any error (transport, auth, or malformed response), returns a dict
+        with both values as None so the caller can fall back to a synthetic
+        contact name without breaking the sync flow.
+        """
+        path = f"/open-api/v1/ship-by-seller-orders/customer/{shipment_id}"
+        try:
+            payload = self._get(path, params={})
+            data = payload.get("data", {}) or {}
+            full_name = data.get("name") or None
+            mobile = data.get("phoneNumber") or None
+            log.info(
+                "digikala: fetched SBS customer details for shipment %s (name=%r, mobile=%r)",
+                shipment_id, full_name, mobile,
+            )
+            return {"customer_full_name": full_name, "customer_mobile": mobile}
+        except Exception:
+            log.exception(
+                "digikala: failed to fetch SBS customer details for shipment %s",
+                shipment_id,
+            )
+            return {"customer_full_name": None, "customer_mobile": None}
+
     def _fetch_history_rows(
         self,
         order_created_at_from: datetime | None = None,
@@ -298,6 +331,8 @@ class DigikalaAdapter(MarketplaceAdapter):
                 status_val = "refunded"
             else:
                 status_val = str(status.get("title") or status.get("key") or "unknown")
+            # Extract shipment_id from the first row (all rows in group should have same shipment_id)
+            shipment_id = str(first.get("order_shipment_id")) if first.get("order_shipment_id") else None
             orders.append(
                 NormalizedOrder(
                     source=self.name,
@@ -309,6 +344,7 @@ class DigikalaAdapter(MarketplaceAdapter):
                     items=items,
                     customer_full_name=None,  # not requested for this project - see module docstring
                     customer_mobile=None,
+                    shipment_id=shipment_id,
                 )
             )
         return orders

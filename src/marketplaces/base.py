@@ -59,6 +59,11 @@ class NormalizedOrder:
     customer_full_name: str | None = None
     customer_mobile: str | None = None
 
+    # Shipment ID from the marketplace's SBS API, used to fetch customer
+    # details via the /ship-by-seller-orders/customer/{shipment_id} endpoint.
+    # None if the source doesn't expose this field or isn't an SBS order.
+    shipment_id: str | None = None
+
     # When the order was actually shipped (or the marketplace's committed
     # "must ship by" deadline - whichever a given adapter's API exposes).
     # This is the single anchor every post-sale checklist due-date (new

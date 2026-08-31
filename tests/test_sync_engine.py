@@ -30,13 +30,17 @@ class FakeAdapter(MarketplaceAdapter):
     """In-memory stand-in for a real marketplace adapter - lets us test
     orchestration logic (dedupe, retries, isolation) without any HTTP."""
 
-    def __init__(self, name: str, list_orders=None, details=None, fail_fetch=False):
+    def __init__(self, name: str, list_orders=None, details=None, fail_fetch=False,
+                 sbs_customer_details=None, sbs_customer_details_fail=False):
         self.name = name
         self._list_orders = list_orders or []
         self._details = details or {}
         self._fail_fetch = fail_fetch
+        self._sbs_customer_details = sbs_customer_details or {}
+        self._sbs_customer_details_fail = sbs_customer_details_fail
         self.fetch_new_orders_calls = 0
         self.fetch_order_detail_calls = 0
+        self.fetch_sbs_customer_details_calls: list[str] = []
         self.received_since_values = []
 
     def fetch_new_orders(self, since):
@@ -49,6 +53,15 @@ class FakeAdapter(MarketplaceAdapter):
     def fetch_order_detail(self, source_order_id):
         self.fetch_order_detail_calls += 1
         return self._details[source_order_id]
+
+    def fetch_sbs_customer_details(self, shipment_id: str) -> dict:
+        self.fetch_sbs_customer_details_calls.append(shipment_id)
+        if self._sbs_customer_details_fail:
+            raise RuntimeError("simulated SBS customer details fetch failure")
+        return self._sbs_customer_details.get(shipment_id, {
+            "customer_full_name": None,
+            "customer_mobile": None,
+        })
 
 
 class FakeDidarService:
@@ -371,3 +384,253 @@ def test_orders_older_than_5_hours_are_dropped_client_side(repo, synced_ids_file
     content = synced_ids_file.read_text(encoding='utf-8')
     ids = set(_json.loads(content)) if content.strip() else set()
     assert "fake1-old-order-1" not in ids
+
+
+def test_digikala_sbs_enrichment_adds_customer_name_and_mobile(repo, synced_ids_file):
+    """Digikala SBS orders with shipment_id get enriched with customer data
+    from fetch_sbs_customer_details before syncing to Didar."""
+    # Create a Digikala order with shipment_id but no customer name
+    digikala_order = NormalizedOrder(
+        source="digikala",
+        source_order_id="order-123",
+        order_number="order-123",
+        created_at=datetime.now(timezone.utc) - timedelta(hours=1),
+        total_price=Decimal("100000"),
+        status="confirmed",
+        items=[OrderItem(sku="s", title="t", quantity=1, unit_price=Decimal("1"),
+                          final_price=Decimal("100000"))],
+        shipment_id="SHIP-123",
+        customer_full_name=None,
+        customer_mobile=None,
+    )
+
+    adapter = FakeAdapter(
+        "digikala",
+        list_orders=[digikala_order],
+        sbs_customer_details={
+            "SHIP-123": {
+                "customer_full_name": "علی محمدی",
+                "customer_mobile": "09123456789",
+            }
+        },
+    )
+    didar = FakeDidarService()
+    engine = SyncEngine(
+        adapters=[adapter],
+        repository=repo,
+        didar_service=didar,
+        synced_ids_file_path=str(synced_ids_file),
+    )
+
+    engine.run_once()
+
+    assert len(didar.synced_orders) == 1
+    synced = didar.synced_orders[0]
+    assert synced.customer_full_name == "علی محمدی"
+    assert synced.customer_mobile == "09123456789"
+    assert adapter.fetch_sbs_customer_details_calls == ["SHIP-123"]
+
+
+def test_digikala_sbs_enrichment_falls_back_to_synthetic_name_on_failure(repo, synced_ids_file):
+    """When SBS customer fetch fails, fallback to synthetic contact name."""
+    digikala_order = NormalizedOrder(
+        source="digikala",
+        source_order_id="order-456",
+        order_number="order-456",
+        created_at=datetime.now(timezone.utc) - timedelta(hours=1),
+        total_price=Decimal("100000"),
+        status="confirmed",
+        items=[OrderItem(sku="s", title="t", quantity=1, unit_price=Decimal("1"),
+                          final_price=Decimal("100000"))],
+        shipment_id="SHIP-456",
+        customer_full_name=None,
+        customer_mobile=None,
+    )
+
+    adapter = FakeAdapter(
+        "digikala",
+        list_orders=[digikala_order],
+        sbs_customer_details_fail=True,  # Simulate API failure
+    )
+    didar = FakeDidarService()
+    engine = SyncEngine(
+        adapters=[adapter],
+        repository=repo,
+        didar_service=didar,
+        synced_ids_file_path=str(synced_ids_file),
+    )
+
+    engine.run_once()
+
+    assert len(didar.synced_orders) == 1
+    synced = didar.synced_orders[0]
+    assert synced.customer_full_name == "مشتری دیجی‌کالا (SHIP-456)"
+    assert synced.customer_mobile is None
+    assert adapter.fetch_sbs_customer_details_calls == ["SHIP-456"]
+
+
+def test_digikala_sbs_enrichment_skipped_when_customer_name_already_exists(repo, synced_ids_file):
+    """Enrichment should not run if customer_full_name is already populated
+    (e.g. from a previous sync or re-fetch)."""
+    digikala_order = NormalizedOrder(
+        source="digikala",
+        source_order_id="order-789",
+        order_number="order-789",
+        created_at=datetime.now(timezone.utc) - timedelta(hours=1),
+        total_price=Decimal("100000"),
+        status="confirmed",
+        items=[OrderItem(sku="s", title="t", quantity=1, unit_price=Decimal("1"),
+                          final_price=Decimal("100000"))],
+        shipment_id="SHIP-789",
+        customer_full_name="موجود از قبل",  # Already has a name
+        customer_mobile="09999999999",
+    )
+
+    adapter = FakeAdapter(
+        "digikala",
+        list_orders=[digikala_order],
+        sbs_customer_details={
+            "SHIP-789": {
+                "customer_full_name": "از API",
+                "customer_mobile": "09888888888",
+            }
+        },
+    )
+    didar = FakeDidarService()
+    engine = SyncEngine(
+        adapters=[adapter],
+        repository=repo,
+        didar_service=didar,
+        synced_ids_file_path=str(synced_ids_file),
+    )
+
+    engine.run_once()
+
+    assert len(didar.synced_orders) == 1
+    synced = didar.synced_orders[0]
+    # Original name preserved, not overwritten by API
+    assert synced.customer_full_name == "موجود از قبل"
+    assert synced.customer_mobile == "09999999999"
+    # fetch_sbs_customer_details should NOT have been called
+    assert adapter.fetch_sbs_customer_details_calls == []
+
+
+def test_non_digikala_orders_not_enriched(repo, synced_ids_file):
+    """Only Digikala orders with shipment_id trigger SBS enrichment.
+    Other platforms (basalam, tapsishop, etc.) are not enriched."""
+    # Basalam order with shipment_id - should NOT be enriched
+    basalam_order = NormalizedOrder(
+        source="basalam",
+        source_order_id="basalam-1",
+        order_number="basalam-1",
+        created_at=datetime.now(timezone.utc) - timedelta(hours=1),
+        total_price=Decimal("100000"),
+        status="confirmed",
+        items=[OrderItem(sku="s", title="t", quantity=1, unit_price=Decimal("1"),
+                          final_price=Decimal("100000"))],
+        shipment_id="SHIP-BASALAM",
+        customer_full_name=None,
+        customer_mobile=None,
+    )
+
+    # SnappShop order with shipment_id - should NOT be enriched
+    snappshop_order = NormalizedOrder(
+        source="snappshop",
+        source_order_id="snappshop-1",
+        order_number="snappshop-1",
+        created_at=datetime.now(timezone.utc) - timedelta(hours=1),
+        total_price=Decimal("100000"),
+        status="confirmed",
+        items=[OrderItem(sku="s", title="t", quantity=1, unit_price=Decimal("1"),
+                          final_price=Decimal("100000"))],
+        shipment_id="SHIP-SNAPPSHOP",
+        customer_full_name=None,
+        customer_mobile=None,
+    )
+
+    adapter_basalam = FakeAdapter(
+        "basalam",
+        list_orders=[basalam_order],
+        sbs_customer_details={
+            "SHIP-BASALAM": {
+                "customer_full_name": "از API بالسام",
+                "customer_mobile": "09111111111",
+            }
+        },
+    )
+    adapter_snappshop = FakeAdapter(
+        "snappshop",
+        list_orders=[snappshop_order],
+        sbs_customer_details={
+            "SHIP-SNAPPSHOP": {
+                "customer_full_name": "از API اسنپ‌شاپ",
+                "customer_mobile": "09222222222",
+            }
+        },
+    )
+    didar = FakeDidarService()
+    engine = SyncEngine(
+        adapters=[adapter_basalam, adapter_snappshop],
+        repository=repo,
+        didar_service=didar,
+        synced_ids_file_path=str(synced_ids_file),
+    )
+
+    engine.run_once()
+
+    assert len(didar.synced_orders) == 2
+    # Both orders should sync with synthetic names (since enrichment is skipped)
+    sources = {o.source for o in didar.synced_orders}
+    assert sources == {"basalam", "snappshop"}
+
+    for order in didar.synced_orders:
+        # Non-Digikala orders keep None if no customer data was provided
+        assert order.customer_full_name is None
+        assert order.customer_mobile is None
+
+    # fetch_sbs_customer_details should NOT have been called for either
+    assert adapter_basalam.fetch_sbs_customer_details_calls == []
+    assert adapter_snappshop.fetch_sbs_customer_details_calls == []
+
+
+def test_digikala_without_shipment_id_not_enriched(repo, synced_ids_file):
+    """Digikala orders without shipment_id should not trigger SBS enrichment."""
+    digikala_order = NormalizedOrder(
+        source="digikala",
+        source_order_id="order-no-shipment",
+        order_number="order-no-shipment",
+        created_at=datetime.now(timezone.utc) - timedelta(hours=1),
+        total_price=Decimal("100000"),
+        status="confirmed",
+        items=[OrderItem(sku="s", title="t", quantity=1, unit_price=Decimal("1"),
+                          final_price=Decimal("100000"))],
+        shipment_id=None,  # No shipment_id
+        customer_full_name=None,
+        customer_mobile=None,
+    )
+
+    adapter = FakeAdapter(
+        "digikala",
+        list_orders=[digikala_order],
+        sbs_customer_details={
+            "SHIP-X": {
+                "customer_full_name": "از API",
+                "customer_mobile": "09888888888",
+            }
+        },
+    )
+    didar = FakeDidarService()
+    engine = SyncEngine(
+        adapters=[adapter],
+        repository=repo,
+        didar_service=didar,
+        synced_ids_file_path=str(synced_ids_file),
+    )
+
+    engine.run_once()
+
+    assert len(didar.synced_orders) == 1
+    synced = didar.synced_orders[0]
+    assert synced.customer_full_name is None
+    assert synced.customer_mobile is None
+    assert adapter.fetch_sbs_customer_details_calls == []

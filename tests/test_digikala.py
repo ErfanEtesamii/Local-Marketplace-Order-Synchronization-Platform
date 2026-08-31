@@ -402,3 +402,96 @@ def test_fetch_order_detail_raises_when_order_not_found():
     adapter = DigikalaAdapter(config=_CFG)
     with pytest.raises(ValueError, match="371575168"):
         adapter.fetch_order_detail("371575168")
+
+
+@respx.mock
+def test_fetch_sbs_customer_details_returns_customer_data():
+    """fetch_sbs_customer_details calls the correct SBS endpoint and returns
+    customer name and mobile."""
+    route = respx.get(
+        "https://seller.digikala.com/open-api/v1/ship-by-seller-orders/customer/12345"
+    ).mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "status": "ok",
+                "data": {
+                    "name": "علی محمدی",
+                    "phoneNumber": "09123456789",
+                    "state": "تهران",
+                    "city": "تهران",
+                    "address": "خیابان ولیعصر",
+                    "postalCode": "1234567890",
+                },
+            },
+        )
+    )
+
+    adapter = DigikalaAdapter(config=_CFG)
+    result = adapter.fetch_sbs_customer_details("12345")
+
+    assert result["customer_full_name"] == "علی محمدی"
+    assert result["customer_mobile"] == "09123456789"
+    assert route.called
+
+
+@respx.mock
+def test_fetch_sbs_customer_details_returns_none_on_failure():
+    """On any API error, fetch_sbs_customer_details returns both fields as None
+    so the caller can fall back to a synthetic name."""
+    respx.get(
+        "https://seller.digikala.com/open-api/v1/ship-by-seller-orders/customer/99999"
+    ).mock(return_value=httpx.Response(500, json={"status": "error"}))
+
+    adapter = DigikalaAdapter(config=_CFG)
+    result = adapter.fetch_sbs_customer_details("99999")
+
+    assert result["customer_full_name"] is None
+    assert result["customer_mobile"] is None
+
+
+def test_group_rows_extracts_shipment_id():
+    """_group_rows_into_orders extracts order_shipment_id and populates
+    NormalizedOrder.shipment_id."""
+    rows = [
+        {
+            "order_id": "100",
+            "order_shipment_id": "SHIP-100",
+            "order_created_at": "2026-08-10T09:00:00+03:30",
+            "product_variant_title": "Product",
+            "product_supplier_code": "SKU-1",
+            "quantity": 1,
+            "unit_price": 50000,
+            "total_price": 50000,
+            "order_status": {"key": "confirmed", "title": "نهایی شده"},
+        },
+    ]
+
+    adapter = DigikalaAdapter(config=_CFG)
+    orders = adapter._group_rows_into_orders(rows)
+
+    assert len(orders) == 1
+    assert orders[0].shipment_id == "SHIP-100"
+
+
+def test_group_rows_handles_missing_shipment_id():
+    """If order_shipment_id is absent from the row, NormalizedOrder.shipment_id
+    is None (not an empty string)."""
+    rows = [
+        {
+            "order_id": "200",
+            "order_created_at": "2026-08-10T09:00:00+03:30",
+            "product_variant_title": "Product",
+            "product_supplier_code": "SKU-1",
+            "quantity": 1,
+            "unit_price": 50000,
+            "total_price": 50000,
+            "order_status": {"key": "confirmed", "title": "نهایی شده"},
+        },
+    ]
+
+    adapter = DigikalaAdapter(config=_CFG)
+    orders = adapter._group_rows_into_orders(rows)
+
+    assert len(orders) == 1
+    assert orders[0].shipment_id is None

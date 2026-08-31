@@ -246,6 +246,20 @@ class SyncEngine:
                 # fetch the full order before pushing to Didar.
                 order = adapter.fetch_order_detail(order.source_order_id)
 
+            # Enrich Digikala SBS orders with customer data from the
+            # ship-by-seller customer API before pushing to Didar. This runs
+            # only for new un-synced orders (not re-syncs) and only for
+            # Digikala orders that have a shipment_id. If the API fails or
+            # returns no data, fall back to a synthetic contact name so the
+            # sync still succeeds (Didar can still create a deal without a
+            # real customer name).
+            if (
+                order.source == "digikala"
+                and order.shipment_id
+                and not order.customer_full_name
+            ):
+                self._enrich_digikala_sbs_customer(adapter, order)
+
             deal_id = self._didar.sync_order(order)
             self._repo.mark_synced(order.source, order.source_order_id, deal_id)
             # Fire and forget - notify_new_order catches and logs its own
@@ -256,6 +270,48 @@ class SyncEngine:
                 "sync_engine: failed to sync %s order %s", order.source, order.source_order_id
             )
             self._repo.record_failure(order.source, order.source_order_id, str(exc))
+
+    def _enrich_digikala_sbs_customer(
+        self, adapter: MarketplaceAdapter, order: NormalizedOrder
+    ) -> None:
+        """Fetch SBS customer details for a Digikala order and enrich the
+        NormalizedOrder in-place. Falls back to a synthetic contact name
+        if the API fails or returns no data."""
+        # Only DigikalaAdapter exposes fetch_sbs_customer_details.
+        fetcher = getattr(adapter, "fetch_sbs_customer_details", None)
+        if fetcher is None:
+            log.debug(
+                "sync_engine: adapter %s has no fetch_sbs_customer_details, skipping enrichment",
+                adapter.name,
+            )
+            return
+
+        try:
+            details = fetcher(order.shipment_id)
+        except Exception:
+            log.exception(
+                "sync_engine: SBS customer fetch raised for %s order %s",
+                order.source, order.source_order_id,
+            )
+            details = {}
+
+        full_name = details.get("customer_full_name")
+        mobile = details.get("customer_mobile")
+
+        if not full_name:
+            # Fallback: synthetic contact name with shipment_id so the order
+            # is still identifiable in Didar even without real customer data.
+            full_name = f"مشتری دیجی‌کالا ({order.shipment_id})"
+
+        # NormalizedOrder is frozen=True, so we mutate via object.__setattr__.
+        object.__setattr__(order, "customer_full_name", full_name)
+        if mobile:
+            object.__setattr__(order, "customer_mobile", mobile)
+
+        log.info(
+            "sync_engine: enriched Digikala SBS customer for order %s (name=%r, mobile=%r)",
+            order.source_order_id, full_name, mobile,
+        )
 
     def retry_pending_failures(self, max_attempts: int = 5) -> None:
         for failure in self._repo.get_pending_failures(max_attempts=max_attempts):
