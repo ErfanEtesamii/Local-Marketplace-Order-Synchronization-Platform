@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+from decimal import Decimal
 
 import pytest
 import respx
@@ -448,6 +449,71 @@ def test_fetch_sbs_customer_details_returns_none_on_failure():
 
     assert result["customer_full_name"] is None
     assert result["customer_mobile"] is None
+
+
+@respx.mock
+def test_fetch_shipment_details_returns_tracking_code_and_shipping_cost():
+    """fetch_shipment_details calls the confirmed /ship-by-seller-orders/
+    {shipment_id} endpoint and extracts trackingCode + shippingCost from
+    the first item - using the real payload shape the client supplied
+    (2026-09)."""
+    route = respx.get(
+        "https://seller.digikala.com/open-api/v1/ship-by-seller-orders/1"
+    ).mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "status": "ok",
+                "data": {
+                    "items": [
+                        {
+                            "orderId": 1,
+                            "shipmentId": 1,
+                            "trackingCode": "11234",
+                            "shippingCost": 650000,
+                        }
+                    ],
+                },
+            },
+        )
+    )
+
+    adapter = DigikalaAdapter(config=_CFG)
+    result = adapter.fetch_shipment_details("1")
+
+    assert result["tracking_code"] == "11234"
+    assert result["shipping_cost"] == Decimal("650000")
+    assert route.called
+
+
+@respx.mock
+def test_fetch_shipment_details_returns_none_when_no_items():
+    """An empty items list (e.g. an invalid shipment_id) must yield both
+    fields as None, not an IndexError."""
+    respx.get(
+        "https://seller.digikala.com/open-api/v1/ship-by-seller-orders/999"
+    ).mock(return_value=httpx.Response(200, json={"status": "ok", "data": {"items": []}}))
+
+    adapter = DigikalaAdapter(config=_CFG)
+    result = adapter.fetch_shipment_details("999")
+
+    assert result["tracking_code"] is None
+    assert result["shipping_cost"] is None
+
+
+@respx.mock
+def test_fetch_shipment_details_returns_none_on_failure():
+    """On any API error, fetch_shipment_details returns both fields as
+    None so the caller can proceed without this data."""
+    respx.get(
+        "https://seller.digikala.com/open-api/v1/ship-by-seller-orders/2"
+    ).mock(return_value=httpx.Response(500, json={"status": "error"}))
+
+    adapter = DigikalaAdapter(config=_CFG)
+    result = adapter.fetch_shipment_details("2")
+
+    assert result["tracking_code"] is None
+    assert result["shipping_cost"] is None
 
 
 def test_group_rows_extracts_shipment_id():

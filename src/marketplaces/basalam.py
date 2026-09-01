@@ -246,6 +246,17 @@ class BasalamAdapter(MarketplaceAdapter):
             # a "photos" array - see _first_item_photo_url's docstring for
             # the exact shape. No separate GET on the product id is needed.
             product_image_url=_first_item_photo_url(raw_items),
+            # CONFIRMED via docs/document.json: ParcelResponse.shipping_cost
+            # is a required top-level integer field on this same detail
+            # response - no separate call needed.
+            shipping_cost=to_rial(_to_decimal(raw.get("shipping_cost")), self._config.price_unit),
+            # CONFIRMED via docs/document.json: the tracking/parcel number
+            # lives at post_receipt.tracking_code (PostReceiptResponse).
+            # post_receipt itself is OPTIONAL on ParcelResponse - it's only
+            # populated once the seller has actually filed a post receipt
+            # for the parcel, so None here for a brand-new order is
+            # expected, not a bug.
+            shipment_id=str((raw.get("post_receipt") or {}).get("tracking_code") or "") or None,
         )
 
 

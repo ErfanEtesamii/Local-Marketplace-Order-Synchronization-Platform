@@ -18,13 +18,15 @@ Endpoints used:
                                             the MarketplaceAdapter interface,
                                             though fetch_new_orders already
                                             has everything it needs)
-  GET /wp-json/wc/v3/products/{id}       -> used ONLY to resolve each line
-                                            item's product category (WooCommerce
-                                            categories[] isn't included on the
-                                            order's line_items themselves) - see
-                                            _resolve_category(). Results are
-                                            cached for the adapter's lifetime
-                                            since product categories rarely
+  GET /wp-json/wc/v3/products/{id}       -> used to resolve each line item's
+                                            product category AND image in a
+                                            SINGLE request (WooCommerce's
+                                            order line_items[] includes
+                                            neither) - see
+                                            _resolve_product_meta(). Only a
+                                            successful lookup is cached, for
+                                            the adapter's lifetime, since
+                                            product categories/images rarely
                                             change and this avoids one extra
                                             request per repeated product.
 
@@ -79,8 +81,15 @@ class FarazHonarAdapter(MarketplaceAdapter):
             auth=httpx.BasicAuth(self._config.consumer_key, self._config.consumer_secret),
             timeout=30.0,
         )
-        self._category_cache: dict[int, str | None] = {}
-        self._image_cache: dict[int, str | None] = {}
+        # Category + image url are cached TOGETHER, keyed by product_id,
+        # because both come from the exact same /products/{id} response -
+        # see _resolve_product_meta(). Only a CONFIRMED (successful) lookup
+        # is cached; a failed lookup is never stored here, so a transient
+        # error doesn't permanently poison this product_id for the rest of
+        # this adapter instance's lifetime (it lives for the whole service
+        # uptime - see main.py's build_engine(), which builds each adapter
+        # exactly once, not per poll cycle).
+        self._product_meta_cache: dict[int, tuple[str | None, str | None]] = {}
 
     @default_retry()
     def _get(self, path: str, params: dict | None = None) -> httpx.Response:
@@ -98,6 +107,17 @@ class FarazHonarAdapter(MarketplaceAdapter):
                 "/wp-json/wc/v3/orders",
                 params={
                     "after": (since or datetime.now(timezone.utc) - timedelta(hours=5)).astimezone(timezone.utc).isoformat(),
+                    # Without this, WooCommerce compares "after" against
+                    # the site-LOCAL `date_created` column, not the UTC
+                    # `date_created_gmt` one - despite the value above
+                    # already being converted to UTC. If this store's
+                    # WordPress timezone isn't UTC (common for Iranian
+                    # sites, e.g. Asia/Tehran = +03:30), the fetch window
+                    # silently shifts by that offset. This flag tells
+                    # WooCommerce to compare against date_created_gmt
+                    # instead, matching what _parse_date() already does
+                    # on the way out (see module docstring).
+                    "dates_are_gmt": "true",
                     "per_page": 100,
                     "page": page,
                     "orderby": "date",
@@ -118,57 +138,50 @@ class FarazHonarAdapter(MarketplaceAdapter):
         resp = self._get(f"/wp-json/wc/v3/orders/{source_order_id}")
         return self._normalize(resp.json())
 
-    def _resolve_image_url(self, product_id: int) -> str | None:
-        """First image URL for a WooCommerce product, or None if the
-        product has no image / product_id is missing / the lookup fails.
-        A failed lookup must not break order sync, so errors here are
-        swallowed (logged) rather than raised - the item just falls back
-        to no product image in the "ارسال محصول" activity."""
-        if not product_id:
-            return None
-        if product_id in self._image_cache:
-            return self._image_cache[product_id]
+    def _resolve_product_meta(self, product_id: int) -> tuple[str | None, str | None]:
+        """(category, image_url) for a WooCommerce product in ONE request.
 
-        url = None
+        BUGFIX: this used to be two separate methods (_resolve_category /
+        _resolve_image_url), each hitting GET /products/{id} on its own -
+        doubling the number of requests to the store for every unique
+        product on every order, even though a single response already
+        contains both `categories` and `images`.
+
+        BUGFIX: a failed lookup is no longer cached. Previously, `None`
+        was written to the cache regardless of whether it meant "this
+        product genuinely has no category/image" or "the request failed"
+        - and since this adapter instance lives for the entire service
+        uptime (see main.py), one transient error (a dropped connection,
+        a brief 5xx) permanently blanked that product_id's category/image
+        for every later order until the service was restarted. A failed
+        lookup now returns (None, None) WITHOUT being cached, so the next
+        order referencing the same product tries again.
+
+        A failed lookup must still not break order sync, so errors here
+        are swallowed (logged) rather than raised - the item falls back
+        to Didar's default catch-all category / no product image."""
+        if not product_id:
+            return None, None
+        if product_id in self._product_meta_cache:
+            return self._product_meta_cache[product_id]
+
         try:
             resp = self._get(f"/wp-json/wc/v3/products/{product_id}")
-            images = resp.json().get("images", [])
-            if images:
-                url = images[0].get("src") or None
         except httpx.HTTPError as exc:
             log.warning(
-                "farazhonar: failed to resolve image for product_id=%s: %s",
+                "farazhonar: failed to resolve category/image for product_id=%s: %s",
                 product_id, exc,
             )
+            return None, None
 
-        self._image_cache[product_id] = url
-        return url
+        data = resp.json()
+        categories = data.get("categories", [])
+        category = (str(categories[0].get("name") or "") or None) if categories else None
+        images = data.get("images", [])
+        image_url = (images[0].get("src") or None) if images else None
 
-    def _resolve_category(self, product_id: int) -> str | None:
-        """First WooCommerce product category title, or None if the
-        product has none / product_id is missing / the lookup fails.
-        A failed lookup must not break order sync, so errors here are
-        swallowed (logged) rather than raised - the item just falls
-        back to Didar's default catch-all category."""
-        if not product_id:
-            return None
-        if product_id in self._category_cache:
-            return self._category_cache[product_id]
-
-        category = None
-        try:
-            resp = self._get(f"/wp-json/wc/v3/products/{product_id}")
-            categories = resp.json().get("categories", [])
-            if categories:
-                category = str(categories[0].get("name") or "") or None
-        except httpx.HTTPError as exc:
-            log.warning(
-                "farazhonar: failed to resolve category for product_id=%s: %s",
-                product_id, exc,
-            )
-
-        self._category_cache[product_id] = category
-        return category
+        self._product_meta_cache[product_id] = (category, image_url)
+        return category, image_url
 
     def _normalize(self, raw: dict) -> NormalizedOrder:
         billing = raw.get("billing", {})
@@ -181,18 +194,20 @@ class FarazHonarAdapter(MarketplaceAdapter):
         # Didar. See src/finglish.py for how/why this is approximate.
         full_name = persianize_name(full_name)
 
-        items = [
-            OrderItem(
-                sku=str(item.get("sku") or item.get("product_id", "")),
-                title=str(item.get("name", "")),
-                quantity=int(item.get("quantity", 1)),
-                unit_price=to_rial(_to_decimal(item.get("price")), self._config.price_unit),
-                final_price=to_rial(_to_decimal(item.get("total")), self._config.price_unit),
-                category=self._resolve_category(item.get("product_id")),
-                product_image_url=self._resolve_image_url(item.get("product_id")),
+        items = []
+        for item in raw.get("line_items", []):
+            category, image_url = self._resolve_product_meta(item.get("product_id"))
+            items.append(
+                OrderItem(
+                    sku=str(item.get("sku") or item.get("product_id", "")),
+                    title=str(item.get("name", "")),
+                    quantity=int(item.get("quantity", 1)),
+                    unit_price=to_rial(_to_decimal(item.get("price")), self._config.price_unit),
+                    final_price=to_rial(_to_decimal(item.get("total")), self._config.price_unit),
+                    category=category,
+                    product_image_url=image_url,
+                )
             )
-            for item in raw.get("line_items", [])
-        ]
 
         return NormalizedOrder(
             source=self.name,
@@ -211,6 +226,17 @@ class FarazHonarAdapter(MarketplaceAdapter):
             # item, so a multi-item order gets every product's photo, not
             # just the first (client feedback, 2026-09).
             product_image_url=items[0].product_image_url if items else None,
+            # "shipping_total" is a standard, officially-documented
+            # WooCommerce REST API v3 order field (order-level shipping
+            # cost) - see the module docstring for why this API is high-
+            # confidence. Same TOMAN/RIAL unit as every other price on
+            # this source (src/currency.py).
+            shipping_cost=to_rial(_to_decimal(raw.get("shipping_total")), self._config.price_unit),
+            # shipment_id intentionally left None (the dataclass default):
+            # core WooCommerce REST API v3 has no tracking/parcel-number
+            # field - that's only ever added by a shipment-tracking
+            # plugin as custom order meta, which hasn't been confirmed to
+            # exist on this site (see module docstring).
         )
 
 

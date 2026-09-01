@@ -1,3 +1,4 @@
+from dataclasses import replace
 from datetime import datetime, timezone
 from decimal import Decimal
 
@@ -456,6 +457,60 @@ def test_deal_item_description_includes_order_number():
 
     deal_body = route.calls[0].request.content
     assert "شماره سفارش: ORD-999".encode() in deal_body
+
+
+@respx.mock
+def test_deal_item_description_includes_shipment_and_shipping_cost_when_present():
+    """Client request (2026-09): DealItems[].Description should also show
+    the parcel/tracking number and shipping cost when the source order
+    has them, matching the convention on manually-entered deals."""
+    _mock_categories()
+    _mock_product_search_no_match()
+    respx.post("https://app.didar.me/api/product/save").mock(
+        return_value=httpx.Response(200, json={"Response": {"Product": {"Id": "p-1"}}})
+    )
+    route = respx.post("https://app.didar.me/api/deal/save_v2").mock(
+        return_value=httpx.Response(200, json={"Response": {"Deal": {"Id": "d-1"}}})
+    )
+
+    order = replace(_ORDER, shipment_id="SHIP-123", shipping_cost=Decimal("650000"))
+
+    client = DidarDealClient(config=_CFG)
+    client.create_deal(contact_id="c-1", display_name="Someone", order=order)
+
+    deal_body = route.calls[0].request.content
+    assert "شماره مرسوله: SHIP-123".encode() in deal_body
+    assert "هزینه ارسال: 650,000 ریال".encode() in deal_body
+
+
+@respx.mock
+def test_deal_item_description_prefers_tracking_code_over_shipment_id():
+    """Digikala sets both shipment_id (its own internal id, used for API
+    calls) and shipment_tracking_code (the customer-facing postal
+    tracking number, from a separate call - see
+    NormalizedOrder.shipment_tracking_code's docstring). The Description
+    shown to a human must use the customer-facing one."""
+    _mock_categories()
+    _mock_product_search_no_match()
+    respx.post("https://app.didar.me/api/product/save").mock(
+        return_value=httpx.Response(200, json={"Response": {"Product": {"Id": "p-1"}}})
+    )
+    route = respx.post("https://app.didar.me/api/deal/save_v2").mock(
+        return_value=httpx.Response(200, json={"Response": {"Deal": {"Id": "d-1"}}})
+    )
+
+    order = replace(
+        _ORDER,
+        shipment_id="1231218721",  # Digikala's own internal id
+        shipment_tracking_code="11234",  # the actual postal tracking code
+    )
+
+    client = DidarDealClient(config=_CFG)
+    client.create_deal(contact_id="c-1", display_name="Someone", order=order)
+
+    deal_body = route.calls[0].request.content
+    assert "شماره مرسوله: 11234".encode() in deal_body
+    assert b"1231218721" not in deal_body
 
 
 @respx.mock

@@ -31,16 +31,20 @@ class FakeAdapter(MarketplaceAdapter):
     orchestration logic (dedupe, retries, isolation) without any HTTP."""
 
     def __init__(self, name: str, list_orders=None, details=None, fail_fetch=False,
-                 sbs_customer_details=None, sbs_customer_details_fail=False):
+                 sbs_customer_details=None, sbs_customer_details_fail=False,
+                 shipment_details=None, shipment_details_fail=False):
         self.name = name
         self._list_orders = list_orders or []
         self._details = details or {}
         self._fail_fetch = fail_fetch
         self._sbs_customer_details = sbs_customer_details or {}
         self._sbs_customer_details_fail = sbs_customer_details_fail
+        self._shipment_details = shipment_details or {}
+        self._shipment_details_fail = shipment_details_fail
         self.fetch_new_orders_calls = 0
         self.fetch_order_detail_calls = 0
         self.fetch_sbs_customer_details_calls: list[str] = []
+        self.fetch_shipment_details_calls: list[str] = []
         self.received_since_values = []
 
     def fetch_new_orders(self, since):
@@ -61,6 +65,15 @@ class FakeAdapter(MarketplaceAdapter):
         return self._sbs_customer_details.get(shipment_id, {
             "customer_full_name": None,
             "customer_mobile": None,
+        })
+
+    def fetch_shipment_details(self, shipment_id: str) -> dict:
+        self.fetch_shipment_details_calls.append(shipment_id)
+        if self._shipment_details_fail:
+            raise RuntimeError("simulated shipment details fetch failure")
+        return self._shipment_details.get(shipment_id, {
+            "tracking_code": None,
+            "shipping_cost": None,
         })
 
 
@@ -429,6 +442,59 @@ def test_digikala_sbs_enrichment_adds_customer_name_and_mobile(repo, synced_ids_
     assert synced.customer_full_name == "علی محمدی"
     assert synced.customer_mobile == "09123456789"
     assert adapter.fetch_sbs_customer_details_calls == ["SHIP-123"]
+
+
+def test_digikala_shipment_details_enrichment_adds_tracking_code_and_shipping_cost(
+    repo, synced_ids_file
+):
+    """Digikala orders with shipment_id get enriched with tracking code +
+    shipping cost from fetch_shipment_details before syncing to Didar
+    (client request, 2026-09) - independent of the customer-name
+    enrichment above (a different endpoint, gated on shipping_cost being
+    unset rather than customer_full_name)."""
+    digikala_order = NormalizedOrder(
+        source="digikala",
+        source_order_id="order-123",
+        order_number="order-123",
+        created_at=datetime.now(timezone.utc) - timedelta(hours=1),
+        total_price=Decimal("100000"),
+        status="confirmed",
+        items=[OrderItem(sku="s", title="t", quantity=1, unit_price=Decimal("1"),
+                          final_price=Decimal("100000"))],
+        shipment_id="SHIP-123",
+        # Real customer name already known, so the SBS customer
+        # enrichment is skipped - shipment details must still run.
+        customer_full_name="علی محمدی",
+        customer_mobile="09123456789",
+    )
+
+    adapter = FakeAdapter(
+        "digikala",
+        list_orders=[digikala_order],
+        shipment_details={
+            "SHIP-123": {
+                "tracking_code": "11234",
+                "shipping_cost": Decimal("650000"),
+            }
+        },
+    )
+    didar = FakeDidarService()
+    engine = SyncEngine(
+        adapters=[adapter],
+        repository=repo,
+        didar_service=didar,
+        synced_ids_file_path=str(synced_ids_file),
+    )
+
+    engine.run_once()
+
+    assert len(didar.synced_orders) == 1
+    synced = didar.synced_orders[0]
+    assert synced.shipment_tracking_code == "11234"
+    assert synced.shipping_cost == Decimal("650000")
+    assert adapter.fetch_shipment_details_calls == ["SHIP-123"]
+    # Customer name was already set, so that enrichment must NOT re-run.
+    assert adapter.fetch_sbs_customer_details_calls == []
 
 
 def test_digikala_sbs_enrichment_also_applies_on_retry(repo, synced_ids_file):

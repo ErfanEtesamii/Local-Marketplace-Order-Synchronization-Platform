@@ -236,6 +236,69 @@ class DigikalaAdapter(MarketplaceAdapter):
             )
             return {"customer_full_name": None, "customer_mobile": None}
 
+    def fetch_shipment_details(self, shipment_id: str) -> dict:
+        """Fetch shipment/parcel details for a Digikala Ship-by-Seller (SBS)
+        order - tracking code and shipping cost, for the Didar deal-item
+        description (client request, 2026-09).
+
+        Calls GET /open-api/v1/ship-by-seller-orders/{shipment_id} with
+        Bearer token. CONFIRMED response shape (client-supplied real
+        payload, 2026-09): {"status": "ok", "data": {"items": [{...}]}} -
+        same list-style envelope as /orders/history, but for a single
+        shipment_id this should only ever return one item.
+
+        Confirmed fields on that item:
+            trackingCode: str  - the actual postal/courier tracking number
+                (شماره مرسوله) - distinct from shipment_id (Digikala's own
+                internal id, already on NormalizedOrder.shipment_id from
+                /orders/history). This is what a customer would actually
+                use to track their parcel with the post/courier, so it's
+                the more useful value to show in Didar.
+            shippingCost: int  - Rial, per every other Digikala money
+                field seen so far (src/currency.py's DIGIKALA_PRICE_UNIT
+                default) - NOT confirmed by an explicit unit label in
+                this payload the way Tapsi Shop's operationalCost was, so
+                still routed through to_rial()/price_unit like any other
+                Digikala amount rather than assumed Rial outright.
+
+        Returns a dict with keys:
+            tracking_code: str | None
+            shipping_cost: Decimal | None
+
+        On any error (transport, auth, malformed response, or no items
+        found), returns both as None so the caller can proceed without
+        this data rather than breaking the sync flow - matching
+        fetch_sbs_customer_details's error-handling convention above.
+        """
+        path = f"/open-api/v1/ship-by-seller-orders/{shipment_id}"
+        try:
+            payload = self._get(path, params={})
+            items = (payload.get("data") or {}).get("items") or []
+            if not items:
+                log.warning(
+                    "digikala: no items in shipment details for shipment %s", shipment_id,
+                )
+                return {"tracking_code": None, "shipping_cost": None}
+            item = items[0]
+            tracking_code = str(item["trackingCode"]) if item.get("trackingCode") else None
+            raw_cost = item.get("shippingCost")
+            shipping_cost = (
+                to_rial(_to_decimal(raw_cost), self._config.price_unit)
+                if raw_cost is not None
+                else None
+            )
+            log.info(
+                "digikala: fetched shipment details for shipment %s "
+                "(tracking_code=%r, shipping_cost=%r)",
+                shipment_id, tracking_code, shipping_cost,
+            )
+            return {"tracking_code": tracking_code, "shipping_cost": shipping_cost}
+        except Exception:
+            log.exception(
+                "digikala: failed to fetch shipment details for shipment %s", shipment_id,
+            )
+            return {"tracking_code": None, "shipping_cost": None}
+
     def _fetch_history_rows(
         self,
         order_created_at_from: datetime | None = None,
@@ -361,6 +424,17 @@ class DigikalaAdapter(MarketplaceAdapter):
                     customer_mobile=None,
                     shipment_id=shipment_id,
                     product_image_url=product_image_url,
+                    # shipping_cost is NOT set here (stays the dataclass
+                    # default None): /orders/history (this endpoint) has
+                    # no shipping/delivery-cost field anywhere on the row
+                    # - only product pricing (unit_price/unit_discount).
+                    # It's populated separately, after this method
+                    # returns, by sync_engine._enrich_digikala_shipment_
+                    # details() calling fetch_shipment_details() against
+                    # the confirmed /ship-by-seller-orders/{shipment_id}
+                    # endpoint (client-supplied real payload, 2026-09) -
+                    # only reachable once shipment_id (set below) is
+                    # known, which is why it can't happen in this method.
                 )
             )
         return orders

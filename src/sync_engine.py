@@ -296,6 +296,20 @@ class SyncEngine:
         ):
             self._enrich_digikala_sbs_customer(adapter, order)
 
+        # Same idea, separate endpoint/field: shipping_cost and the
+        # customer-facing tracking code (client request, 2026-09) - see
+        # NormalizedOrder.shipment_tracking_code's docstring for why this
+        # is a distinct field/call from the customer enrichment above.
+        # Gated on shipping_cost being unset (not customer_full_name) so
+        # this doesn't accidentally re-fetch on the retry path once
+        # already enriched, mirroring the customer enrichment's own gate.
+        if (
+            order.source == "digikala"
+            and order.shipment_id
+            and order.shipping_cost is None
+        ):
+            self._enrich_digikala_shipment_details(adapter, order)
+
         deal_id = self._didar.sync_order(order)
         return deal_id, order
 
@@ -339,6 +353,48 @@ class SyncEngine:
         log.info(
             "sync_engine: enriched Digikala SBS customer for order %s (name=%r, mobile=%r)",
             order.source_order_id, full_name, mobile,
+        )
+
+    def _enrich_digikala_shipment_details(
+        self, adapter: MarketplaceAdapter, order: NormalizedOrder
+    ) -> None:
+        """Fetch shipment/parcel details (tracking code + shipping cost)
+        for a Digikala SBS order and enrich the NormalizedOrder in-place.
+        Best-effort: if the API fails or returns no data, both fields are
+        simply left None - DidarDealClient's _build_item_description
+        already omits any line it doesn't have data for, so this can
+        never break or block a sync."""
+        # Only DigikalaAdapter exposes fetch_shipment_details.
+        fetcher = getattr(adapter, "fetch_shipment_details", None)
+        if fetcher is None:
+            log.debug(
+                "sync_engine: adapter %s has no fetch_shipment_details, skipping enrichment",
+                adapter.name,
+            )
+            return
+
+        try:
+            details = fetcher(order.shipment_id)
+        except Exception:
+            log.exception(
+                "sync_engine: shipment details fetch raised for %s order %s",
+                order.source, order.source_order_id,
+            )
+            details = {}
+
+        tracking_code = details.get("tracking_code")
+        shipping_cost = details.get("shipping_cost")
+
+        # NormalizedOrder is frozen=True, so we mutate via object.__setattr__.
+        if tracking_code:
+            object.__setattr__(order, "shipment_tracking_code", tracking_code)
+        if shipping_cost is not None:
+            object.__setattr__(order, "shipping_cost", shipping_cost)
+
+        log.info(
+            "sync_engine: enriched Digikala shipment details for order %s "
+            "(tracking_code=%r, shipping_cost=%r)",
+            order.source_order_id, tracking_code, shipping_cost,
         )
 
     def _order_amounts(self, order: NormalizedOrder):

@@ -392,16 +392,44 @@ class DidarDealClient:
             # Order-traceability text, matching the convention seen on
             # manually-entered deals (client feedback 2026-08) - those
             # have "شماره سفارش: X/شماره مرسوله: Y" typed into each
-            # item's توضیحات; we only have the order number reliably
-            # across all 5 sources (no NormalizedOrder field carries a
-            # shipment/parcel number yet), so that's what's written here.
-            # Separately, non-tax fees/markups from the source are still
-            # represented as Discount = 0 when final_price > unit_price*
-            # quantity (see per-unit discount logic above, clamped to
-            # >= 0: a higher final_price is treated as zero discount,
-            # not a negative one).
-            "Description": f"شماره سفارش: {order.order_number}",
+            # item's توضیحات. NormalizedOrder.shipment_id/shipping_cost
+            # are only populated for the sources whose API actually
+            # exposes them (Digikala, Basalam, Tapsi Shop - see each
+            # adapter's comments; Faraz Honar/WooCommerce has neither),
+            # so each line below is added only when that data exists,
+            # rather than printing a literal "None" into the deal.
+            # shipment_id/shipping_cost are order-level (not per line
+            # item), so this text is identical across every DealItem on
+            # the same order - matches the client's own request (client
+            # feedback, 2026-09) for the case where a single shipment
+            # covers the whole order.
+            "Description": _build_item_description(order),
         }
+
+
+def _build_item_description(order: NormalizedOrder) -> str:
+    lines = [f"شماره سفارش: {order.order_number}"]
+    # Prefer the customer/courier-facing tracking code when the adapter
+    # provides one (currently only Digikala, via a separate SBS call -
+    # see NormalizedOrder.shipment_tracking_code's docstring); otherwise
+    # fall back to shipment_id, which for Basalam/Tapsi Shop already IS
+    # that same customer-facing parcel number.
+    tracking_number = order.shipment_tracking_code or order.shipment_id
+    if tracking_number:
+        lines.append(f"شماره مرسوله: {tracking_number}")
+    if order.shipping_cost is not None:
+        lines.append(f"هزینه ارسال: {_format_rial(order.shipping_cost)} ریال")
+    return "\n".join(lines)
+
+
+def _format_rial(amount) -> str:
+    """Format a Decimal/int/float Rial amount with thousands separators,
+    e.g. 12500000 -> "12,500,000". Matches src/telegram.py's _format_rial
+    - kept as a separate copy rather than a cross-module import, since
+    this module has no other dependency on src/telegram.py."""
+    if amount is None:
+        amount = 0
+    return f"{int(round(float(amount))):,}"
 
 
 def _extract_deal_id(payload: dict) -> str:

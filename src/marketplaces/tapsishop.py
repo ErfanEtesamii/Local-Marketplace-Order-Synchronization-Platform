@@ -162,6 +162,19 @@ class TapsiShopAdapter(MarketplaceAdapter):
         data = payload.get("data", {})
         order = data.get("order", {})
         raw_items = data.get("items", [])
+        # CONFIRMED per docs/TapsiShop.v.0.2.pdf (order-detail response
+        # schema + field reference table): a top-level "shipments" array,
+        # each entry carrying "number" (the parcel/tracking number, i.e.
+        # شماره مرسوله) and "operationalCost" (شماره مرسوله cost, the docs
+        # explicitly annotate this one field as already being in Rial -
+        # unlike price/finalPrice/originalAmount above, whose unit is
+        # still unconfirmed for this source, see src/currency.py). An
+        # order can in principle have more than one shipment if split
+        # into multiple parcels; only the first is used here, matching
+        # the project's existing "first item wins" convention for
+        # order-level fields sourced from a per-line/per-shipment list.
+        shipments = data.get("shipments") or []
+        first_shipment = shipments[0] if shipments else {}
 
         items = [
             OrderItem(
@@ -200,6 +213,14 @@ class TapsiShopAdapter(MarketplaceAdapter):
             # multi-item order gets every product's photo, not just the
             # first (client feedback, 2026-09).
             product_image_url=items[0].product_image_url if items else None,
+            shipment_id=str(first_shipment["number"]) if first_shipment.get("number") else None,
+            # operationalCost is documented as already Rial - deliberately
+            # NOT run through to_rial()/self._config.price_unit, since
+            # that setting is a blanket TOMAN/RIAL switch for this
+            # source's item prices (still unconfirmed either way - see
+            # src/currency.py) and would incorrectly rescale this one
+            # field if TAPSISHOP_PRICE_UNIT is ever set to "toman".
+            shipping_cost=_to_decimal(first_shipment.get("operationalCost")),
         )
 
     def _normalize_list_item(self, raw: dict) -> NormalizedOrder:

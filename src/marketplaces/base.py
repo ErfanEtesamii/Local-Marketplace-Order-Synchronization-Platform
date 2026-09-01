@@ -86,6 +86,22 @@ class NormalizedOrder:
     # expose this field, in which case it will be None.
     shipping_cost: Decimal | None = None
 
+    # Customer/courier-facing tracking number (شماره مرسوله), for display
+    # in Didar (client request, 2026-09) - see DidarDealClient's
+    # _build_item_description(). Deliberately a SEPARATE field from
+    # shipment_id above: for Digikala, shipment_id is Digikala's own
+    # internal identifier used as an API call parameter (fetching SBS
+    # customer/shipment details), while the actual postal tracking code a
+    # customer would use is a different value only available from a
+    # separate call (DigikalaAdapter.fetch_shipment_details) - conflating
+    # the two would either break those API calls or show the wrong
+    # number to the client. For sources where shipment_id already IS the
+    # customer-facing parcel number (Basalam's post_receipt.tracking_code,
+    # Tapsi Shop's shipments[].number), adapters set both fields to the
+    # same value; DidarDealClient falls back to shipment_id when this is
+    # None.
+    shipment_tracking_code: str | None = None
+
 
 class MarketplaceAdapter(ABC):
     """

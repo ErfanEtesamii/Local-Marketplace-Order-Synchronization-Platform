@@ -129,7 +129,9 @@ def test_normalize_resolves_image_url_for_each_line_item():
     The first image URL from each line item's WooCommerce product must
     end up on that item's product_image_url field, so the
     "ارسال محصول" (ship) Activity in Didar can attach it. The lookup
-    goes through /wp-json/wc/v3/products/{id} and is cached per id.
+    goes through /wp-json/wc/v3/products/{id} - ONE request per unique
+    product_id (category AND image come from the same response - see
+    _resolve_product_meta()) - and is cached per id.
     """
     raw_order = {
         **_RAW_ORDER,
@@ -161,11 +163,9 @@ def test_normalize_resolves_image_url_for_each_line_item():
         url__regex=r"https://farazhonar\.com/wp-json/wc/v3/products/\d+"
     ).mock(
         side_effect=[
-            # _resolve_category(product_id=111) then _resolve_image_url(product_id=111)
+            # _resolve_product_meta(product_id=111) - ONE call, category + image together
             httpx.Response(200, json={"categories": [{"name": "خاتم"}], "images": [{"src": "https://cdn.farazhonar.com/111.jpg"}]}),
-            httpx.Response(200, json={"categories": [{"name": "خاتم"}], "images": [{"src": "https://cdn.farazhonar.com/111.jpg"}]}),
-            # _resolve_category(product_id=222) then _resolve_image_url(product_id=222)
-            httpx.Response(200, json={"categories": [{"name": "-NC"}], "images": [{"src": "https://cdn.farazhonar.com/222.jpg"}]}),
+            # _resolve_product_meta(product_id=222) - ONE call, category + image together
             httpx.Response(200, json={"categories": [{"name": "-NC"}], "images": [{"src": "https://cdn.farazhonar.com/222.jpg"}]}),
         ]
     )
@@ -173,7 +173,7 @@ def test_normalize_resolves_image_url_for_each_line_item():
     adapter = FarazHonarAdapter(config=_CFG)
     order = adapter.fetch_order_detail("601")
 
-    assert products_route.call_count == 4  # category + image per unique product_id (2 products)
+    assert products_route.call_count == 2  # ONE request per unique product_id (2 products) - not 2 per product
     assert order.items[0].product_image_url == "https://cdn.farazhonar.com/111.jpg"
     assert order.items[1].product_image_url == "https://cdn.farazhonar.com/222.jpg"
     # Order-level field - now just a last-resort fallback for
@@ -258,9 +258,9 @@ def test_normalize_image_lookup_failure_does_not_break_order():
 @respx.mock
 def test_normalize_caches_image_lookup_per_product_id():
     """
-    If two line items reference the same product_id, the image lookup
-    for that id must happen ONCE - per-product caching mirrors the
-    existing _resolve_category() behavior and avoids an extra request
+    If two line items reference the same product_id, the lookup for
+    that id (_resolve_product_meta - category + image together) must
+    happen ONCE total, not once per line item, avoiding extra requests
     per repeated product on multi-item orders.
     """
     raw_order = {
@@ -299,8 +299,10 @@ def test_normalize_caches_image_lookup_per_product_id():
     adapter = FarazHonarAdapter(config=_CFG)
     order = adapter.fetch_order_detail("604")
 
-    # Same product_id on two line items -> category + image lookup happens once
-    # due to per-product_id caching - 2 calls total (one for category, one for image)
-    assert products_route.call_count == 2
+    # Same product_id on two line items -> _resolve_product_meta() runs once
+    # total (category + image fetched together, then cached) - only 1 call,
+    # not 2 (previously 2 for the first item's lookups + cached for the
+    # second, now merged into a single call per unique product_id).
+    assert products_route.call_count == 1
     assert order.items[0].product_image_url == "https://cdn.farazhonar.com/555.jpg"
     assert order.items[1].product_image_url == "https://cdn.farazhonar.com/555.jpg"
