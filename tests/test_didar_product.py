@@ -123,6 +123,39 @@ def test_search_ignores_non_exact_code_matches():
 
 
 @respx.mock
+def test_search_by_code_finds_product_missed_by_keyword_search():
+    """Regression test for the 2026-09 production incident: a real,
+    pre-existing product with a short/generic catalog Code (e.g. "38")
+    didn't rank within /product/search's Limit among thousands of
+    products, so search_by_code() wrongly reported "not found" - and
+    then /product/save correctly failed with "duplicate product code",
+    which the old code couldn't recover from because its recovery path
+    re-ran the exact same narrow search.
+
+    Fix: search_by_code() must find the product via the cached
+    GetProductsList Code->Id map WITHOUT ever needing /product/search to
+    surface it - so /product/search here is mocked to return nothing for
+    this Code (simulating the real-world miss) and /product/save is not
+    mocked at all (calling it would fail the test), proving upsert_product
+    never even attempts a duplicate create.
+    """
+    _mock_categories()
+    respx.post("https://app.didar.me/api/product/GetProductsList").mock(
+        return_value=httpx.Response(
+            200, json={"Response": [{"Id": "existing-38", "Code": "38", "Title": "چکامه 12"}]}
+        )
+    )
+    respx.post("https://app.didar.me/api/product/search").mock(
+        return_value=httpx.Response(200, json={"Response": []})
+    )
+
+    client = DidarProductClient(config=_CFG)
+    product_id = client.upsert_product(code="38", title="چکامه 12")
+
+    assert product_id == "existing-38"
+
+
+@respx.mock
 def test_upsert_product_recovers_via_search_on_duplicate_code_race():
     """If save fails with "duplicate product code" (another writer
     created it between our search and this save call), recover by

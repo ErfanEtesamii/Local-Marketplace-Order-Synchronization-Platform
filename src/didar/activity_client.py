@@ -54,11 +54,23 @@ falls back to order_registered_at + 2 days (client instruction,
 - a missing ActivityType Id (below) still skips the whole checklist,
 but a missing ship_time no longer does.
 
-SHIP ACTIVITY ATTACHMENT (2026-08 client feedback): the "ارسال محصول"
-item gets the order's product photo attached via upload_attachment()
-followed by create_activity()'s new_attachments. See
-upload_attachment() and create_post_sale_checklist() for the exact
-two-step flow (upload to /file/upload, then link the returned Id).
+SHIP ACTIVITY ATTACHMENT (2026-08 client feedback; flow CORRECTED
+2026-09 after directly confirming with Didar's own support agent): the
+"ارسال محصول" item gets the order's product photo attached via a
+two-step flow - (1) create the Activity as normal via /activity/save,
+with no attachment fields in the body at all, (2) POST the photo to
+the documented /activity/AttachFilesToActivity as multipart/form-data,
+with "activityId" (the Id from step 1) and the file itself under
+"uploads". See attach_photo_to_activity() and
+create_post_sale_checklist() for the exact flow.
+
+This REPLACES an earlier implementation (upload_attachment() posting
+to a guessed /file/upload path, then passing the returned Key back
+into /activity/save's NewAttachments field) that was never
+independently verified against Didar and turned out not to match the
+documented flow at all - Didar's own agent, asked directly, described
+only the create-then-AttachFilesToActivity flow above and made no
+mention of NewAttachments or a standalone upload endpoint.
 """
 from __future__ import annotations
 
@@ -123,15 +135,7 @@ class DidarActivityClient:
         title: str,
         activity_type_id: str,
         due_date: datetime,
-        new_attachments: list[tuple[str, str]] | None = None,
     ) -> str:
-        """
-        new_attachments: list of (upload Key, filename) pairs, exactly
-        the shape Didar's own /activity/save example uses for
-        NewAttachments (each pair -> {"First": Key, "Second": filename}).
-        Get the Key from upload_attachment() first - it is NOT the raw
-        file bytes.
-        """
         activity_body = {
             "ActivityTypeId": activity_type_id,
             "Title": title,
@@ -143,42 +147,40 @@ class DidarActivityClient:
             activity_body["OwnerId"] = self._config.default_owner_id
 
         request_body = {"Activity": activity_body, "SetDone": False}
-        if new_attachments:
-            request_body["NewAttachments"] = [
-                {"First": key, "Second": filename} for key, filename in new_attachments
-            ]
 
         payload = self._post("/activity/save", json=request_body)
         activity_id = _extract_activity_id(payload)
         log.info("didar: created activity '%s' on deal %s -> Id=%s", title, deal_id, activity_id)
         return activity_id
 
-    def upload_attachment(self, file_bytes: bytes, filename: str, content_type: str) -> str:
+    def attach_photo_to_activity(
+        self, activity_id: str, file_bytes: bytes, filename: str, content_type: str
+    ) -> None:
         """
-        Uploads a file to Didar and returns the Key to use in
-        create_activity()'s new_attachments (or NewAttachments directly).
+        Attaches a file directly to an already-created Activity, via the
+        documented POST /activity/AttachFilesToActivity - confirmed
+        2026-09 straight from Didar's own support agent (see module
+        docstring). multipart/form-data with two fields: "activityId"
+        (plain form field, the Id returned by create_activity()) and
+        "uploads" (the file itself - NOT pre-uploaded anywhere first,
+        unlike the old, incorrect /file/upload flow this replaces).
 
-        The Didar docs confirm this endpoint's RESPONSE shape:
-        {"Response": [{"Id": "<server-filename>", "Size": ..., "Type": ..., "Name": ...}]}
-        (matches _extract_attachment_key() below, which reads the first
-        "Key" field from the first item in the Response list).
-
-        The request is multipart/form-data with the file under a "file"
-        field (confirmed from the docs' document.json attached to d0296a9).
-        The UNCONFIRMED path is now fixed to "/file/upload" (from Didar's
-        docs) rather than the previous best guess "/api/UploadFile".
-        self._config.attachment_upload_path defaults to this confirmed path
-        - override DIDAR_ATTACHMENT_UPLOAD_PATH in .env once custom
-        configurations are needed.
+        Response includes file metadata (Key/Size/Type/Name per the
+        agent's description) but nothing this project needs to chain
+        into another call, so it's only logged, not parsed/returned.
         """
-        files = {"file": (filename, file_bytes, content_type)}
+        form = {"activityId": activity_id}
+        files = {"uploads": (filename, file_bytes, content_type)}
         resp = self._client.post(
-            self._config.attachment_upload_path,
+            self._config.attach_files_to_activity_path,
             params={"apikey": self._config.api_key},
+            data=form,
             files=files,
         )
         raise_for_status_with_body(resp)
-        return _extract_attachment_key(resp.json())
+        log.info(
+            "didar: attached photo '%s' to activity %s", filename, activity_id,
+        )
 
     def create_post_sale_checklist(
         self,
@@ -195,11 +197,14 @@ class DidarActivityClient:
         per-item rules).
 
         ship_attachment, when given, is (file_bytes, filename,
-        content_type) for the order's product photo - it gets uploaded
-        via upload_attachment() and attached to the "ارسال محصول" item
-        only (see SHIP_ACTIVITY_TITLE). A failed upload is logged and
-        the ship activity is still created without the attachment,
-        same fire-and-forget philosophy as everything else here.
+        content_type) for the order's product photo - after the
+        "ارسال محصول" item (see SHIP_ACTIVITY_TITLE) is created, it gets
+        attached via attach_photo_to_activity() using that item's own
+        Activity Id. A failed attach is logged and the ship activity
+        itself is left in place without it, same fire-and-forget
+        philosophy as everything else here - a photo attachment must
+        never be the reason the whole checklist (or the order sync)
+        fails.
 
         All-or-nothing on configuration (see module docstring), but NOT
         all-or-nothing on execution: one item failing (a bad type Id,
@@ -237,31 +242,13 @@ class DidarActivityClient:
             order_registered_at=order_registered_at, ship_time=ship_time,
         )
 
-        ship_attachment_key: str | None = None
-        ship_attachment_filename: str | None = None
-        if ship_attachment is not None:
-            file_bytes, filename, content_type = ship_attachment
-            try:
-                ship_attachment_key = self.upload_attachment(file_bytes, filename, content_type)
-                ship_attachment_filename = filename
-            except Exception:
-                log.exception(
-                    "didar: failed to upload product photo for deal %s - "
-                    "continuing without it",
-                    deal_id,
-                )
-
         for title, config_attr in POST_SALE_CHECKLIST:
-            new_attachments = None
-            if title == SHIP_ACTIVITY_TITLE and ship_attachment_key:
-                new_attachments = [(ship_attachment_key, ship_attachment_filename)]
             try:
-                self.create_activity(
+                activity_id = self.create_activity(
                     deal_id=deal_id,
                     title=title,
                     activity_type_id=self._activity_type_id(config_attr),
                     due_date=due_dates[title],
-                    new_attachments=new_attachments,
                 )
             except Exception:
                 log.exception(
@@ -269,6 +256,18 @@ class DidarActivityClient:
                     "- continuing with the rest of the checklist",
                     title, deal_id,
                 )
+                continue
+
+            if title == SHIP_ACTIVITY_TITLE and ship_attachment is not None:
+                file_bytes, filename, content_type = ship_attachment
+                try:
+                    self.attach_photo_to_activity(activity_id, file_bytes, filename, content_type)
+                except Exception:
+                    log.exception(
+                        "didar: failed to attach product photo to activity %s "
+                        "(deal %s) - continuing without it",
+                        activity_id, deal_id,
+                    )
 
 
 def _fmt(dt: datetime) -> str:
@@ -291,19 +290,4 @@ def _extract_activity_id(payload: dict) -> str:
         f"didar: could not find Activity Id in response - shape is unconfirmed, "
         f"update _extract_activity_id() once a real payload has been inspected. "
         f"Raw response: {payload!r}"
-    )
-
-
-def _extract_attachment_key(payload: dict) -> str:
-    """
-    Extracts the attachment ID from Didar's file upload response.
-    Confirmed response shape: {"Response": {"Id": "<server-filename>", ...}}
-    """
-    response = payload.get("Response")
-    if isinstance(response, dict) and response.get("Id"):
-        return str(response["Id"])
-    raise DidarApiError(
-        f"didar: could not find attachment Id in upload response - shape is "
-        f"unconfirmed, update _extract_attachment_key() once a real payload "
-        f"has been inspected. Raw response: {payload!r}"
     )

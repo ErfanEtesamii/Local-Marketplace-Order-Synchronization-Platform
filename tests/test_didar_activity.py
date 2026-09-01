@@ -127,16 +127,20 @@ def test_create_post_sale_checklist_defaults_ship_time_when_missing():
 
 
 @respx.mock
-def test_create_post_sale_checklist_attaches_uploaded_photo_to_ship_item_only():
-    upload_route = respx.post("https://app.didar.me/api/file/upload").mock(
-        return_value=httpx.Response(
-            200,
-            json={"Response": {"Id": "photo-key-1.jpg", "Size": 123,
-                               "Type": "image/jpeg", "Name": "photo.jpg"}},
-        )
-    )
+def test_create_post_sale_checklist_attaches_photo_to_ship_item_only():
+    """Confirmed 2026-09 flow: create the Activity first via
+    /activity/save (no attachment fields in that body at all), THEN
+    attach the photo via a separate /activity/AttachFilesToActivity
+    call keyed by that Activity's own Id - see module docstring."""
     save_route = respx.post("https://app.didar.me/api/activity/save").mock(
-        return_value=httpx.Response(200, json={"Response": {"Id": "a-x"}})
+        side_effect=[
+            httpx.Response(200, json={"Response": {"Id": f"a-{i}"}}) for i in range(6)
+        ]
+    )
+    attach_route = respx.post("https://app.didar.me/api/activity/AttachFilesToActivity").mock(
+        return_value=httpx.Response(
+            200, json={"Response": {"Key": "k1", "Size": 123, "Type": "image/jpeg", "Name": "photo.jpg"}}
+        )
     )
 
     client = DidarActivityClient(config=_CFG_WITH_TYPES)
@@ -147,39 +151,44 @@ def test_create_post_sale_checklist_attaches_uploaded_photo_to_ship_item_only():
         ship_attachment=(b"fake-bytes", "photo.jpg", "image/jpeg"),
     )
 
-    assert upload_route.call_count == 1
-    sent = [_json.loads(call.request.content)["Activity"]["Title"] for call in save_route.calls]
-    bodies = [_json.loads(call.request.content) for call in save_route.calls]
-    ship_body = bodies[sent.index("ارسال محصول")]
-    assert ship_body.get("NewAttachments") == [{"First": "photo-key-1.jpg", "Second": "photo.jpg"}]
-    # every other item gets no attachment
-    for title, body in zip(sent, bodies):
-        if title != "ارسال محصول":
-            assert "NewAttachments" not in body
+    # /activity/save bodies never contain attachment fields anymore.
+    for call in save_route.calls:
+        body = _json.loads(call.request.content)
+        assert "NewAttachments" not in body
+
+    # exactly one attach call, for the ship item's own Activity Id.
+    assert attach_route.call_count == 1
+    ship_index = [title for title, _ in POST_SALE_CHECKLIST].index("ارسال محصول")
+    expected_activity_id = f"a-{ship_index}"
+    attach_call = attach_route.calls[0].request
+    assert f'name="activityId"' in attach_call.content.decode("utf-8", errors="ignore")
+    assert expected_activity_id.encode() in attach_call.content
+    assert b'name="uploads"' in attach_call.content
+    assert b"fake-bytes" in attach_call.content
 
 
 @respx.mock
-def test_upload_attachment_returns_id_from_response():
-    """Test that upload_attachment correctly extracts the Id from the response."""
-    upload_route = respx.post("https://app.didar.me/api/file/upload").mock(
+def test_attach_photo_to_activity_posts_multipart_with_activity_id():
+    attach_route = respx.post("https://app.didar.me/api/activity/AttachFilesToActivity").mock(
         return_value=httpx.Response(
-            200,
-            json={"Response": {"Id": "photo-key-1.jpg", "Size": 123,
-                               "Type": "image/jpeg", "Name": "photo.jpg"}},
+            200, json={"Response": {"Key": "k1", "Size": 123, "Type": "image/jpeg", "Name": "photo.jpg"}}
         )
     )
 
     client = DidarActivityClient(config=_CFG_WITH_TYPES)
-    # Upload the file
-    uploaded_key = client.upload_attachment(
+    client.attach_photo_to_activity(
+        activity_id="a-42",
         file_bytes=b"fake-bytes",
         filename="photo.jpg",
-        content_type="image/jpeg"
+        content_type="image/jpeg",
     )
 
-    # Verify the upload response was parsed correctly
-    assert upload_route.call_count == 1
-    assert uploaded_key == "photo-key-1.jpg"
+    assert attach_route.call_count == 1
+    sent = attach_route.calls[0].request.content
+    assert b"a-42" in sent
+    assert b"fake-bytes" in sent
+    assert b'name="activityId"' in sent
+    assert b'name="uploads"' in sent
 
 
 @respx.mock

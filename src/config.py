@@ -161,19 +161,21 @@ class DidarConfig:
     activity_type_satisfaction_call_id: str = field(
         default_factory=lambda: _get("DIDAR_ACTIVITY_TYPE_SATISFACTION_CALL_ID")
     )
-    # UNCONFIRMED - the API docs supplied for this project show the
-    # RESPONSE shape of "attaching files" (Key/Size/Type/Name) but never
-    # document the request endpoint/method that produces it. This is a
-    # best guess, not a verified path - see
-    # DidarActivityClient.upload_attachment()'s docstring. Override here
-    # once the real endpoint is confirmed (e.g. from Didar support or a
-    # captured request from the web app), no code change needed.
+    # CONFIRMED (2026-09) directly from Didar's own support agent,
+    # citing "Attach Files To Activity" in their docs - this SUPERSEDES
+    # an earlier guess (POST /file/upload + Activity.save's NewAttachments)
+    # that was never independently verified and turned out not to match
+    # the documented flow at all. The real flow is two calls: (1) create
+    # the Activity via /activity/save as normal (no attachment fields),
+    # (2) POST here as multipart/form-data with an "activityId" field
+    # (the Id from step 1) and the file itself under "uploads" - see
+    # DidarActivityClient.attach_photo_to_activity().
     # Relative to base_url, which already includes "/api" (same
     # convention as every other path in this file, e.g. "/activity/save").
-    # CONFIRMED (2026-09, from Didar API docs): POST /api/file/upload
-    # returns {"Response": {"Id": "<server-filename>"}}.
-    attachment_upload_path: str = field(
-        default_factory=lambda: _get("DIDAR_ATTACHMENT_UPLOAD_PATH", "/file/upload")
+    attach_files_to_activity_path: str = field(
+        default_factory=lambda: _get(
+            "DIDAR_ATTACH_FILES_TO_ACTIVITY_PATH", "/activity/AttachFilesToActivity"
+        )
     )
 
     @property
