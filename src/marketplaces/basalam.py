@@ -62,16 +62,24 @@ def _to_decimal(value) -> Decimal:
 
 def _first_item_photo_url(raw_items: list[dict]) -> str | None:
     """
-    Best-effort product photo for the order - see the UNCONFIRMED note at
-    its call site in _normalize_detail. Tries the first item's nested
-    product.photo (confirmed shape: {"original", "xs", "sm", "md", "lg"}),
-    preferring "original" then falling back to the largest thumbnail.
+    Best-effort product photo for the order - see the call site in
+    _normalize_detail. CONFIRMED against docs/document.json (Basalam's own
+    OpenAPI spec, ProductSummaryResponse -> FileResponse): each item's
+    nested product carries a "photos" ARRAY (not a singular "photo"
+    object), and each entry there is {"id", "original", "format",
+    "resized": {size_key: url}} (not "xs"/"sm"/"md"/"lg" keys directly on
+    the photo). Prefers "original", falling back to any one "resized"
+    variant.
     """
     for item in raw_items:
-        photo = ((item.get("product") or {}).get("photo")) or {}
-        url = photo.get("original") or photo.get("lg") or photo.get("md")
-        if url:
-            return str(url)
+        photos = ((item.get("product") or {}).get("photos")) or []
+        for photo in photos:
+            url = photo.get("original")
+            if not url:
+                resized = photo.get("resized") or {}
+                url = next(iter(resized.values()), None)
+            if url:
+                return str(url)
     return None
 
 
@@ -210,16 +218,10 @@ class BasalamAdapter(MarketplaceAdapter):
             customer_mobile=customer.get("mobile") or customer.get("phone_number"),
             # Same confirmed field as _normalize_list_item - see its comment.
             ship_time=_parse_date_or_none(raw.get("estimate_send_at")),
-            # UNCONFIRMED (unlike estimate_send_at above): no live order-item
-            # response was available to verify this. The product-photo
-            # SCHEMA itself is confirmed elsewhere in the docs
-            # ({"photo": {"id", "original", "xs", "sm", "md", "lg"}} on the
-            # /vendors/{id}/products response) - what's unconfirmed is only
-            # whether a vendor-parcel item embeds that same nested "product"
-            # object with a "photo" field, or whether the photo would need a
-            # separate GET on the product id already used for sku above. If
-            # this comes back empty in production, that's the first place
-            # to check - not necessarily a bug in the checklist logic.
+            # CONFIRMED via docs/document.json (Basalam's own OpenAPI spec):
+            # each vendor-parcel item embeds a nested "product" object with
+            # a "photos" array - see _first_item_photo_url's docstring for
+            # the exact shape. No separate GET on the product id is needed.
             product_image_url=_first_item_photo_url(raw_items),
         )
 
@@ -228,7 +230,17 @@ def _parse_date(value: str | None) -> datetime:
     if not value:
         return datetime.now(timezone.utc)
     try:
-        return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        # Handle both formats: with "T" (ISO 8601) and without "T" (common API format)
+        iso_value = str(value).replace("Z", "+00:00")
+        if " " in iso_value and "T" not in iso_value:
+            # Insert "T" between date and time parts
+            date_part, time_part = iso_value.split(" ", 1)
+            iso_value = f"{date_part}T{time_part}"
+        parsed = datetime.fromisoformat(iso_value)
+        # Ensure timezone awareness
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed
     except ValueError:
         return datetime.now(timezone.utc)
 
@@ -243,6 +255,16 @@ def _parse_date_or_none(value: str | None) -> datetime | None:
     if not value:
         return None
     try:
-        return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        # Handle both formats: with "T" (ISO 8601) and without "T" (common API format)
+        iso_value = str(value).replace("Z", "+00:00")
+        if " " in iso_value and "T" not in iso_value:
+            # Insert "T" between date and time parts
+            date_part, time_part = iso_value.split(" ", 1)
+            iso_value = f"{date_part}T{time_part}"
+        parsed = datetime.fromisoformat(iso_value)
+        # Ensure timezone awareness
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed
     except ValueError:
         return None

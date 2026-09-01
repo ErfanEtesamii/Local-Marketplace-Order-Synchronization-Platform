@@ -128,6 +128,79 @@ def test_fetch_order_detail_includes_items():
 
 
 @respx.mock
+def test_fetch_order_detail_extracts_product_image():
+    """
+    Each item's "picture" field (confirmed in docs/TapsiShop.v.0.2.pdf,
+    order-detail response schema) must end up on that item's
+    product_image_url, and the first item's photo must also be promoted to
+    NormalizedOrder.product_image_url - that's the order-level field
+    DidarSyncService reads to attach a photo to the "ارسال محصول" Activity.
+    """
+    respx.get("https://vendorgw.tapsi.shop/Web/Hub/vendors/v1/orders/222").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "success": True,
+                "data": {
+                    "order": {
+                        "orderNumber": "ORD-222",
+                        "orderDate": "2026-08-10T09:00:00Z",
+                        "originalAmount": "300000",
+                        "amountAfterDiscount": "250000",
+                        "status": "confirmed",
+                    },
+                    "items": [
+                        {"sku": "SKU-1", "name": "Product A", "price": "150000",
+                         "finalPrice": "125000", "picture": "https://cdn.tapsi.shop/a.jpg"},
+                        {"sku": "SKU-2", "name": "Product B", "price": "150000",
+                         "finalPrice": "125000", "picture": "https://cdn.tapsi.shop/b.jpg"},
+                    ],
+                },
+            },
+        )
+    )
+
+    adapter = TapsiShopAdapter(config=_CFG)
+    order = adapter.fetch_order_detail("222")
+
+    assert order.items[0].product_image_url == "https://cdn.tapsi.shop/a.jpg"
+    assert order.items[1].product_image_url == "https://cdn.tapsi.shop/b.jpg"
+    assert order.product_image_url == "https://cdn.tapsi.shop/a.jpg"
+
+
+@respx.mock
+def test_fetch_order_detail_handles_missing_picture():
+    """No "picture" field on an item must yield None, not a crash or the
+    string "None"."""
+    respx.get("https://vendorgw.tapsi.shop/Web/Hub/vendors/v1/orders/223").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "success": True,
+                "data": {
+                    "order": {
+                        "orderNumber": "ORD-223",
+                        "orderDate": "2026-08-10T09:00:00Z",
+                        "originalAmount": "150000",
+                        "amountAfterDiscount": "150000",
+                        "status": "confirmed",
+                    },
+                    "items": [
+                        {"sku": "SKU-1", "name": "Product A", "price": "150000", "finalPrice": "150000"},
+                    ],
+                },
+            },
+        )
+    )
+
+    adapter = TapsiShopAdapter(config=_CFG)
+    order = adapter.fetch_order_detail("223")
+
+    assert order.items[0].product_image_url is None
+    assert order.product_image_url is None
+
+
+@respx.mock
 def test_client_errors_are_not_retried():
     """
     Regression test: 400/401/403 must raise immediately (single call), not

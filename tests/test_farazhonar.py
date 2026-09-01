@@ -176,6 +176,10 @@ def test_normalize_resolves_image_url_for_each_line_item():
     assert products_route.call_count == 4  # category + image per unique product_id (2 products)
     assert order.items[0].product_image_url == "https://cdn.farazhonar.com/111.jpg"
     assert order.items[1].product_image_url == "https://cdn.farazhonar.com/222.jpg"
+    # Order-level field - this is what DidarSyncService._fetch_product_image
+    # actually reads to attach a photo to the "ارسال محصول" Activity. Before
+    # the fix this stayed None even though the items above had images.
+    assert order.product_image_url == "https://cdn.farazhonar.com/111.jpg"
 
 
 @respx.mock

@@ -172,6 +172,10 @@ class TapsiShopAdapter(MarketplaceAdapter):
                 quantity=1,
                 unit_price=to_rial(_to_decimal(i.get("price")), self._config.price_unit),
                 final_price=to_rial(_to_decimal(i.get("finalPrice")), self._config.price_unit),
+                # CONFIRMED field per docs/TapsiShop.v.0.2.pdf (order-detail
+                # response, items[].picture) - was never read before, so no
+                # Tapsi Shop order ever had a photo to attach.
+                product_image_url=str(i["picture"]) if i.get("picture") else None,
             )
             for i in raw_items
         ]
@@ -189,6 +193,10 @@ class TapsiShopAdapter(MarketplaceAdapter):
             items=items,
             customer_full_name=None,  # not available via REST polling - see module docstring
             customer_mobile=None,
+            # NormalizedOrder.product_image_url (order-level) is what
+            # DidarSyncService reads to attach a photo to the "ارسال محصول"
+            # Activity - reuse the first item's image.
+            product_image_url=items[0].product_image_url if items else None,
         )
 
     def _normalize_list_item(self, raw: dict) -> NormalizedOrder:

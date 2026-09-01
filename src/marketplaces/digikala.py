@@ -331,8 +331,20 @@ class DigikalaAdapter(MarketplaceAdapter):
                 status_val = "refunded"
             else:
                 status_val = str(status.get("title") or status.get("key") or "unknown")
-            # Extract shipment_id from the first row (all rows in group should have same shipment_id)
-            shipment_id = str(first.get("order_shipment_id")) if first.get("order_shipment_id") else None
+            # NormalizedOrder.product_image_url (order-level, used by
+            # DidarSyncService._fetch_product_image to attach a photo to the
+            # "ارسال محصول" Activity) was never set here before - only each
+            # OrderItem got a product_image_url, which nothing downstream
+            # reads for the attachment. Reuse the first item's image as the
+            # order-level photo.
+            product_image_url = items[0].product_image_url if items else None
+            # Extract shipment_id from the first row (all rows in group should have same shipment_id).
+            # NOTE: the real /orders/history response (confirmed against docs/api digikala.docx)
+            # returns this as a top-level "shipment_id" field. "order_shipment_id" only ever
+            # appears as one of the searchable fields for the search_text_all query param, not
+            # as a response field - using it here made shipment_id always None, which silently
+            # disabled SBS customer enrichment for every order.
+            shipment_id = str(first.get("shipment_id")) if first.get("shipment_id") else None
             orders.append(
                 NormalizedOrder(
                     source=self.name,
@@ -345,6 +357,7 @@ class DigikalaAdapter(MarketplaceAdapter):
                     customer_full_name=None,  # not requested for this project - see module docstring
                     customer_mobile=None,
                     shipment_id=shipment_id,
+                    product_image_url=product_image_url,
                 )
             )
         return orders
@@ -352,25 +365,15 @@ class DigikalaAdapter(MarketplaceAdapter):
     def _extract_product_image_url(self, row: dict) -> str | None:
         """
         Extract product image URL from a row.
-        Assumes the Digikala API returns a "product" object with "photo" field
-        containing image URLs (original, xs, sm, md, lg), similar to Basalam.
+
+        CORRECTED: the real /orders/history response (confirmed against
+        docs/api digikala.docx) returns the image directly as a top-level
+        "image_src" string field - there is no nested "product.photo.*"
+        object on this endpoint (that shape belongs to a different,
+        unused endpoint: GET /open-api/v1/orders). The old lookup here
+        always returned None, so no order ever had a photo to attach.
         """
-        # Try to find the product object within the row
-        product_data = row.get("product") or {}
-        if not product_data:
-            return None
-
-        photo_data = product_data.get("photo") or {}
-        if not photo_data:
-            return None
-
-        # Prefer "original" then "lg" then "md" then "sm" then "original"
-        url = (
-            photo_data.get("original") or
-            photo_data.get("lg") or
-            photo_data.get("md") or
-            photo_data.get("sm")
-        )
+        url = row.get("image_src")
         return str(url) if url else None
 
     def _fmt(self, dt: datetime) -> str:

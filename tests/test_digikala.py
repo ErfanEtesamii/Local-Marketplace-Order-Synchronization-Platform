@@ -451,12 +451,14 @@ def test_fetch_sbs_customer_details_returns_none_on_failure():
 
 
 def test_group_rows_extracts_shipment_id():
-    """_group_rows_into_orders extracts order_shipment_id and populates
-    NormalizedOrder.shipment_id."""
+    """_group_rows_into_orders extracts shipment_id (the real top-level field
+    name confirmed in docs/api digikala.docx for /orders/history - NOT
+    "order_shipment_id", which is only a search_text_all field name, never a
+    response field) and populates NormalizedOrder.shipment_id."""
     rows = [
         {
             "order_id": "100",
-            "order_shipment_id": "SHIP-100",
+            "shipment_id": "SHIP-100",
             "order_created_at": "2026-08-10T09:00:00+03:30",
             "product_variant_title": "Product",
             "product_supplier_code": "SKU-1",
@@ -474,8 +476,37 @@ def test_group_rows_extracts_shipment_id():
     assert orders[0].shipment_id == "SHIP-100"
 
 
+def test_group_rows_extracts_product_image_from_image_src():
+    """Product photo comes from the row's top-level "image_src" field (the
+    real /orders/history field, confirmed in docs/api digikala.docx) - NOT a
+    nested "product.photo.*" object, which belongs to a different, unused
+    endpoint. NormalizedOrder.product_image_url must be populated (not just
+    each OrderItem's), since that's the field DidarSyncService reads to
+    attach a photo to the "ارسال محصول" Activity."""
+    rows = [
+        {
+            "order_id": "300",
+            "order_created_at": "2026-08-10T09:00:00+03:30",
+            "product_variant_title": "Product",
+            "product_supplier_code": "SKU-1",
+            "quantity": 1,
+            "unit_price": 50000,
+            "total_price": 50000,
+            "order_status": {"key": "confirmed", "title": "نهایی شده"},
+            "image_src": "https://dkstatics-public.digikala.com/example.jpg",
+        },
+    ]
+
+    adapter = DigikalaAdapter(config=_CFG)
+    orders = adapter._group_rows_into_orders(rows)
+
+    assert len(orders) == 1
+    assert orders[0].product_image_url == "https://dkstatics-public.digikala.com/example.jpg"
+    assert orders[0].items[0].product_image_url == "https://dkstatics-public.digikala.com/example.jpg"
+
+
 def test_group_rows_handles_missing_shipment_id():
-    """If order_shipment_id is absent from the row, NormalizedOrder.shipment_id
+    """If shipment_id is absent from the row, NormalizedOrder.shipment_id
     is None (not an empty string)."""
     rows = [
         {

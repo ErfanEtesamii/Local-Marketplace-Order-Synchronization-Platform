@@ -93,10 +93,10 @@ def test_fetch_order_detail_includes_items_and_customer():
                 "estimate_send_at": "2026-08-12T18:00:00Z",
                 "items": [
                     {"id": 1, "title": "گلدان سفالی", "quantity": 2, "price": 240000,
-                     "product": {"id": 4242, "photo": {
-                         "original": "https://cdn.basalam.com/photos/4242-original.jpg",
-                         "lg": "https://cdn.basalam.com/photos/4242-lg.jpg",
-                     }}}
+                     "product": {"id": 4242, "photos": [
+                         {"id": 1, "original": "https://cdn.basalam.com/photos/4242-original.jpg",
+                          "resized": {"lg": "https://cdn.basalam.com/photos/4242-lg.jpg"}},
+                     ]}}
                 ],
             },
         )
@@ -115,7 +115,7 @@ def test_fetch_order_detail_includes_items_and_customer():
 
 
 @respx.mock
-def test_fetch_order_detail_product_image_falls_back_to_lg_without_original():
+def test_fetch_order_detail_product_image_falls_back_to_resized_without_original():
     respx.get("https://order-processing.basalam.com/v3/vendor-parcels/555").mock(
         return_value=httpx.Response(
             200,
@@ -127,9 +127,9 @@ def test_fetch_order_detail_product_image_falls_back_to_lg_without_original():
                 "order": {"id": 9001},
                 "items": [
                     {"id": 1, "title": "گلدان سفالی", "quantity": 1, "price": 240000,
-                     "product": {"id": 4242, "photo": {
-                         "lg": "https://cdn.basalam.com/photos/4242-lg.jpg",
-                     }}}
+                     "product": {"id": 4242, "photos": [
+                         {"id": 1, "original": "", "resized": {"lg": "https://cdn.basalam.com/photos/4242-lg.jpg"}},
+                     ]}}
                 ],
             },
         )
