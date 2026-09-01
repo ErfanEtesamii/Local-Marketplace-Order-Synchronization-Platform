@@ -65,6 +65,7 @@ merely a genuine duplicate row pointing at the same real product.
 """
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -107,6 +108,30 @@ _DIGIT_TABLE = str.maketrans(
     "01234567890123456789",
 )
 
+# BUGFIX (client feedback, 2026-09 - "product names don't match our real
+# catalog"): the client's real catalog has many rows where a model name
+# is glued directly to its variant number with no space at all, e.g.
+# "چاپا4" (Code=4) - while the marketplace title for the exact same
+# product writes it as two separate words, e.g. "... مدل چاپا کد 04 ...".
+# Confirmed against the real catalog export: ~128 of its ~3,300 rows have
+# a Persian letter immediately followed by a digit this way. Without
+# splitting these, "چاپا4" tokenizes as ONE token that can never appear
+# in a marketplace title (which always has "چاپا" and the number as
+# separate words), so containment matching fails outright for an
+# otherwise-correct, already-existing catalog product - and the sync
+# creates a wrong duplicate product under the raw marketplace title
+# instead (see deal_client.py's fallback).
+#
+# Scoped to PERSIAN letters only (Unicode block \u0600-\u06FF, after
+# _normalize_fa has already unified Arabic/Persian variants) - NOT plain
+# ASCII letters - so this doesn't touch the deliberate "10x15" vs "10×15"
+# distinction already covered by test_persian_digits_in_catalog_match_
+# ascii_digits_in_title (an ASCII "x" typed for the multiplication sign
+# must still NOT match "×" - unrelated to this glued-Persian-word issue).
+_PERSIAN_DIGIT_BOUNDARY = re.compile(
+    r"(?<=[\u0600-\u06FF])(?=[0-9])|(?<=[0-9])(?=[\u0600-\u06FF])"
+)
+
 
 @dataclass(frozen=True)
 class CatalogMatch:
@@ -116,9 +141,33 @@ class CatalogMatch:
                 # is actually already in Didar.
 
 
+def _split_glued_persian_digits(token: str) -> list[str]:
+    """Split a token where a Persian model name is glued directly to a
+    digit run with no separator - see _PERSIAN_DIGIT_BOUNDARY above."""
+    return [part for part in _PERSIAN_DIGIT_BOUNDARY.sub(" ", token).split() if part]
+
+
+def _strip_leading_zeros(token: str) -> str:
+    """Normalize a purely-numeric token by stripping leading zeros, e.g.
+    "04" -> "4" (client's real catalog confirms this is the same product
+    - catalog row "چاپا4"/Code=4 vs marketplace title "... چاپا کد 04
+    ..."). A leading-zero-only difference must not fail an otherwise
+    exact match. Left untouched for non-numeric tokens, and for a token
+    that's ALL zeros (kept as "0" rather than stripped to empty)."""
+    if token.isdigit() and len(token) > 1:
+        return token.lstrip("0") or "0"
+    return token
+
+
 def _tokenize(text: str) -> frozenset[str]:
     normalized = _normalize_fa(text).translate(_DIGIT_TABLE).translate(_SEPARATOR_TABLE)
-    return frozenset(t for t in normalized.split() if t and t not in _STOPWORDS)
+    tokens: list[str] = []
+    for raw in normalized.split():
+        for part in _split_glued_persian_digits(raw):
+            normalized_part = _strip_leading_zeros(part)
+            if normalized_part and normalized_part not in _STOPWORDS:
+                tokens.append(normalized_part)
+    return frozenset(tokens)
 
 
 class ProductCatalog:

@@ -9,7 +9,7 @@ from src.didar.activity_client import DidarActivityClient
 from src.didar.contact_client import DidarContactClient
 from src.didar.deal_client import DidarDealClient
 from src.didar.product_client import DidarProductClient
-from src.didar.service import DidarSyncService, _customer_code_for, _fetch_product_image
+from src.didar.service import DidarSyncService, _customer_code_for, _fetch_product_images
 from src.marketplaces.base import NormalizedOrder, OrderItem
 
 _CFG = DidarConfig(
@@ -95,7 +95,7 @@ _ORDER = NormalizedOrder(
 
 
 @respx.mock
-def test_fetch_product_image_filename_ignores_query_string():
+def test_fetch_product_images_filename_ignores_query_string():
     """Regression test for a real production bug: Digikala's CDN URLs
     append image-transform params to the query string using "/" as a
     separator (e.g. "...?x-oss-process=image/resize,m_lfit/quality,q_60"),
@@ -103,7 +103,7 @@ def test_fetch_product_image_filename_ignores_query_string():
     piece of the query string instead of the real filename. Confirmed
     live - every "ارسال محصول" attachment in production was named
     literally "quality,q_60" instead of the actual image filename.
-    _fetch_product_image must derive the filename from the URL's path
+    _fetch_product_images must derive the filename from the URL's path
     only, ignoring anything after "?"."""
     url = (
         "https://dkstatics-public.digikala.com/digikala-products/113noe.jpg"
@@ -112,15 +112,112 @@ def test_fetch_product_image_filename_ignores_query_string():
     respx.get(url).mock(
         return_value=httpx.Response(200, content=b"fake-bytes", headers={"content-type": "image/jpeg"})
     )
-    order = NormalizedOrder(**{**_ORDER.__dict__, "product_image_url": url})
+    item = OrderItem(
+        sku="SKU-1", title="Product A", quantity=2, unit_price=Decimal("100000"),
+        final_price=Decimal("200000"), product_image_url=url,
+    )
+    order = NormalizedOrder(**{**_ORDER.__dict__, "items": [item]})
 
-    result = _fetch_product_image(order)
+    result = _fetch_product_images(order)
 
-    assert result is not None
-    file_bytes, filename, content_type = result
+    assert len(result) == 1
+    file_bytes, filename, content_type = result[0]
     assert filename == "113noe.jpg"
     assert file_bytes == b"fake-bytes"
     assert content_type == "image/jpeg"
+
+
+@respx.mock
+def test_fetch_product_images_downloads_one_photo_per_line_item():
+    """Regression test for the real production bug this fixes (client
+    feedback, 2026-09): an order with more than one product must get a
+    photo downloaded for EVERY item that has its own image URL, not
+    just the first - previously only order.product_image_url (set from
+    items[0] alone by every adapter) was ever read here."""
+    url1 = "https://cdn.example.com/a.jpg"
+    url2 = "https://cdn.example.com/b.jpg"
+    respx.get(url1).mock(
+        return_value=httpx.Response(200, content=b"bytes-a", headers={"content-type": "image/jpeg"})
+    )
+    respx.get(url2).mock(
+        return_value=httpx.Response(200, content=b"bytes-b", headers={"content-type": "image/png"})
+    )
+    items = [
+        OrderItem(sku="SKU-1", title="Product A", quantity=1, unit_price=Decimal("100000"),
+                  final_price=Decimal("100000"), product_image_url=url1),
+        OrderItem(sku="SKU-2", title="Product B", quantity=1, unit_price=Decimal("50000"),
+                  final_price=Decimal("50000"), product_image_url=url2),
+    ]
+    order = NormalizedOrder(**{**_ORDER.__dict__, "items": items})
+
+    result = _fetch_product_images(order)
+
+    assert len(result) == 2
+    assert result[0][0] == b"bytes-a"
+    assert result[1][0] == b"bytes-b"
+
+
+@respx.mock
+def test_fetch_product_images_skips_duplicate_urls():
+    """Two items pointing at the exact same photo must not download or
+    attach it twice."""
+    url = "https://cdn.example.com/same.jpg"
+    route = respx.get(url).mock(
+        return_value=httpx.Response(200, content=b"bytes", headers={"content-type": "image/jpeg"})
+    )
+    items = [
+        OrderItem(sku="SKU-1", title="Product A", quantity=1, unit_price=Decimal("100000"),
+                  final_price=Decimal("100000"), product_image_url=url),
+        OrderItem(sku="SKU-2", title="Product B", quantity=1, unit_price=Decimal("50000"),
+                  final_price=Decimal("50000"), product_image_url=url),
+    ]
+    order = NormalizedOrder(**{**_ORDER.__dict__, "items": items})
+
+    result = _fetch_product_images(order)
+
+    assert len(result) == 1
+    assert route.call_count == 1
+
+
+@respx.mock
+def test_fetch_product_images_one_failed_download_does_not_block_others():
+    """A broken/missing photo for one item must not prevent the other
+    items' photos from being downloaded and attached."""
+    good_url = "https://cdn.example.com/good.jpg"
+    bad_url = "https://cdn.example.com/bad.jpg"
+    respx.get(bad_url).mock(return_value=httpx.Response(404))
+    respx.get(good_url).mock(
+        return_value=httpx.Response(200, content=b"bytes-good", headers={"content-type": "image/jpeg"})
+    )
+    items = [
+        OrderItem(sku="SKU-1", title="Product A", quantity=1, unit_price=Decimal("100000"),
+                  final_price=Decimal("100000"), product_image_url=bad_url),
+        OrderItem(sku="SKU-2", title="Product B", quantity=1, unit_price=Decimal("50000"),
+                  final_price=Decimal("50000"), product_image_url=good_url),
+    ]
+    order = NormalizedOrder(**{**_ORDER.__dict__, "items": items})
+
+    result = _fetch_product_images(order)
+
+    assert len(result) == 1
+    assert result[0][0] == b"bytes-good"
+
+
+def test_fetch_product_images_falls_back_to_order_level_url_when_items_have_none():
+    """An order whose items carry no image URL of their own (e.g. an
+    adapter that hasn't been wired up yet) still falls back to the
+    order-level product_image_url, same as before this fix."""
+    with respx.mock:
+        url = "https://cdn.example.com/order-level.jpg"
+        respx.get(url).mock(
+            return_value=httpx.Response(200, content=b"bytes", headers={"content-type": "image/jpeg"})
+        )
+        order = NormalizedOrder(**{**_ORDER.__dict__, "product_image_url": url})
+
+        result = _fetch_product_images(order)
+
+        assert len(result) == 1
+        assert result[0][0] == b"bytes"
 
 
 @respx.mock

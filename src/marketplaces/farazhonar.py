@@ -204,10 +204,12 @@ class FarazHonarAdapter(MarketplaceAdapter):
             items=items,
             customer_full_name=full_name,
             customer_mobile=billing.get("phone") or None,
-            # NormalizedOrder.product_image_url (order-level) was never set
-            # here before - only each OrderItem got one from
-            # _resolve_image_url, which nothing downstream reads for the
-            # "ارسال محصول" Activity attachment. Reuse the first item's image.
+            # NormalizedOrder.product_image_url (order-level) is now just a
+            # last-resort fallback - each OrderItem's OWN image from
+            # _resolve_image_url (set above) is what actually gets
+            # attached to the "ارسال محصول" Activity, one photo per line
+            # item, so a multi-item order gets every product's photo, not
+            # just the first (client feedback, 2026-09).
             product_image_url=items[0].product_image_url if items else None,
         )
 

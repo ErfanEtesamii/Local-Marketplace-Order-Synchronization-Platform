@@ -60,26 +60,39 @@ def _to_decimal(value) -> Decimal:
 
 
 
+def _item_photo_url(item: dict) -> str | None:
+    """
+    Best-effort product photo for ONE order item. CONFIRMED against
+    docs/document.json (Basalam's own OpenAPI spec, ProductSummaryResponse
+    -> FileResponse): each item's nested product carries a "photos" ARRAY
+    (not a singular "photo" object), and each entry there is {"id",
+    "original", "format", "resized": {size_key: url}} (not
+    "xs"/"sm"/"md"/"lg" keys directly on the photo). Prefers "original",
+    falling back to any one "resized" variant.
+    """
+    photos = ((item.get("product") or {}).get("photos")) or []
+    for photo in photos:
+        url = photo.get("original")
+        if not url:
+            resized = photo.get("resized") or {}
+            url = next(iter(resized.values()), None)
+        if url:
+            return str(url)
+    return None
+
+
 def _first_item_photo_url(raw_items: list[dict]) -> str | None:
-    """
-    Best-effort product photo for the order - see the call site in
-    _normalize_detail. CONFIRMED against docs/document.json (Basalam's own
-    OpenAPI spec, ProductSummaryResponse -> FileResponse): each item's
-    nested product carries a "photos" ARRAY (not a singular "photo"
-    object), and each entry there is {"id", "original", "format",
-    "resized": {size_key: url}} (not "xs"/"sm"/"md"/"lg" keys directly on
-    the photo). Prefers "original", falling back to any one "resized"
-    variant.
-    """
+    """Best-effort product photo for the ORDER as a whole (order-level
+    NormalizedOrder.product_image_url) - kept only as a last-resort
+    fallback now that every OrderItem carries its own product_image_url
+    (see _item_photo_url above and its use in _normalize_detail);
+    src.didar.service._fetch_product_images() prefers the per-item URLs
+    and only falls back to this order-level one when an order's items
+    have none of their own."""
     for item in raw_items:
-        photos = ((item.get("product") or {}).get("photos")) or []
-        for photo in photos:
-            url = photo.get("original")
-            if not url:
-                resized = photo.get("resized") or {}
-                url = next(iter(resized.values()), None)
-            if url:
-                return str(url)
+        url = _item_photo_url(item)
+        if url:
+            return url
     return None
 
 
@@ -193,6 +206,16 @@ class BasalamAdapter(MarketplaceAdapter):
                     _to_decimal(item.get("price", 0)) * int(item.get("quantity", 1)),
                     self._config.price_unit,
                 ),
+                # BUGFIX (client feedback, 2026-09): every item now gets
+                # ITS OWN photo, not just the order's first item - see
+                # _item_photo_url above and src.didar.service.
+                # _fetch_product_images, which attaches one photo per
+                # line item to the "ارسال محصول" Activity. Previously
+                # only NormalizedOrder.product_image_url (order-level,
+                # from _first_item_photo_url) was ever set here, so a
+                # multi-item Basalam order silently lost every photo but
+                # the first.
+                product_image_url=_item_photo_url(item),
             )
             for item in raw_items
         ]

@@ -193,9 +193,12 @@ class TapsiShopAdapter(MarketplaceAdapter):
             items=items,
             customer_full_name=None,  # not available via REST polling - see module docstring
             customer_mobile=None,
-            # NormalizedOrder.product_image_url (order-level) is what
-            # DidarSyncService reads to attach a photo to the "ارسال محصول"
-            # Activity - reuse the first item's image.
+            # NormalizedOrder.product_image_url (order-level) is now just a
+            # last-resort fallback - each OrderItem's OWN image (set
+            # above) is what DidarSyncService actually attaches to the
+            # "ارسال محصول" Activity, one photo per line item, so a
+            # multi-item order gets every product's photo, not just the
+            # first (client feedback, 2026-09).
             product_image_url=items[0].product_image_url if items else None,
         )
 

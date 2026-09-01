@@ -277,6 +277,28 @@ class DidarDealClient:
             "PipelineId": self._config.pipeline_id,
             "PipelineStageId": self._config.pipeline_stage_id,
             "Description": _build_description(order),
+            # TAX FIX (client feedback, 2026-09 - "عوارض و مالیات باید صفر
+            # باشه، کد 10 درصد میذاره"): the old code only sent
+            # "TaxPercent": "0" on each DealItem (see _build_deal_item
+            # below). An independently-published Didar API client
+            # library's own struct definitions show TaxPercent living on
+            # the DEAL object, with DealItem exposing no such field at
+            # all (only Description/Discount/ProductId/Quantity/
+            # UnitPrice) - which would explain the symptom: Didar ignores
+            # an unrecognized DealItem field and falls back to the
+            # account's own default tax rate.
+            #
+            # NOT independently confirmed against Didar's own official
+            # docs, though - so this is set at BOTH levels deliberately
+            # (see "TaxPercent" on the DealItem below too): whichever one
+            # Didar actually honors, tax comes out at 0 either way, and
+            # sending the extra field at the other level is harmless (the
+            # old code already sent it on DealItems with no error). After
+            # deploying, open a freshly-created deal in Didar's UI and
+            # confirm "عوارض و مالیات" reads 0% - that's the only way to
+            # be fully certain which level Didar actually reads, and this
+            # comment should be updated once that's confirmed live.
+            "TaxPercent": "0",
         }
         label_id = self._label_id_for_source(order.source)
         if label_id:
@@ -292,6 +314,14 @@ class DidarDealClient:
             "didar: created deal for %s order %s -> Id=%s",
             order.source, order.source_order_id, deal_id,
         )
+        # Debug-level dump of the raw response (client feedback, 2026-09,
+        # re: the TaxPercent placement uncertainty above) - if Didar's
+        # save_v2 response ever echoes back the saved Deal/DealItems
+        # fields, this makes it visible in the logs without needing a
+        # separate manual API call to confirm which TaxPercent Didar
+        # actually applied. Debug (not info) since this is a diagnostic
+        # aid, not something needed on every routine sync.
+        log.debug("didar: deal/save_v2 raw response for Id=%s: %r", deal_id, payload)
         return deal_id
 
     def _build_deal_item(self, item, order: NormalizedOrder) -> dict:
@@ -352,11 +382,13 @@ class DidarDealClient:
             "Quantity": item.quantity,
             "UnitPrice": int(item.unit_price),
             "Discount": int(per_unit_discount),
-            # Didar's DealItems schema DOES define a per-item TaxPercent
-            # field (confirmed against current Didar API docs, 2026-09) -
-            # sent explicitly as "0" so every auto-created deal item has
-            # no tax applied, rather than whatever Didar's own default is.
+            # Sent here too, redundantly, alongside Deal.TaxPercent above -
+            # see the long comment on create_deal() for why: it's not
+            # fully confirmed which level Didar actually reads, and
+            # sending "0" here is harmless either way (Didar already
+            # accepted this field on DealItems with no error before).
             "TaxPercent": "0",
+            #
             # Order-traceability text, matching the convention seen on
             # manually-entered deals (client feedback 2026-08) - those
             # have "شماره سفارش: X/شماره مرسوله: Y" typed into each

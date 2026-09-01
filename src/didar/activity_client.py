@@ -56,13 +56,24 @@ but a missing ship_time no longer does.
 
 SHIP ACTIVITY ATTACHMENT (2026-08 client feedback; flow CORRECTED
 2026-09 after directly confirming with Didar's own support agent): the
-"ارسال محصول" item gets the order's product photo attached via a
+"ارسال محصول" item gets the order's product photo(s) attached via a
 two-step flow - (1) create the Activity as normal via /activity/save,
-with no attachment fields in the body at all, (2) POST the photo to
+with no attachment fields in the body at all, (2) POST each photo to
 the documented /activity/AttachFilesToActivity as multipart/form-data,
 with "activityId" (the Id from step 1) and the file itself under
 "uploads". See attach_photo_to_activity() and
 create_post_sale_checklist() for the exact flow.
+
+MULTIPLE PRODUCTS PER ORDER (BUGFIX, client feedback 2026-09 - "if a
+customer ordered more than one product, all of them need a photo in
+the ارسال محصول activity, not just one"): create_post_sale_checklist()
+takes ship_attachments as a LIST now (previously a single tuple) and
+attaches every one of them to the same ship Activity via repeated
+attach_photo_to_activity() calls. This was a real bug, not a
+theoretical one - src/didar/service.py._fetch_product_images()
+downloads one photo per line item, but only the first ever reached
+this client before. Each attach is isolated in its own try/except so
+one bad/missing photo never blocks the rest of the order's photos.
 
 This REPLACES an earlier implementation (upload_attachment() posting
 to a guessed /file/upload path, then passing the returned Key back
@@ -86,8 +97,8 @@ from src.logger import get_logger
 
 log = get_logger(__name__)
 
-# Title of the checklist item that gets the order's product photo
-# attached (see create_post_sale_checklist's ship_attachment param).
+# Title of the checklist item that gets the order's product photo(s)
+# attached (see create_post_sale_checklist's ship_attachments param).
 SHIP_ACTIVITY_TITLE = "ارسال محصول"
 
 # Fallback anchor (client instruction, 2026-08-29) for marketplaces whose
@@ -187,7 +198,7 @@ class DidarActivityClient:
         deal_id: str,
         order_registered_at: datetime,
         ship_time: datetime | None,
-        ship_attachment: tuple[bytes, str, str] | None = None,
+        ship_attachments: list[tuple[bytes, str, str]] | None = None,
     ) -> None:
         """
         Creates every item in POST_SALE_CHECKLIST on the given deal, each
@@ -196,15 +207,17 @@ class DidarActivityClient:
         order_registered_at and ship_time (see that module for the exact
         per-item rules).
 
-        ship_attachment, when given, is (file_bytes, filename,
-        content_type) for the order's product photo - after the
-        "ارسال محصول" item (see SHIP_ACTIVITY_TITLE) is created, it gets
-        attached via attach_photo_to_activity() using that item's own
-        Activity Id. A failed attach is logged and the ship activity
-        itself is left in place without it, same fire-and-forget
-        philosophy as everything else here - a photo attachment must
-        never be the reason the whole checklist (or the order sync)
-        fails.
+        ship_attachments, when given, is a list of (file_bytes, filename,
+        content_type) - one per product photo (see module docstring's
+        "MULTIPLE PRODUCTS PER ORDER" note: an order with several line
+        items gets several photos, not just the first) - after the
+        "ارسال محصول" item (see SHIP_ACTIVITY_TITLE) is created, EVERY
+        one of them gets attached via its own attach_photo_to_activity()
+        call using that item's Activity Id. Each attach is tried
+        independently - one failed/missing photo is logged and skipped,
+        the rest still get attached, same fire-and-forget philosophy as
+        everything else here: a photo attachment must never be the
+        reason the whole checklist (or the order sync) fails.
 
         All-or-nothing on configuration (see module docstring), but NOT
         all-or-nothing on execution: one item failing (a bad type Id,
@@ -258,16 +271,17 @@ class DidarActivityClient:
                 )
                 continue
 
-            if title == SHIP_ACTIVITY_TITLE and ship_attachment is not None:
-                file_bytes, filename, content_type = ship_attachment
-                try:
-                    self.attach_photo_to_activity(activity_id, file_bytes, filename, content_type)
-                except Exception:
-                    log.exception(
-                        "didar: failed to attach product photo to activity %s "
-                        "(deal %s) - continuing without it",
-                        activity_id, deal_id,
-                    )
+            if title == SHIP_ACTIVITY_TITLE and ship_attachments:
+                for file_bytes, filename, content_type in ship_attachments:
+                    try:
+                        self.attach_photo_to_activity(activity_id, file_bytes, filename, content_type)
+                    except Exception:
+                        log.exception(
+                            "didar: failed to attach product photo '%s' to "
+                            "activity %s (deal %s) - continuing with the "
+                            "rest of this order's photos",
+                            filename, activity_id, deal_id,
+                        )
 
 
 def _fmt(dt: datetime) -> str:

@@ -148,7 +148,7 @@ def test_create_post_sale_checklist_attaches_photo_to_ship_item_only():
         deal_id="deal-1",
         order_registered_at=_REGISTERED,
         ship_time=_SHIP,
-        ship_attachment=(b"fake-bytes", "photo.jpg", "image/jpeg"),
+        ship_attachments=[(b"fake-bytes", "photo.jpg", "image/jpeg")],
     )
 
     # /activity/save bodies never contain attachment fields anymore.
@@ -165,6 +165,77 @@ def test_create_post_sale_checklist_attaches_photo_to_ship_item_only():
     assert expected_activity_id.encode() in attach_call.content
     assert b'name="uploads"' in attach_call.content
     assert b"fake-bytes" in attach_call.content
+
+
+@respx.mock
+def test_create_post_sale_checklist_attaches_a_photo_per_line_item():
+    """Regression test for a real production bug (client feedback,
+    2026-09): an order with more than one product must get EVERY
+    product's photo attached to the "ارسال محصول" Activity, not just
+    the first one."""
+    respx.post("https://app.didar.me/api/activity/save").mock(
+        side_effect=[
+            httpx.Response(200, json={"Response": {"Id": f"a-{i}"}}) for i in range(6)
+        ]
+    )
+    attach_route = respx.post("https://app.didar.me/api/activity/AttachFilesToActivity").mock(
+        return_value=httpx.Response(
+            200, json={"Response": {"Key": "k1", "Size": 123, "Type": "image/jpeg", "Name": "photo.jpg"}}
+        )
+    )
+
+    client = DidarActivityClient(config=_CFG_WITH_TYPES)
+    client.create_post_sale_checklist(
+        deal_id="deal-1",
+        order_registered_at=_REGISTERED,
+        ship_time=_SHIP,
+        ship_attachments=[
+            (b"fake-bytes-1", "photo1.jpg", "image/jpeg"),
+            (b"fake-bytes-2", "photo2.jpg", "image/jpeg"),
+            (b"fake-bytes-3", "photo3.jpg", "image/jpeg"),
+        ],
+    )
+
+    assert attach_route.call_count == 3
+    ship_index = [title for title, _ in POST_SALE_CHECKLIST].index("ارسال محصول")
+    expected_activity_id = f"a-{ship_index}"
+    sent_bytes = [b"fake-bytes-1", b"fake-bytes-2", b"fake-bytes-3"]
+    for call, expected in zip(attach_route.calls, sent_bytes):
+        assert expected_activity_id.encode() in call.request.content
+        assert expected in call.request.content
+
+
+@respx.mock
+def test_create_post_sale_checklist_continues_after_one_photo_attach_fails():
+    """One bad/failing photo must not block the rest of the order's
+    photos from being attached."""
+    respx.post("https://app.didar.me/api/activity/save").mock(
+        side_effect=[
+            httpx.Response(200, json={"Response": {"Id": f"a-{i}"}}) for i in range(6)
+        ]
+    )
+    attach_route = respx.post("https://app.didar.me/api/activity/AttachFilesToActivity").mock(
+        side_effect=[
+            httpx.Response(500, json={"Error": "boom"}),
+            httpx.Response(
+                200, json={"Response": {"Key": "k1", "Size": 123, "Type": "image/jpeg", "Name": "photo2.jpg"}}
+            ),
+        ]
+    )
+
+    client = DidarActivityClient(config=_CFG_WITH_TYPES)
+    client.create_post_sale_checklist(
+        deal_id="deal-1",
+        order_registered_at=_REGISTERED,
+        ship_time=_SHIP,
+        ship_attachments=[
+            (b"fake-bytes-1", "photo1.jpg", "image/jpeg"),
+            (b"fake-bytes-2", "photo2.jpg", "image/jpeg"),
+        ],
+    )
+
+    assert attach_route.call_count == 2
+    assert b"fake-bytes-2" in attach_route.calls[1].request.content
 
 
 @respx.mock

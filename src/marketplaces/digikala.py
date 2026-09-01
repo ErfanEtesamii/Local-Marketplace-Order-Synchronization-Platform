@@ -332,11 +332,14 @@ class DigikalaAdapter(MarketplaceAdapter):
             else:
                 status_val = str(status.get("title") or status.get("key") or "unknown")
             # NormalizedOrder.product_image_url (order-level, used by
-            # DidarSyncService._fetch_product_image to attach a photo to the
-            # "ارسال محصول" Activity) was never set here before - only each
-            # OrderItem got a product_image_url, which nothing downstream
-            # reads for the attachment. Reuse the first item's image as the
-            # order-level photo.
+            # DidarSyncService._fetch_product_images to attach a photo to
+            # the "ارسال محصول" Activity) is now just a last-resort
+            # fallback - each OrderItem's OWN product_image_url (set
+            # above) is what actually gets attached, one photo per line
+            # item, so a multi-item order gets every product's photo, not
+            # just the first (client feedback, 2026-09). Order-level is
+            # still populated from the first item for the rare case an
+            # order's items carry no image URL at all.
             product_image_url = items[0].product_image_url if items else None
             # Extract shipment_id from the first row (all rows in group should have same shipment_id).
             # NOTE: the real /orders/history response (confirmed against docs/api digikala.docx)

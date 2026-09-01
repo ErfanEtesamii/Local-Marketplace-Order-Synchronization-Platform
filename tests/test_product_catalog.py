@@ -108,6 +108,30 @@ def test_float_code_normalized_to_plain_integer_string(tmp_path):
     assert match.code == "146"
 
 
+def test_glued_persian_word_and_digit_matches_separated_marketplace_title(tmp_path):
+    """Regression test for a real production issue (client feedback,
+    2026-09 - "product names don't match our real catalog"): the
+    client's actual catalog export has rows like "چاپا4" (model name
+    glued directly to its number, no space), while marketplace titles
+    for the exact same product always write it as separate words plus
+    a leading zero, e.g. "... مدل چاپا کد 04 ...". Confirmed against
+    the real catalog export: ~128 of its ~3,300 rows have this glued
+    letter+digit pattern, each one silently failing to match and
+    causing a wrong duplicate product to be created under the raw
+    marketplace title instead (see deal_client.py's fallback)."""
+    catalog = _make_catalog(tmp_path, [
+        ("چاپا4", "4"),
+        ("چاپا1", "367"),
+        ("چاپا اعلا 1", "36336300430001"),
+    ])
+    match = catalog.match(
+        "رومیزی قلمکار مدل چاپا کد 04 | چند رنگ | "
+        "گارانتی اصالت و سلامت فیزیکی کالا"
+    )
+    assert match is not None
+    assert match.code == "4"
+
+
 def test_missing_expected_columns_raises(tmp_path):
     wb = Workbook()
     ws = wb.active

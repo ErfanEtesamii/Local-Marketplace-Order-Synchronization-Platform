@@ -78,50 +78,76 @@ class DidarSyncService:
             deal_id=deal_id,
             order_registered_at=order.created_at,
             ship_time=order.ship_time,
-            ship_attachment=_fetch_product_image(order),
+            ship_attachments=_fetch_product_images(order),
         )
 
         return deal_id
 
 
-def _fetch_product_image(order: NormalizedOrder) -> tuple[bytes, str, str] | None:
+def _fetch_product_images(order: NormalizedOrder) -> list[tuple[bytes, str, str]]:
     """
-    Downloads order.product_image_url (when the source adapter provides
-    one) so it can be attached to the "ارسال محصول" Activity - see
-    DidarActivityClient.create_post_sale_checklist's ship_attachment
-    param. Returns None (not an error) when the order has no image URL,
-    or when the download itself fails - a missing/broken product photo
-    must never fail the order sync, same fire-and-forget philosophy as
-    the checklist itself. The filename is derived from the URL's own
-    path segment, falling back to a generic name if that's empty.
-    """
-    if not order.product_image_url:
-        return None
-    try:
-        resp = httpx.get(order.product_image_url, timeout=30.0, follow_redirects=True)
-        resp.raise_for_status()
-    except Exception:
-        log.exception(
-            "didar: failed to download product image for %s order %s - "
-            "continuing without a ship attachment",
-            order.source, order.source_order_id,
-        )
-        return None
+    Downloads a product photo for every line item that has its own
+    image URL, so they can all be attached to the "ارسال محصول" Activity
+    - see DidarActivityClient.create_post_sale_checklist's
+    ship_attachments param.
 
-    content_type = resp.headers.get("content-type", "application/octet-stream").split(";")[0]
-    # BUGFIX: filename must come from the URL's PATH only, not the raw
-    # string. Digikala's CDN URLs carry image-transform params in the
-    # query string using "/" as a separator (e.g.
-    # ".../xxx.jpg?x-oss-process=image/resize,m_lfit/quality,q_60"), so
-    # naively taking the text after the last "/" in the full URL grabs a
-    # piece of that query string ("quality,q_60") instead of the real
-    # filename - confirmed live: every single "ارسال محصول" attachment
-    # in production logs was named literally "quality,q_60". Parsing out
-    # the path component first fixes this regardless of what query
-    # string is appended.
-    path = urlparse(order.product_image_url).path
-    filename = path.rstrip("/").rsplit("/", 1)[-1] or "product.jpg"
-    return resp.content, filename, content_type
+    BUGFIX (client feedback, 2026-09 - "if a customer ordered more than
+    one product, all of them need a photo in the shipping activity, not
+    just one"): this previously read only order.product_image_url, a
+    single ORDER-level field every adapter populated from items[0]
+    alone (see each adapter's module comments - "nothing downstream
+    reads per-item images" was true until now). A 2+ item order
+    therefore silently lost every photo but the first one. Each
+    OrderItem already carries its own product_image_url (see
+    marketplaces/base.py) - that per-item field is now the source of
+    truth here. order.product_image_url is kept only as a last-resort
+    fallback for the rare case an order's items carry no image URLs of
+    their own at all.
+
+    Duplicate URLs (e.g. two items pointing at the exact same photo)
+    are only downloaded once. A failed/missing download for one item
+    never blocks the others - same fire-and-forget philosophy as the
+    checklist itself; a partial set of photos is still useful, and a
+    photo issue must never fail the order sync.
+    """
+    urls = [item.product_image_url for item in order.items if item.product_image_url]
+    if not urls and order.product_image_url:
+        urls = [order.product_image_url]
+
+    attachments: list[tuple[bytes, str, str]] = []
+    seen: set[str] = set()
+    for url in urls:
+        if url in seen:
+            continue
+        seen.add(url)
+
+        try:
+            resp = httpx.get(url, timeout=30.0, follow_redirects=True)
+            resp.raise_for_status()
+        except Exception:
+            log.exception(
+                "didar: failed to download product image %r for %s "
+                "order %s - continuing without this ship attachment",
+                url, order.source, order.source_order_id,
+            )
+            continue
+
+        content_type = resp.headers.get("content-type", "application/octet-stream").split(";")[0]
+        # BUGFIX: filename must come from the URL's PATH only, not the raw
+        # string. Digikala's CDN URLs carry image-transform params in the
+        # query string using "/" as a separator (e.g.
+        # ".../xxx.jpg?x-oss-process=image/resize,m_lfit/quality,q_60"), so
+        # naively taking the text after the last "/" in the full URL grabs a
+        # piece of that query string ("quality,q_60") instead of the real
+        # filename - confirmed live: every single "ارسال محصول" attachment
+        # in production logs was named literally "quality,q_60". Parsing out
+        # the path component first fixes this regardless of what query
+        # string is appended.
+        path = urlparse(url).path
+        filename = path.rstrip("/").rsplit("/", 1)[-1] or "product.jpg"
+        attachments.append((resp.content, filename, content_type))
+
+    return attachments
 
 
 def _customer_code_for(order: NormalizedOrder) -> str:
