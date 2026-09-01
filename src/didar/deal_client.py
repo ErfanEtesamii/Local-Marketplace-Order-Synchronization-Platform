@@ -53,6 +53,7 @@ from src.didar.product_client import DidarProductClient
 from src.http_utils import default_retry, raise_for_status_with_body
 from src.logger import get_logger
 from src.marketplaces.base import NormalizedOrder
+from src.shipping_fees import format_toman, shipping_fee_toman
 
 log = get_logger(__name__)
 
@@ -417,7 +418,19 @@ def _build_item_description(order: NormalizedOrder) -> str:
     tracking_number = order.shipment_tracking_code or order.shipment_id
     if tracking_number:
         lines.append(f"شماره مرسوله: {tracking_number}")
-    if order.shipping_cost is not None:
+    # FIXED SHIPPING FEE (client request, 2026-09): Digikala and Faraz
+    # Honar get a flat, client-specified Toman amount here (239 for
+    # Digikala; 225/250 for Faraz Honar depending on courier - see
+    # src/shipping_fees.py), regardless of whatever real shipping_cost
+    # that source's own API reports for this order. Every other source
+    # (and a Faraz Honar order shipped by neither Pishtaz nor Tipax)
+    # falls back to the original behaviour: show the real
+    # order.shipping_cost (Rial) when the adapter provided one, or no
+    # shipping line at all otherwise.
+    fixed_fee_toman = shipping_fee_toman(order)
+    if fixed_fee_toman is not None:
+        lines.append(f"هزینه ارسال: {format_toman(fixed_fee_toman)} تومان")
+    elif order.shipping_cost is not None:
         lines.append(f"هزینه ارسال: {_format_rial(order.shipping_cost)} ریال")
     return "\n".join(lines)
 

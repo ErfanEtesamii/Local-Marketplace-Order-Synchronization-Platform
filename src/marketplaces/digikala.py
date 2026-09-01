@@ -213,28 +213,62 @@ class DigikalaAdapter(MarketplaceAdapter):
         Returns a dict with keys:
             customer_full_name: str | None
             customer_mobile: str | None
+            customer_province: str | None  (from "state")
+            customer_city: str | None
+            customer_address: str | None
+            customer_postal_code: str | None  (from "postalCode")
 
-        On any error (transport, auth, or malformed response), returns a dict
-        with both values as None so the caller can fall back to a synthetic
-        contact name without breaking the sync flow.
+        The address/province/city/postalCode fields (client request,
+        2026-09: a new Didar Contact should carry the customer's full
+        address, not just name+mobile - see
+        src/didar/contact_client.py's upsert_contact()) were already
+        present on this endpoint's response but previously dropped
+        here - only name/phoneNumber were ever read. This endpoint's
+        response shape (including these four fields) is the same one
+        already confirmed for name/phoneNumber above; nothing new is
+        being guessed.
+
+        On any error (transport, auth, or malformed response), returns a
+        dict with every value None so the caller can fall back to a
+        synthetic contact name without breaking the sync flow.
         """
         path = f"/open-api/v1/ship-by-seller-orders/customer/{shipment_id}"
+        empty = {
+            "customer_full_name": None,
+            "customer_mobile": None,
+            "customer_province": None,
+            "customer_city": None,
+            "customer_address": None,
+            "customer_postal_code": None,
+        }
         try:
             payload = self._get(path, params={})
             data = payload.get("data", {}) or {}
             full_name = data.get("name") or None
             mobile = data.get("phoneNumber") or None
+            province = data.get("state") or None
+            city = data.get("city") or None
+            address = data.get("address") or None
+            postal_code = data.get("postalCode") or None
             log.info(
-                "digikala: fetched SBS customer details for shipment %s (name=%r, mobile=%r)",
-                shipment_id, full_name, mobile,
+                "digikala: fetched SBS customer details for shipment %s "
+                "(name=%r, mobile=%r, province=%r, city=%r, has_address=%s, postal_code=%r)",
+                shipment_id, full_name, mobile, province, city, bool(address), postal_code,
             )
-            return {"customer_full_name": full_name, "customer_mobile": mobile}
+            return {
+                "customer_full_name": full_name,
+                "customer_mobile": mobile,
+                "customer_province": province,
+                "customer_city": city,
+                "customer_address": address,
+                "customer_postal_code": postal_code,
+            }
         except Exception:
             log.exception(
                 "digikala: failed to fetch SBS customer details for shipment %s",
                 shipment_id,
             )
-            return {"customer_full_name": None, "customer_mobile": None}
+            return empty
 
     def fetch_shipment_details(self, shipment_id: str) -> dict:
         """Fetch shipment/parcel details for a Digikala Ship-by-Seller (SBS)

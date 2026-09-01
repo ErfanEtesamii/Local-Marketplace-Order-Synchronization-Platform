@@ -305,3 +305,147 @@ def test_upsert_contact_recovers_via_search_on_duplicate_race():
     assert search_route.call_count == 4
     assert save_route.call_count == 2
     assert b'"Id":"c-race"' in save_route.calls[1].request.content
+
+
+def _mock_get_locations(provinces=None, cities=None):
+    """Mocks POST /shared/GetLocations - see contact_client.py's
+    list_locations() docstring for the confirmed shape. No apikey
+    query param and no body, unlike every other Didar endpoint."""
+    return respx.post("https://app.didar.me/api/shared/GetLocations").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "Response": {
+                    "Countries": [{"Id": "ir", "Level": 0, "Title": "ایران", "ParentId": None}],
+                    "Provinces": provinces or [],
+                    "Cities": cities or [],
+                }
+            },
+        )
+    )
+
+
+@respx.mock
+def test_upsert_contact_sends_email_phone_zipcode_and_address_when_given():
+    _mock_contact_search_no_match()
+    route = respx.post("https://app.didar.me/api/contact/save").mock(
+        return_value=httpx.Response(200, json={"Response": {"Contact": {"Id": "c-1"}}})
+    )
+    client = DidarContactClient(config=_CFG)
+    client.upsert_contact(
+        customer_code="tapsishop-999",
+        mobile_phone="09121234567",
+        full_name="علی رضایی",
+        email="ali@example.com",
+        work_phone="02112345678",
+        address="خیابان ولیعصر پلاک ۱۲",
+        postal_code="1234567890",
+    )
+
+    body = route.calls[0].request.content
+    assert b'"Email":"ali@example.com"' in body
+    assert b'"Phone":"02112345678"' in body
+    assert b'"ZipCode":"1234567890"' in body
+    assert b'"Addresses"' in body
+    assert b'"KeyValues"' in body
+    assert "خیابان ولیعصر پلاک ۱۲".encode() in body
+
+
+@respx.mock
+def test_upsert_contact_omits_email_phone_zipcode_address_when_absent():
+    """A source that provides none of these must not send empty
+    placeholders - an update should never blank out a value Didar
+    already has just because this order's source didn't supply it."""
+    _mock_contact_search_no_match()
+    route = respx.post("https://app.didar.me/api/contact/save").mock(
+        return_value=httpx.Response(200, json={"Response": {"Contact": {"Id": "c-1"}}})
+    )
+    client = DidarContactClient(config=_CFG)
+    client.upsert_contact(customer_code="tapsishop-999", mobile_phone="09121234567")
+
+    body = route.calls[0].request.content
+    assert b'"Email"' not in body
+    assert b'"Phone"' not in body
+    assert b'"ZipCode"' not in body
+    assert b'"Addresses"' not in body
+    assert b'"ProvinceId"' not in body
+    assert b'"CityId"' not in body
+
+
+@respx.mock
+def test_upsert_contact_resolves_province_and_city_ids():
+    _mock_contact_search_no_match()
+    _mock_get_locations(
+        provinces=[{"Id": "prov-thr", "Level": 1, "Title": "تهران", "ParentId": "ir"}],
+        cities=[{"Id": "city-thr", "Level": 2, "Title": "تهران", "ParentId": "prov-thr"}],
+    )
+    route = respx.post("https://app.didar.me/api/contact/save").mock(
+        return_value=httpx.Response(200, json={"Response": {"Contact": {"Id": "c-1"}}})
+    )
+    client = DidarContactClient(config=_CFG)
+    client.upsert_contact(
+        customer_code="x", province="تهران", city="تهران",
+    )
+
+    body = route.calls[0].request.content
+    assert b'"ProvinceId":"prov-thr"' in body
+    assert b'"CityId":"city-thr"' in body
+
+
+@respx.mock
+def test_upsert_contact_falls_back_to_city_name_when_province_unresolved():
+    """A city can still resolve via the province-agnostic flat lookup
+    even when the province name itself doesn't match anything."""
+    _mock_contact_search_no_match()
+    _mock_get_locations(
+        provinces=[{"Id": "prov-thr", "Level": 1, "Title": "تهران", "ParentId": "ir"}],
+        cities=[{"Id": "city-krj", "Level": 2, "Title": "کرج", "ParentId": "prov-alborz-unmatched"}],
+    )
+    route = respx.post("https://app.didar.me/api/contact/save").mock(
+        return_value=httpx.Response(200, json={"Response": {"Contact": {"Id": "c-1"}}})
+    )
+    client = DidarContactClient(config=_CFG)
+    client.upsert_contact(customer_code="x", province="البرز", city="کرج")
+
+    body = route.calls[0].request.content
+    assert b'"ProvinceId"' not in body  # "البرز" doesn't match any Province title above
+    assert b'"CityId":"city-krj"' in body  # still found by city name alone
+
+
+@respx.mock
+def test_upsert_contact_omits_location_ids_when_get_locations_fails():
+    """A failed/unreachable GetLocations call must never break the
+    Contact upsert - ProvinceId/CityId are just omitted."""
+    _mock_contact_search_no_match()
+    respx.post("https://app.didar.me/api/shared/GetLocations").mock(
+        return_value=httpx.Response(500, json={"Message": "error"})
+    )
+    route = respx.post("https://app.didar.me/api/contact/save").mock(
+        return_value=httpx.Response(200, json={"Response": {"Contact": {"Id": "c-1"}}})
+    )
+    client = DidarContactClient(config=_CFG)
+    client.upsert_contact(customer_code="x", province="تهران", city="تهران")
+
+    body = route.calls[0].request.content
+    assert b'"ProvinceId"' not in body
+    assert b'"CityId"' not in body
+
+
+@respx.mock
+def test_get_locations_does_not_send_apikey_query_param():
+    """Confirmed via client-supplied Didar docs: unlike every other
+    endpoint in this module, GetLocations takes no apikey query param
+    and no request body."""
+    _mock_contact_search_no_match()
+    locations_route = _mock_get_locations(
+        provinces=[{"Id": "prov-thr", "Level": 1, "Title": "تهران", "ParentId": "ir"}],
+    )
+    respx.post("https://app.didar.me/api/contact/save").mock(
+        return_value=httpx.Response(200, json={"Response": {"Contact": {"Id": "c-1"}}})
+    )
+    client = DidarContactClient(config=_CFG)
+    client.upsert_contact(customer_code="x", province="تهران")
+
+    request = locations_route.calls[0].request
+    assert "apikey" not in request.url.params
+    assert request.content in (b"", b"{}") or request.content is None

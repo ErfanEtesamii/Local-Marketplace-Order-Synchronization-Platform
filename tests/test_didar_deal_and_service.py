@@ -514,6 +514,96 @@ def test_deal_item_description_prefers_tracking_code_over_shipment_id():
 
 
 @respx.mock
+def test_deal_item_description_digikala_uses_flat_239_toman_fee():
+    """Client request (2026-09): Digikala's DealItem Description always
+    shows the flat 239 Toman shipping fee (src/shipping_fees.py),
+    regardless of whatever real shipping_cost Digikala's own API
+    reports for this order."""
+    _mock_categories()
+    _mock_product_search_no_match()
+    respx.post("https://app.didar.me/api/product/save").mock(
+        return_value=httpx.Response(200, json={"Response": {"Product": {"Id": "p-1"}}})
+    )
+    route = respx.post("https://app.didar.me/api/deal/save_v2").mock(
+        return_value=httpx.Response(200, json={"Response": {"Deal": {"Id": "d-1"}}})
+    )
+
+    order = replace(_ORDER, source="digikala", shipping_cost=Decimal("999999"))
+
+    client = DidarDealClient(config=_CFG)
+    client.create_deal(contact_id="c-1", display_name="Someone", order=order)
+
+    deal_body = route.calls[0].request.content
+    assert "هزینه ارسال: 239 تومان".encode() in deal_body
+    assert b"999,999" not in deal_body
+
+
+@respx.mock
+def test_deal_item_description_farazhonar_pishtaz_uses_225_toman_fee():
+    _mock_categories()
+    _mock_product_search_no_match()
+    respx.post("https://app.didar.me/api/product/save").mock(
+        return_value=httpx.Response(200, json={"Response": {"Product": {"Id": "p-1"}}})
+    )
+    route = respx.post("https://app.didar.me/api/deal/save_v2").mock(
+        return_value=httpx.Response(200, json={"Response": {"Deal": {"Id": "d-1"}}})
+    )
+
+    order = replace(_ORDER, source="farazhonar", shipping_method="پیشتاز")
+
+    client = DidarDealClient(config=_CFG)
+    client.create_deal(contact_id="c-1", display_name="Someone", order=order)
+
+    deal_body = route.calls[0].request.content
+    assert "هزینه ارسال: 225 تومان".encode() in deal_body
+
+
+@respx.mock
+def test_deal_item_description_farazhonar_tipax_uses_250_toman_fee():
+    _mock_categories()
+    _mock_product_search_no_match()
+    respx.post("https://app.didar.me/api/product/save").mock(
+        return_value=httpx.Response(200, json={"Response": {"Product": {"Id": "p-1"}}})
+    )
+    route = respx.post("https://app.didar.me/api/deal/save_v2").mock(
+        return_value=httpx.Response(200, json={"Response": {"Deal": {"Id": "d-1"}}})
+    )
+
+    order = replace(_ORDER, source="farazhonar", shipping_method="تیپاکس")
+
+    client = DidarDealClient(config=_CFG)
+    client.create_deal(contact_id="c-1", display_name="Someone", order=order)
+
+    deal_body = route.calls[0].request.content
+    assert "هزینه ارسال: 250 تومان".encode() in deal_body
+
+
+@respx.mock
+def test_deal_item_description_farazhonar_unknown_method_falls_back_to_real_cost():
+    """An unrecognized courier must never be guessed as Pishtaz/Tipax -
+    falls back to the order's real shipping_cost in Rial instead."""
+    _mock_categories()
+    _mock_product_search_no_match()
+    respx.post("https://app.didar.me/api/product/save").mock(
+        return_value=httpx.Response(200, json={"Response": {"Product": {"Id": "p-1"}}})
+    )
+    route = respx.post("https://app.didar.me/api/deal/save_v2").mock(
+        return_value=httpx.Response(200, json={"Response": {"Deal": {"Id": "d-1"}}})
+    )
+
+    order = replace(
+        _ORDER, source="farazhonar", shipping_method="پست عادی",
+        shipping_cost=Decimal("40000"),
+    )
+
+    client = DidarDealClient(config=_CFG)
+    client.create_deal(contact_id="c-1", display_name="Someone", order=order)
+
+    deal_body = route.calls[0].request.content
+    assert "هزینه ارسال: 40,000 ریال".encode() in deal_body
+
+
+@respx.mock
 def test_deal_item_discount_reflects_gap_between_unit_and_final_price():
     """Regression test (client feedback, 2026-08): Discount was
     previously hardcoded to 0 for every item regardless of the source

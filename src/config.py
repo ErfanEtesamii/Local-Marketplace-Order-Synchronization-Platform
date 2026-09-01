@@ -212,6 +212,29 @@ class DidarConfig:
             "DIDAR_ATTACH_FILES_TO_ACTIVITY_PATH", "/activity/AttachFilesToActivity"
         )
     )
+    # CONFIRMED (client-supplied Didar documentation, 2026-09): this is
+    # the one endpoint in this project that does NOT take apikey as a
+    # query-string param and has no request body - see
+    # DidarContactClient.list_locations()/_post_no_apikey(). Returns
+    # {"Response": {"Countries": [...], "Provinces": [...], "Cities":
+    # [...]}}, used to resolve Contact.ProvinceId/CityId from a
+    # marketplace's raw province/city name.
+    #
+    # PATH NOTE: the client's docs write this as
+    # "{{baseURL}}/api/shared/GetLocations", but THIS project's
+    # DIDAR_BASE_URL already ends in "/api" (see .env.example -
+    # "https://app.didar.me/api"), same as every other path constant
+    # here (/contact/save, /product/categories, /Label/GetDealLabels -
+    # none of them repeat "/api"). So relative to THIS project's
+    # base_url the correct path is "/shared/GetLocations", NOT
+    # "/api/shared/GetLocations" (which would double up to
+    # ".../api/api/shared/GetLocations" and 404). This inference
+    # follows the same convention as every other path in this file, but
+    # hasn't itself been hit with a live call - if it 404s, that
+    # doubled "/api" is the first thing to check.
+    get_locations_path: str = field(
+        default_factory=lambda: _get("DIDAR_GET_LOCATIONS_PATH", "/shared/GetLocations")
+    )
 
     @property
     def deal_label_title_by_source(self) -> dict[str, str]:

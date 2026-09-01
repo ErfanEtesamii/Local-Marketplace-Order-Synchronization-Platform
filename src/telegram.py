@@ -3,7 +3,8 @@ Telegram notifications for the order sync platform.
 
 Single entry point for all Telegram-side work: a per-order alert right
 after a deal is created in Didar, and end-of-day / end-of-week /
-end-of-month aggregate reports in Persian (Jalali calendar, RTL).
+end-of-month / end-of-year aggregate reports in Persian (Jalali
+calendar, RTL).
 
 DESIGN CHOICES:
 
@@ -44,7 +45,21 @@ DESIGN CHOICES:
   every poll cycle (default: every 2 minutes) is cheap. Markers are
   persisted (Repository.get/set_report_marker), so a restart never
   re-sends or silently skips a report even though the trigger isn't a
-  dedicated once-a-day job.
+  dedicated once-a-day job. The same rollover-check approach is used
+  for the yearly report: a Jalali year doesn't start on Gregorian
+  Jan 1 either, so a Gregorian cron would drift there too.
+
+- Every coroutine (get_me(), send_message()) runs on ONE event loop
+  that this notifier creates lazily and keeps open for its entire
+  lifetime (see _get_loop()/_run()), instead of a fresh asyncio.run()
+  per call. asyncio.run() closes its loop when it returns; PTB's Bot
+  keeps its httpx connection pool alive across calls, so a second
+  asyncio.run() reusing that pool while it's still bound to the
+  now-closed first loop is what caused the intermittent
+  "RuntimeError('Event loop is closed')" failures seen in production
+  (e.g. "failed to send per-order notification for digikala order
+  360137826" immediately followed by "retry succeeded" - the retry
+  happened to get a fresh connection instead of the poisoned one).
 """
 from __future__ import annotations
 
@@ -60,6 +75,7 @@ from telegram.error import TelegramError
 
 from src.db.repository import Repository
 from src.logger import get_logger
+from src.shipping_fees import format_toman, shipping_fee_toman
 
 log = get_logger(__name__)
 
@@ -193,6 +209,52 @@ class TelegramNotifier:
         self._bot: Optional[Bot] = None
         self._chat_id: Optional[Union[int, str]] = None
         self._configured: bool = False
+        self._loop: Optional[asyncio.AbstractEventLoop] = None
+
+    # ------------------------------------------------------------------
+    # Event loop (root cause of the intermittent "Event loop is closed"
+    # failures - see below)
+    # ------------------------------------------------------------------
+    def _get_loop(self) -> asyncio.AbstractEventLoop:
+        """One event loop, created lazily and reused for every coroutine
+        this notifier ever runs, instead of a fresh `asyncio.run()` per
+        call.
+
+        Why: python-telegram-bot's `Bot` wraps an `httpx.AsyncClient`
+        whose connection pool binds itself to whichever event loop is
+        running the first time a request goes out, and then keeps
+        reusing that pooled/keep-alive connection on later calls.
+        `asyncio.run()` creates a brand-new loop *and closes it again*
+        when the call returns. The next `asyncio.run()` call opens yet
+        another new loop, but the Bot's already-open pooled connection
+        is still tied to the loop that was just closed - so any send
+        that reuses that pooled connection blows up with
+        `RuntimeError('Event loop is closed')`. A send that happens to
+        open a fresh connection instead doesn't, which is exactly why
+        only some sends failed instead of all of them ("failed for
+        order 360137826" followed immediately by "retry succeeded").
+        Keeping every coroutine on the same, never-closed loop for the
+        notifier's whole lifetime removes the mismatch entirely."""
+        if self._loop is None or self._loop.is_closed():
+            self._loop = asyncio.new_event_loop()
+        return self._loop
+
+    def _run(self, coro):
+        """Run `coro` to completion on this notifier's persistent loop."""
+        return self._get_loop().run_until_complete(coro)
+
+    def close(self) -> None:
+        """Release the bot's HTTP client and close the persistent loop.
+        Optional - the process exiting does this anyway - but useful for
+        clean shutdown/tests that create many TelegramNotifier instances."""
+        if self._loop is not None and not self._loop.is_closed():
+            if self._bot is not None:
+                try:
+                    self._loop.run_until_complete(self._bot.shutdown())
+                except Exception:
+                    pass
+            self._loop.close()
+        self._loop = None
 
     # ------------------------------------------------------------------
     # Helper methods (delegates to module-level functions - exposed on
@@ -245,11 +307,14 @@ class TelegramNotifier:
             # network errors and "token revoked" responses.
             #
             # python-telegram-bot v20+ made every Bot method a coroutine,
-            # so this must be run through asyncio.run() (or awaited) -
+            # so this must be run through self._run() (or awaited) -
             # calling bot.get_me() directly would just build a coroutine
             # object and immediately discard it without ever hitting
-            # Telegram's API.
-            asyncio.run(bot.get_me())
+            # Telegram's API. Uses this notifier's persistent loop (see
+            # _get_loop()) rather than a one-off asyncio.run(), so the
+            # loop that validates the bot here is the same one every
+            # later send reuses.
+            self._run(bot.get_me())
         except TelegramError as exc:
             log.warning("telegram: get_me() failed (%s) - notifications disabled", exc)
             return False
@@ -305,9 +370,24 @@ class TelegramNotifier:
             )
         items_block = "\n".join(item_lines) if item_lines else "—"
 
-        shipping = order.shipping_cost if order.shipping_cost is not None else Decimal("0")
         products_total = sum((i.final_price for i in order.items), Decimal("0"))
         grand_total = order.total_price
+
+        # FIXED SHIPPING FEE (client request, 2026-09): same override as
+        # the Didar DealItem Description (see
+        # src/didar/deal_client.py's _build_item_description) - Digikala
+        # and Faraz Honar show a flat, client-specified Toman amount
+        # here (239 for Digikala; 225/250 for Faraz Honar depending on
+        # courier - see src/shipping_fees.py) instead of the real
+        # order.shipping_cost. Every other source (and a Faraz Honar
+        # order shipped by neither Pishtaz nor Tipax) keeps the original
+        # behaviour of showing the real shipping_cost in Rial.
+        fixed_fee_toman = shipping_fee_toman(order)
+        if fixed_fee_toman is not None:
+            shipping_display = f"{format_toman(fixed_fee_toman)} تومان"
+        else:
+            shipping = order.shipping_cost if order.shipping_cost is not None else Decimal("0")
+            shipping_display = f"{_format_rial(shipping)} ریال"
 
         when = self._format_jalali_datetime(order.created_at)
 
@@ -319,12 +399,12 @@ class TelegramNotifier:
             "📦 محصولات:\n"
             f"{items_block}\n"
             "🚚 هزینه ارسال:\n"
-            f"{_format_rial(shipping)} ریال\n"
+            f"{shipping_display}\n"
             "━━━━━━━━━━━━━━━━━━━━\n"
             "💰 مبلغ محصولات:\n"
             f"{_format_rial(products_total)} ریال\n"
             "🚚 ارسال:\n"
-            f"{_format_rial(shipping)} ریال\n"
+            f"{shipping_display}\n"
             "💳 مبلغ کل:\n"
             f"{_format_rial(grand_total)} ریال\n"
             "━━━━━━━━━━━━━━━━━━━━\n"
@@ -369,6 +449,7 @@ class TelegramNotifier:
         self._check_daily_rollover(repository, source_names, today)
         self._check_weekly_rollover(repository, source_names, today)
         self._check_monthly_rollover(repository, source_names, today)
+        self._check_yearly_rollover(repository, source_names, today)
 
     def _check_daily_rollover(self, repository, source_names, today) -> None:
         key = _jalali_key(today)
@@ -406,6 +487,18 @@ class TelegramNotifier:
         ended_month_first_day = jdatetime.date(int(year_str), int(month_str), 1)
         self._send_monthly_report(repository, source_names, ended_month_first_day)
         repository.set_report_marker("month", key)
+
+    def _check_yearly_rollover(self, repository, source_names, today) -> None:
+        key = f"{today.year:04d}"
+        marker = repository.get_report_marker("year")
+        if marker is None:
+            repository.set_report_marker("year", key)
+            return
+        if marker == key:
+            return
+        ended_year_first_day = jdatetime.date(int(marker), 1, 1)
+        self._send_yearly_report(repository, source_names, ended_year_first_day)
+        repository.set_report_marker("year", key)
 
     def _aggregate(self, repository, source_names, since, until=None):
         products = shipping = total = count = 0
@@ -512,6 +605,26 @@ class TelegramNotifier:
         except Exception:
             log.exception("telegram: unexpected error sending monthly report")
 
+    def _send_yearly_report(self, repository, source_names, year_first_day) -> None:
+        if not self.is_configured():
+            return
+        try:
+            next_year_first = jdatetime.date(year_first_day.year + 1, 1, 1)
+            since = _iran_midnight_utc(year_first_day)
+            until = _iran_midnight_utc(next_year_first)
+            products, shipping, total, count = self._aggregate(repository, source_names, since, until)
+            period_line = f"📅 سال {_to_persian_digits(str(year_first_day.year))}"
+            message = self._format_report_message(
+                "📊 گزارش پایان سال", "📊 گزارش سالانه", period_line,
+                products, shipping, total, count,
+            )
+            self._send(message)
+            log.info("telegram: sent yearly report for %04d", year_first_day.year)
+        except TelegramError as exc:
+            log.error("telegram: failed to send yearly report: %s", exc)
+        except Exception:
+            log.exception("telegram: unexpected error sending yearly report")
+
     # ------------------------------------------------------------------
     # Low-level sender
     # ------------------------------------------------------------------
@@ -524,15 +637,19 @@ class TelegramNotifier:
         exception site with context.
 
         Every self._bot.send_message(...) call is run through
-        asyncio.run() because Bot.send_message is a coroutine (PTB v20+) -
+        self._run() (this notifier's single persistent event loop, see
+        _get_loop()) because Bot.send_message is a coroutine (PTB v20+) -
         calling it directly with no await would build the coroutine and
-        immediately drop it without ever hitting Telegram's API.
+        immediately drop it without ever hitting Telegram's API. Do NOT
+        swap this back to a per-call `asyncio.run()`: that was the cause
+        of the intermittent "RuntimeError('Event loop is closed')"
+        failures - see _get_loop()'s docstring.
         """
         # Telegram caps a single text message at 4096 chars; the reports
         # are well under that, but split defensively if anything ever
         # grows. Splitting on blank lines keeps sections together.
         if len(text) <= 4000:
-            asyncio.run(self._bot.send_message(chat_id=self._chat_id, text=text))
+            self._run(self._bot.send_message(chat_id=self._chat_id, text=text))
             return
 
         chunks: list[str] = []
@@ -547,4 +664,4 @@ class TelegramNotifier:
             chunks.append(current)
 
         for chunk in chunks:
-            asyncio.run(self._bot.send_message(chat_id=self._chat_id, text=chunk))
+            self._run(self._bot.send_message(chat_id=self._chat_id, text=chunk))

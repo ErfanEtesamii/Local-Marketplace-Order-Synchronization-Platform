@@ -54,6 +54,57 @@ def test_fetch_new_orders_uses_basic_auth_and_includes_line_items_directly():
 
 
 @respx.mock
+def test_fetch_new_orders_extracts_full_billing_address():
+    """Client request (2026-09): a new Didar Contact should carry the
+    customer's full address, not just name+mobile - WooCommerce's
+    billing object already has all of this."""
+    raw = {
+        **_RAW_ORDER,
+        "billing": {
+            "first_name": "علی",
+            "last_name": "رضایی",
+            "phone": "09121234567",
+            "email": "ali@example.com",
+            "address_1": "خیابان ولیعصر",
+            "address_2": "پلاک ۱۲",
+            "city": "کرج",
+            "state": "تهران",
+            "postcode": "1234567890",
+        },
+    }
+    respx.get("https://farazhonar.com/wp-json/wc/v3/orders").mock(
+        return_value=httpx.Response(200, json=[raw], headers={"X-WP-TotalPages": "1"})
+    )
+
+    adapter = FarazHonarAdapter(config=_CFG)
+    order = adapter.fetch_new_orders(since=None)[0]
+
+    assert order.customer_email == "ali@example.com"
+    assert order.customer_address == "خیابان ولیعصر پلاک ۱۲"
+    assert order.customer_city == "کرج"
+    assert order.customer_province == "تهران"
+    assert order.customer_postal_code == "1234567890"
+
+
+@respx.mock
+def test_fetch_new_orders_leaves_address_fields_none_when_billing_lacks_them():
+    """_RAW_ORDER's billing has no address_1/city/state/postcode/email -
+    those fields must stay None, not become empty strings or raise."""
+    respx.get("https://farazhonar.com/wp-json/wc/v3/orders").mock(
+        return_value=httpx.Response(200, json=[_RAW_ORDER], headers={"X-WP-TotalPages": "1"})
+    )
+
+    adapter = FarazHonarAdapter(config=_CFG)
+    order = adapter.fetch_new_orders(since=None)[0]
+
+    assert order.customer_email is None
+    assert order.customer_address is None
+    assert order.customer_city is None
+    assert order.customer_province is None
+    assert order.customer_postal_code is None
+
+
+@respx.mock
 def test_fetch_new_orders_paginates_using_wp_total_pages_header():
     route = respx.get("https://farazhonar.com/wp-json/wc/v3/orders")
     route.mock(
@@ -99,6 +150,34 @@ def test_fetch_order_detail_converts_english_billing_name_to_persian():
     adapter = FarazHonarAdapter(config=_CFG)
     order = adapter.fetch_order_detail("503")
     assert order.customer_full_name == "محمد احمدی"
+
+
+@respx.mock
+def test_normalize_extracts_shipping_method_from_shipping_lines():
+    """Client request (2026-09): the courier name is read from
+    WooCommerce's standard shipping_lines[].method_title so
+    src/shipping_fees.py can pick the right flat shipping fee."""
+    raw_order = {
+        **_RAW_ORDER,
+        "id": 504,
+        "shipping_lines": [{"method_title": "پیشتاز"}],
+    }
+    respx.get("https://farazhonar.com/wp-json/wc/v3/orders/504").mock(
+        return_value=httpx.Response(200, json=raw_order)
+    )
+    adapter = FarazHonarAdapter(config=_CFG)
+    order = adapter.fetch_order_detail("504")
+    assert order.shipping_method == "پیشتاز"
+
+
+@respx.mock
+def test_normalize_shipping_method_none_when_no_shipping_lines():
+    respx.get("https://farazhonar.com/wp-json/wc/v3/orders/501").mock(
+        return_value=httpx.Response(200, json=_RAW_ORDER)
+    )
+    adapter = FarazHonarAdapter(config=_CFG)
+    order = adapter.fetch_order_detail("501")
+    assert order.shipping_method is None
 
 
 @respx.mock

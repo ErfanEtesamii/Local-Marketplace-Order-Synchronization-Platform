@@ -57,6 +57,12 @@ class DidarSyncService:
             customer_code=customer_code,
             mobile_phone=order.customer_mobile,
             full_name=order.customer_full_name,
+            email=order.customer_email,
+            work_phone=order.customer_work_phone,
+            address=order.customer_address,
+            postal_code=order.customer_postal_code,
+            province=order.customer_province,
+            city=order.customer_city,
         )
         deal_id = self._deals.create_deal(
             contact_id=contact.id, display_name=contact.display_name, order=order

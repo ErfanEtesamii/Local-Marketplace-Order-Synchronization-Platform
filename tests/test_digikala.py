@@ -433,6 +433,10 @@ def test_fetch_sbs_customer_details_returns_customer_data():
 
     assert result["customer_full_name"] == "علی محمدی"
     assert result["customer_mobile"] == "09123456789"
+    assert result["customer_province"] == "تهران"
+    assert result["customer_city"] == "تهران"
+    assert result["customer_address"] == "خیابان ولیعصر"
+    assert result["customer_postal_code"] == "1234567890"
     assert route.called
 
 
@@ -449,6 +453,10 @@ def test_fetch_sbs_customer_details_returns_none_on_failure():
 
     assert result["customer_full_name"] is None
     assert result["customer_mobile"] is None
+    assert result["customer_province"] is None
+    assert result["customer_city"] is None
+    assert result["customer_address"] is None
+    assert result["customer_postal_code"] is None
 
 
 @respx.mock

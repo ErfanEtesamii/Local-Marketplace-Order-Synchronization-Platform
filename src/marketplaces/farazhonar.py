@@ -194,6 +194,46 @@ class FarazHonarAdapter(MarketplaceAdapter):
         # Didar. See src/finglish.py for how/why this is approximate.
         full_name = persianize_name(full_name)
 
+        # Full billing address (client request, 2026-09: a new Didar
+        # Contact should carry the customer's full address, not just
+        # name+mobile - see src/didar/contact_client.py's
+        # upsert_contact()). WooCommerce's `billing` object is a
+        # standard, officially-documented part of the REST API v3 order
+        # schema (same high-confidence source as billing.first_name/
+        # last_name/phone already used above) - address_1/address_2,
+        # city, state, postcode, email are all part of that same
+        # object, nothing new is being guessed here.
+        address = " ".join(
+            part for part in [billing.get("address_1"), billing.get("address_2")] if part
+        ).strip() or None
+        # NOT YET CONFIRMED: some WooCommerce Iran setups store
+        # billing.state as a short state CODE (e.g. "THR") rather than
+        # the Persian province name - if this site's checkout does
+        # that, DidarContactClient's province/city name matching (see
+        # its module docstring) will simply fail to resolve a
+        # ProvinceId/CityId for it and log a warning rather than send
+        # anything wrong - it never breaks the Contact upsert itself.
+        # Check a real order's billing.state once available and adjust
+        # here (e.g. a code->name table) if it turns out to be coded.
+
+        # Courier/shipping method (client request, 2026-09: the flat
+        # shipping fee shown for this source depends on which courier
+        # was used - see src/shipping_fees.py). "shipping_lines" is a
+        # standard, officially-documented WooCommerce REST API v3 order
+        # field (array of shipping method rows), same high-confidence
+        # source as billing/line_items already used elsewhere in this
+        # adapter. An order can in principle have more than one
+        # shipping line; only the first is used here since a single
+        # order having two different couriers isn't a case the client
+        # described. None (not guessed) when the array is empty or the
+        # row has no method_title.
+        shipping_lines = raw.get("shipping_lines") or []
+        shipping_method = (
+            str(shipping_lines[0].get("method_title") or "") or None
+            if shipping_lines
+            else None
+        )
+
         items = []
         for item in raw.get("line_items", []):
             category, image_url = self._resolve_product_meta(item.get("product_id"))
@@ -219,6 +259,11 @@ class FarazHonarAdapter(MarketplaceAdapter):
             items=items,
             customer_full_name=full_name,
             customer_mobile=billing.get("phone") or None,
+            customer_email=billing.get("email") or None,
+            customer_address=address,
+            customer_postal_code=billing.get("postcode") or None,
+            customer_province=billing.get("state") or None,
+            customer_city=billing.get("city") or None,
             # NormalizedOrder.product_image_url (order-level) is now just a
             # last-resort fallback - each OrderItem's OWN image from
             # _resolve_image_url (set above) is what actually gets
@@ -232,6 +277,7 @@ class FarazHonarAdapter(MarketplaceAdapter):
             # confidence. Same TOMAN/RIAL unit as every other price on
             # this source (src/currency.py).
             shipping_cost=to_rial(_to_decimal(raw.get("shipping_total")), self._config.price_unit),
+            shipping_method=shipping_method,
             # shipment_id intentionally left None (the dataclass default):
             # core WooCommerce REST API v3 has no tracking/parcel-number
             # field - that's only ever added by a shipment-tracking

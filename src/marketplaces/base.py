@@ -59,6 +59,34 @@ class NormalizedOrder:
     customer_full_name: str | None = None
     customer_mobile: str | None = None
 
+    # Extended customer/contact fields (client request, 2026-09: a new
+    # Contact created in Didar was only ever getting CustomerCode /
+    # FirstName / LastName / MobilePhone, even on sources whose API
+    # already exposes more - see src/didar/contact_client.py's
+    # upsert_contact()). Every field here is intentionally optional and
+    # is populated ONLY when a given marketplace adapter's API actually
+    # returns it for that order - never guessed or defaulted by an
+    # adapter. Downstream (DidarContactClient.upsert_contact) already
+    # tolerates all of these being None, same as customer_full_name/
+    # customer_mobile above.
+    customer_email: str | None = None
+    # Landline/work phone, distinct from customer_mobile - maps to
+    # Didar Contact's "Phone" field (MobilePhone is the mobile one).
+    customer_work_phone: str | None = None
+    # Free-text full postal address (street/building/unit), NOT
+    # including province/city (those are the two fields below, kept
+    # separate because Didar's ProvinceId/CityId are its own Location
+    # Ids, not the raw text - see DidarContactClient's location
+    # resolution).
+    customer_address: str | None = None
+    customer_postal_code: str | None = None
+    # Raw province/city NAMES exactly as the marketplace provides them
+    # (e.g. "تهران" / "کرج") - DidarContactClient resolves these to
+    # Didar's own ProvinceId/CityId before sending anything to
+    # /contact/save; NormalizedOrder never carries a Didar Location Id.
+    customer_province: str | None = None
+    customer_city: str | None = None
+
     # Shipment ID from the marketplace's SBS API, used to fetch customer
     # details via the /ship-by-seller-orders/customer/{shipment_id} endpoint.
     # None if the source doesn't expose this field or isn't an SBS order.
@@ -101,6 +129,15 @@ class NormalizedOrder:
     # same value; DidarDealClient falls back to shipment_id when this is
     # None.
     shipment_tracking_code: str | None = None
+
+    # Courier/shipping method name exactly as the marketplace reports it
+    # (e.g. WooCommerce's shipping_lines[].method_title - "پیشتاز" /
+    # "تیپاکس" for Faraz Honar). Used by src/shipping_fees.py to pick the
+    # right flat shipping-fee amount to display for that order (client
+    # request, 2026-09: fixed per-courier amounts, distinct from
+    # shipping_cost above which is the real API-reported figure). None
+    # means the adapter doesn't expose a shipping method for this order.
+    shipping_method: str | None = None
 
 
 class MarketplaceAdapter(ABC):

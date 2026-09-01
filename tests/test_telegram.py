@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import jdatetime
 import pytest
@@ -33,6 +33,7 @@ def _order_with_items(
     shipping_cost: str = "0",
     customer_full_name: str | None = "علی رضایی",
     items: list[OrderItem] | None = None,
+    shipping_method: str | None = None,
 ) -> NormalizedOrder:
     return NormalizedOrder(
         source=source,
@@ -52,6 +53,7 @@ def _order_with_items(
             )
         ],
         shipping_cost=Decimal(shipping_cost),
+        shipping_method=shipping_method,
     )
 
 
@@ -123,6 +125,9 @@ def test_is_configured_false_when_bot_unreachable(monkeypatch):
 # ---------------------------------------------------------------------
 
 def test_format_new_order_message_matches_exact_template():
+    """Digikala's "هزینه ارسال" lines show the client's flat 239 Toman
+    fee (see src/shipping_fees.py), not the order's real shipping_cost
+    (here 30,000 Rial) - client request, 2026-09."""
     notifier = TelegramNotifier()
     order = _order_with_items(
         "digikala", "12345", total="130000", shipping_cost="30000",
@@ -150,12 +155,12 @@ def test_format_new_order_message_matches_exact_template():
         "1️⃣ Test Product\n"
         "   └─ 50,000 ریال × 2\n"
         "🚚 هزینه ارسال:\n"
-        "30,000 ریال\n"
+        "239 تومان\n"
         "━━━━━━━━━━━━━━━━━━━━\n"
         "💰 مبلغ محصولات:\n"
         "100,000 ریال\n"
         "🚚 ارسال:\n"
-        "30,000 ریال\n"
+        "239 تومان\n"
         "💳 مبلغ کل:\n"
         "130,000 ریال\n"
         "━━━━━━━━━━━━━━━━━━━━\n"
@@ -198,6 +203,55 @@ def test_format_new_order_message_farazhonar_platform_emoji():
     order = _order_with_items("farazhonar", "1")
     message = notifier._format_new_order_message(order)
     assert "🛍 پلتفرم: 🔵 فرازهنر" in message
+
+
+# ---------------------------------------------------------------------
+# Fixed shipping-fee override for Digikala / Faraz Honar
+# (client request, 2026-09 - see src/shipping_fees.py)
+# ---------------------------------------------------------------------
+
+def test_digikala_always_shows_flat_239_toman_shipping_fee():
+    """Digikala shows the flat 239 Toman fee regardless of the order's
+    real shipping_cost."""
+    notifier = TelegramNotifier()
+    order = _order_with_items("digikala", "1", shipping_cost="999999")
+    message = notifier._format_new_order_message(order)
+    assert "🚚 هزینه ارسال:\n239 تومان\n" in message
+    assert "ریال" not in message.split("🚚 هزینه ارسال:")[1].split("\n")[1]
+
+
+def test_farazhonar_pishtaz_shows_225_toman_shipping_fee():
+    notifier = TelegramNotifier()
+    order = _order_with_items("farazhonar", "1", shipping_method="پیشتاز")
+    message = notifier._format_new_order_message(order)
+    assert "🚚 هزینه ارسال:\n225 تومان\n" in message
+
+
+def test_farazhonar_tipax_shows_250_toman_shipping_fee():
+    notifier = TelegramNotifier()
+    order = _order_with_items("farazhonar", "1", shipping_method="تیپاکس")
+    message = notifier._format_new_order_message(order)
+    assert "🚚 هزینه ارسال:\n250 تومان\n" in message
+
+
+def test_farazhonar_unknown_shipping_method_falls_back_to_real_cost():
+    """An unrecognized courier must never be guessed as Pishtaz/Tipax -
+    falls back to the order's real shipping_cost in Rial instead."""
+    notifier = TelegramNotifier()
+    order = _order_with_items(
+        "farazhonar", "1", shipping_cost="40000", shipping_method="پست عادی",
+    )
+    message = notifier._format_new_order_message(order)
+    assert "🚚 هزینه ارسال:\n40,000 ریال\n" in message
+
+
+def test_other_platforms_unaffected_by_fixed_shipping_fee():
+    """Tapsi Shop (and Basalam/SnappShop) have no fixed fee - keep
+    showing the real shipping_cost (0 by default) in Rial."""
+    notifier = TelegramNotifier()
+    order = _order_with_items("tapsishop", "1")
+    message = notifier._format_new_order_message(order)
+    assert "🚚 هزینه ارسال:\n0 ریال\n" in message
 
 
 def test_emoji_number_keycaps():
@@ -378,6 +432,72 @@ def test_monthly_rollover_fires_when_jalali_month_changes(repo):
 
         notifier._check_monthly_rollover(repo, ["digikala"], start_of_next_month)
         mock_send.assert_called_once_with(repo, ["digikala"], jdatetime.date(1405, 6, 1))
+
+
+def test_yearly_rollover_fires_when_jalali_year_changes(repo):
+    notifier = TelegramNotifier()
+    end_of_year = jdatetime.date(1405, 12, 29)
+    start_of_next_year = jdatetime.date(1406, 1, 1)
+
+    with patch.object(notifier, "_send_yearly_report") as mock_send:
+        notifier._check_yearly_rollover(repo, ["digikala"], end_of_year)
+        mock_send.assert_not_called()  # first run - just sets the marker
+
+        notifier._check_yearly_rollover(repo, ["digikala"], end_of_year)
+        mock_send.assert_not_called()  # same year, no rollover yet
+
+        notifier._check_yearly_rollover(repo, ["digikala"], start_of_next_year)
+        mock_send.assert_called_once_with(repo, ["digikala"], jdatetime.date(1405, 1, 1))
+
+
+def test_send_yearly_report_noops_when_not_configured(repo, monkeypatch):
+    monkeypatch.delenv("TELEGRAM_BOT_TOKEN", raising=False)
+    monkeypatch.delenv("TELEGRAM_CHAT_ID", raising=False)
+    notifier = TelegramNotifier()
+
+    with patch.object(notifier, "_send") as mock_send:
+        notifier._send_yearly_report(repo, ["digikala"], jdatetime.date(1405, 1, 1))
+
+    mock_send.assert_not_called()
+
+
+# ---------------------------------------------------------------------
+# Event loop reuse (regression test for the intermittent
+# "RuntimeError('Event loop is closed')" production failures)
+# ---------------------------------------------------------------------
+
+def test_send_reuses_one_persistent_event_loop_across_calls():
+    """Before the fix, _send() wrapped every call in its own
+    asyncio.run(), which opens a new event loop and closes it again as
+    soon as the call returns. python-telegram-bot's Bot keeps its httpx
+    connection pool alive *across* calls, so the next asyncio.run() call
+    could end up reusing a pooled connection that was still bound to the
+    loop just closed - raising "Event loop is closed" on some sends but
+    not others (exactly the production symptom: one send for an order
+    failed, and the very next retry of that same order succeeded).
+    Keeping one persistent loop for the notifier's lifetime removes the
+    mismatch."""
+    notifier = TelegramNotifier()
+    notifier._bot = MagicMock()
+    notifier._bot.send_message = AsyncMock()
+    notifier._chat_id = 775753176
+
+    notifier._send("first message")
+    loop_after_first = notifier._loop
+    assert loop_after_first is not None
+    assert not loop_after_first.is_closed()
+
+    notifier._send("second message")
+    loop_after_second = notifier._loop
+
+    # Same loop object, never closed in between calls - i.e. not a
+    # fresh asyncio.run() (and therefore a fresh loop) every time.
+    assert loop_after_second is loop_after_first
+    assert not loop_after_second.is_closed()
+    assert notifier._bot.send_message.call_count == 2
+
+    notifier.close()
+    assert notifier._loop is None
 
 
 def test_send_daily_report_noops_when_not_configured(repo, monkeypatch):

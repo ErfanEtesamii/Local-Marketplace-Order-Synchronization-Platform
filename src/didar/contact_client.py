@@ -64,6 +64,43 @@ apparently accepted the wrong casing without complaint the whole time
 was silent, not a live failure - fixed to match the documented
 contract exactly rather than keep relying on undocumented
 case-insensitive leniency.
+
+FULL CONTACT INFO (2026-09, client request): a brand-new Contact was
+only ever getting CustomerCode/FirstName/LastName/MobilePhone, even on
+orders where the source marketplace's own API already returns an
+email, a landline, a full address, and a postal code - see
+NormalizedOrder.customer_email / customer_work_phone /
+customer_address / customer_postal_code in marketplaces/base.py.
+upsert_contact() now accepts all of these and includes each in the
+save body ONLY when given (never a placeholder/empty value) - Email,
+Phone (landline; MobilePhone stays the mobile one), ZipCode, and
+Addresses.KeyValues are all part of Didar's own documented
+/contact/save request example alongside the fields already sent here.
+
+PROVINCE/CITY (2026-09): Didar's ProvinceId/CityId are Didar's own
+internal Location Ids, NOT the raw province/city name a marketplace
+sends. CONFIRMED (client-supplied Didar documentation, 2026-09):
+
+    POST {DIDAR_BASE_URL}/shared/GetLocations
+    headers: {"content-type": "application/json"}  (no apikey query
+    param, unlike every other endpoint in this module; no body)
+    -> {"Response": {"Countries": [...], "Provinces": [...],
+                      "Cities": [...]}}, each entry {Id, Level, Title,
+        ParentId}
+
+    (the client's own docs write this path with a leading "/api" -
+    this project's DIDAR_BASE_URL already ends in "/api" like every
+    other path here, so it's written without it - see
+    DidarConfig.get_locations_path's comment.)
+
+upsert_contact() takes the raw names (order.customer_province /
+customer_city) and resolves them to real Ids via
+_resolve_location_ids() (which calls list_locations(), cached for this
+client instance's lifetime) before ever building the save body - see
+that method's docstring for exactly how, and for what happens if the
+resolution can't find a confident match (ProvinceId/CityId are simply
+omitted, logged as a warning - never guessed, never sent as the raw
+name, and never fails the Contact upsert itself).
 """
 from __future__ import annotations
 
@@ -72,6 +109,7 @@ from dataclasses import dataclass
 import httpx
 
 from src.config import DidarConfig, settings
+from src.didar.category_mapping import _normalize_fa
 from src.http_utils import default_retry, raise_for_status_with_body
 from src.logger import get_logger
 
@@ -93,6 +131,16 @@ class DidarContactClient:
     def __init__(self, config: DidarConfig | None = None) -> None:
         self._config = config or settings.didar
         self._client = httpx.Client(base_url=self._config.base_url, timeout=30.0)
+        # Lazily populated by list_locations()/_resolve_location_ids() -
+        # see those methods. None means "not fetched yet"; a fetch that
+        # fails leaves this None so the NEXT order tries again rather
+        # than permanently disabling province/city resolution for the
+        # rest of this instance's lifetime (same failed-lookup-isn't-
+        # cached philosophy as product_client.py's _resolve_product_meta).
+        # Shape once populated: {"provinces": {name: Id}, "cities":
+        # {name: Id}, "cities_by_province": {(name, province_id): Id}} -
+        # see _location_by_name_map().
+        self._locations_by_name: dict[str, dict] | None = None
 
     @default_retry()
     def _post(self, path: str, json: dict) -> dict:
@@ -173,11 +221,152 @@ class DidarContactClient:
 
         return None
 
+    @default_retry()
+    def _post_no_apikey(self, path: str) -> dict:
+        """
+        Like _post(), but for the one confirmed Didar endpoint that does
+        NOT take apikey as a query-string param and has no body -
+        POST /api/shared/GetLocations (see list_locations() docstring).
+        """
+        resp = self._client.post(path, headers={"content-type": "application/json"})
+        raise_for_status_with_body(resp)
+        return resp.json()
+
+    def list_locations(self) -> dict:
+        """
+        CONFIRMED (client-supplied Didar documentation, 2026-09):
+
+            POST {DIDAR_BASE_URL}/shared/GetLocations
+            headers: {"content-type": "application/json"}
+            (no apikey query param, no request body)
+
+        NOTE ON THE PATH: the client's own docs write this endpoint as
+        "{{baseURL}}/api/shared/GetLocations" - but this project's
+        DIDAR_BASE_URL already ends in "/api" (.env.example), same as
+        every other path used in this file, none of which repeat "/api"
+        themselves. See DidarConfig.get_locations_path's comment for
+        the full reasoning - if this 404s, the doubled "/api" is the
+        first thing to check.
+
+        Response shape:
+            {"Response": {"Countries": [{"Id", "Level", "Title", "ParentId"}, ...],
+                          "Provinces": [{"Id", "Level", "Title", "ParentId"}, ...],
+                          "Cities": [{"Id", "Level", "Title", "ParentId"}, ...]}}
+
+        Returns the raw Response dict as-is (not flattened) - callers
+        that only care about province/city Ids should go through
+        _location_by_name_map()/_resolve_location_ids() below, which do
+        the normalization and lookup. The "Cities" key isn't shown in
+        the client's sample payload (only Countries/Provinces were), so
+        it's read defensively (.get("Cities", [])) - if this account's
+        response really has no separate Cities list, city resolution
+        just finds nothing and logs a warning (see
+        _resolve_location_ids()), it never breaks the Contact upsert.
+        """
+        payload = self._post_no_apikey(self._config.get_locations_path)
+        response = payload.get("Response", {})
+        return response if isinstance(response, dict) else {}
+
+    def _location_by_name_map(self) -> dict[str, dict[str, str]]:
+        """
+        Builds, once per instance (cached in self._locations_by_name),
+        two name -> Id maps from list_locations():
+            {"provinces": {normalized_title: Id, ...},
+             "cities": {normalized_title: Id, ...}}   # Id keyed by title alone;
+             # a separate "cities_by_province" map below additionally scopes
+             # by ParentId (province Id), used first before this flatter one.
+
+        A city's normalized title is unique enough in practice for this
+        client's own city names (اسم استان تهران و شهر تهران با هم فرق
+        دارن), so the flat "cities" map is a safe fallback when a
+        Province wasn't itself resolved (see _resolve_location_ids()).
+        """
+        if self._locations_by_name is None:
+            response = self.list_locations()
+            provinces = response.get("Provinces", []) or []
+            cities = response.get("Cities", []) or []
+
+            provinces_by_name = {
+                _normalize_fa(str(p["Title"])): str(p["Id"])
+                for p in provinces
+                if isinstance(p, dict) and p.get("Id") and p.get("Title")
+            }
+            cities_by_province: dict[tuple[str, str], str] = {}
+            cities_by_name: dict[str, str] = {}
+            for c in cities:
+                if not (isinstance(c, dict) and c.get("Id") and c.get("Title")):
+                    continue
+                title = _normalize_fa(str(c["Title"]))
+                city_id = str(c["Id"])
+                cities_by_name.setdefault(title, city_id)
+                if c.get("ParentId"):
+                    cities_by_province[(title, str(c["ParentId"]))] = city_id
+
+            self._locations_by_name = {
+                "provinces": provinces_by_name,
+                "cities": cities_by_name,
+                "cities_by_province": cities_by_province,
+            }
+        return self._locations_by_name
+
+    def _resolve_location_ids(
+        self, province: str | None, city: str | None
+    ) -> tuple[str | None, str | None]:
+        """
+        Resolve raw province/city NAMES (as a marketplace sends them,
+        e.g. "تهران" / "کرج") to Didar's own ProvinceId/CityId, via
+        POST /api/shared/GetLocations - see list_locations()'s
+        docstring for the confirmed request/response shape.
+
+        Never raises: any failure (network error, or simply no matching
+        name in Didar's Location list) is logged as a warning and
+        results in that Id being omitted from the Contact save - a
+        wrong/guessed Id would silently attach the customer to the
+        wrong place, which is worse than leaving the field blank.
+        """
+        if not province and not city:
+            return None, None
+        try:
+            maps = self._location_by_name_map()
+        except Exception:
+            log.warning(
+                "didar: could not fetch Locations (POST /api/shared/GetLocations) "
+                "to resolve province=%r city=%r; ProvinceId/CityId will be "
+                "omitted for this Contact",
+                province, city, exc_info=True,
+            )
+            return None, None
+
+        province_id = maps["provinces"].get(_normalize_fa(province)) if province else None
+
+        city_id = None
+        if city:
+            city_norm = _normalize_fa(city)
+            if province_id:
+                city_id = maps["cities_by_province"].get((city_norm, province_id))
+            if not city_id:
+                # Province name didn't resolve, or Didar's city list
+                # doesn't carry a ParentId matching it - fall back to a
+                # province-agnostic exact match on the city name itself.
+                city_id = maps["cities"].get(city_norm)
+
+        if province and not province_id:
+            log.warning("didar: no Didar Province match for province=%r", province)
+        if city and not city_id:
+            log.warning("didar: no Didar City match for city=%r", city)
+        return province_id, city_id
+
     def upsert_contact(
         self,
         customer_code: str,
         mobile_phone: str | None = None,
         full_name: str | None = None,
+        email: str | None = None,
+        work_phone: str | None = None,
+        address: str | None = None,
+        postal_code: str | None = None,
+        province: str | None = None,
+        city: str | None = None,
     ) -> ContactResult:
         """
         Create-or-update a Contact keyed on customer_code, returning its
@@ -186,6 +375,13 @@ class DidarContactClient:
         NOT reliably auto-upsert by CustomerCode alone) and includes its
         Id in the save body when found, so Didar treats the call as an
         edit rather than rejecting it as a duplicate create.
+
+        email/work_phone/address/postal_code/province/city are all
+        optional, matching NormalizedOrder's own optionality (see
+        marketplaces/base.py) - a source that doesn't provide a given
+        field simply omits it here too, and Didar's existing value (on
+        an update) or default (on a create) is left untouched rather
+        than being blanked out.
         """
         first_name, last_name = _split_name(full_name)
         if not last_name:
@@ -206,6 +402,31 @@ class DidarContactClient:
             "LastName": last_name,
             "MobilePhone": mobile_phone or "",
         }
+
+        # Every field below is added ONLY when actually provided - never
+        # a placeholder empty string like MobilePhone above, so an
+        # update never blanks out a value Didar already has just
+        # because this particular order's source didn't supply it.
+        if email:
+            contact_body["Email"] = email
+        if work_phone:
+            contact_body["Phone"] = work_phone
+        if postal_code:
+            contact_body["ZipCode"] = postal_code
+        if address:
+            # Shape confirmed by the client-supplied Didar documentation
+            # (2026-09): KeyValues entries carry Key/Value/Title, not
+            # just Key/Value. Key/Title are left empty (no per-address
+            # label like "منزل"/"محل کار" is available from any
+            # marketplace source) - only Value (the full address text)
+            # is something this project actually has to send.
+            contact_body["Addresses"] = {"KeyValues": [{"Key": "", "Value": address, "Title": ""}]}
+
+        province_id, city_id = self._resolve_location_ids(province, city)
+        if province_id:
+            contact_body["ProvinceId"] = province_id
+        if city_id:
+            contact_body["CityId"] = city_id
 
         existing_id = self.find_existing_contact_id(customer_code, mobile_phone=mobile_phone)
         if existing_id:

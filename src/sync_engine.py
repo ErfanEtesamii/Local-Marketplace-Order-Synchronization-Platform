@@ -339,6 +339,10 @@ class SyncEngine:
 
         full_name = details.get("customer_full_name")
         mobile = details.get("customer_mobile")
+        province = details.get("customer_province")
+        city = details.get("customer_city")
+        address = details.get("customer_address")
+        postal_code = details.get("customer_postal_code")
 
         if not full_name:
             # Fallback: synthetic contact name with shipment_id so the order
@@ -349,10 +353,23 @@ class SyncEngine:
         object.__setattr__(order, "customer_full_name", full_name)
         if mobile:
             object.__setattr__(order, "customer_mobile", mobile)
+        # Full contact info (client request, 2026-09) - see
+        # NormalizedOrder.customer_address's docstring. Each field is
+        # only set when the SBS response actually had it, same
+        # None-means-"don't touch it" convention as mobile above.
+        if province:
+            object.__setattr__(order, "customer_province", province)
+        if city:
+            object.__setattr__(order, "customer_city", city)
+        if address:
+            object.__setattr__(order, "customer_address", address)
+        if postal_code:
+            object.__setattr__(order, "customer_postal_code", postal_code)
 
         log.info(
-            "sync_engine: enriched Digikala SBS customer for order %s (name=%r, mobile=%r)",
-            order.source_order_id, full_name, mobile,
+            "sync_engine: enriched Digikala SBS customer for order %s "
+            "(name=%r, mobile=%r, province=%r, city=%r, has_address=%s, postal_code=%r)",
+            order.source_order_id, full_name, mobile, province, city, bool(address), postal_code,
         )
 
     def _enrich_digikala_shipment_details(
