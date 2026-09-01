@@ -9,7 +9,7 @@ from src.didar.activity_client import DidarActivityClient
 from src.didar.contact_client import DidarContactClient
 from src.didar.deal_client import DidarDealClient
 from src.didar.product_client import DidarProductClient
-from src.didar.service import DidarSyncService, _customer_code_for
+from src.didar.service import DidarSyncService, _customer_code_for, _fetch_product_image
 from src.marketplaces.base import NormalizedOrder, OrderItem
 
 _CFG = DidarConfig(
@@ -92,6 +92,35 @@ _ORDER = NormalizedOrder(
     customer_mobile=None,
     customer_full_name=None,
 )
+
+
+@respx.mock
+def test_fetch_product_image_filename_ignores_query_string():
+    """Regression test for a real production bug: Digikala's CDN URLs
+    append image-transform params to the query string using "/" as a
+    separator (e.g. "...?x-oss-process=image/resize,m_lfit/quality,q_60"),
+    so naively taking the text after the LAST "/" in the full URL grabs a
+    piece of the query string instead of the real filename. Confirmed
+    live - every "ارسال محصول" attachment in production was named
+    literally "quality,q_60" instead of the actual image filename.
+    _fetch_product_image must derive the filename from the URL's path
+    only, ignoring anything after "?"."""
+    url = (
+        "https://dkstatics-public.digikala.com/digikala-products/113noe.jpg"
+        "?x-oss-process=image/resize,m_lfit/quality,q_60"
+    )
+    respx.get(url).mock(
+        return_value=httpx.Response(200, content=b"fake-bytes", headers={"content-type": "image/jpeg"})
+    )
+    order = NormalizedOrder(**{**_ORDER.__dict__, "product_image_url": url})
+
+    result = _fetch_product_image(order)
+
+    assert result is not None
+    file_bytes, filename, content_type = result
+    assert filename == "113noe.jpg"
+    assert file_bytes == b"fake-bytes"
+    assert content_type == "image/jpeg"
 
 
 @respx.mock

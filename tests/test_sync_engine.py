@@ -431,6 +431,79 @@ def test_digikala_sbs_enrichment_adds_customer_name_and_mobile(repo, synced_ids_
     assert adapter.fetch_sbs_customer_details_calls == ["SHIP-123"]
 
 
+def test_digikala_sbs_enrichment_also_applies_on_retry(repo, synced_ids_file):
+    """Regression test for a real production bug: retry_pending_failures()
+    used to call self._didar.sync_order(order) directly, completely
+    bypassing SBS enrichment - so ANY order that failed even once on its
+    first attempt (for any reason, including one unrelated to Digikala/
+    enrichment at all) would sync on retry with a synthetic name forever,
+    never a real one. Confirmed live: every single Digikala order in
+    production logs had gone through the retry path at least once, so
+    enrichment had in effect never actually run for a real order.
+
+    Uses two SEPARATE NormalizedOrder objects (one for the initial
+    list_orders pass, one for the retry's own fetch_order_detail call) -
+    both start with customer_full_name=None. This matters: retry always
+    re-fetches the order fresh by id, so it must perform its OWN
+    enrichment rather than relying on a mutation the first (failed)
+    attempt happened to make on a shared object - the old bug would
+    otherwise be masked by that coincidence instead of actually caught.
+    """
+    list_order = NormalizedOrder(
+        source="digikala",
+        source_order_id="order-123",
+        order_number="order-123",
+        created_at=datetime.now(timezone.utc) - timedelta(hours=1),
+        total_price=Decimal("100000"),
+        status="confirmed",
+        items=[OrderItem(sku="s", title="t", quantity=1, unit_price=Decimal("1"),
+                          final_price=Decimal("100000"))],
+        shipment_id="SHIP-123",
+        customer_full_name=None,
+        customer_mobile=None,
+    )
+    # A distinct object (not the same instance as list_order) - simulates
+    # a real retry, which always re-fetches the order by id rather than
+    # reusing whatever object the first attempt happened to hold.
+    retry_fetched_order = NormalizedOrder(**list_order.__dict__)
+
+    adapter = FakeAdapter(
+        "digikala",
+        list_orders=[list_order],
+        details={"order-123": retry_fetched_order},
+        sbs_customer_details={
+            "SHIP-123": {
+                "customer_full_name": "علی محمدی",
+                "customer_mobile": "09123456789",
+            }
+        },
+    )
+    # First attempt fails at the Didar push step itself (simulating any
+    # transient/unrelated error there) - AFTER enrichment already ran
+    # once on list_order. The order only ever actually reaches Didar via
+    # the retry pass, using the separate retry_fetched_order object.
+    didar = FakeDidarService(fail_once_for={"digikala:order-123"})
+    engine = SyncEngine(
+        adapters=[adapter],
+        repository=repo,
+        didar_service=didar,
+        synced_ids_file_path=str(synced_ids_file),
+    )
+
+    engine.run_once()  # first attempt fails, then run_once's own retry pass fixes it
+
+    assert repo.is_already_synced("digikala", "order-123")
+    assert len(didar.synced_orders) == 1
+    synced = didar.synced_orders[0]
+    assert synced.customer_full_name == "علی محمدی"
+    assert synced.customer_mobile == "09123456789"
+    # Called once by the failing first attempt (on list_order) and once
+    # more by the retry (on retry_fetched_order, a separate object that
+    # still had customer_full_name=None) - proving the retry path does
+    # its own enrichment rather than piggybacking on the first attempt.
+    assert adapter.fetch_sbs_customer_details_calls == ["SHIP-123", "SHIP-123"]
+
+
 def test_digikala_sbs_enrichment_falls_back_to_synthetic_name_on_failure(repo, synced_ids_file):
     """When SBS customer fetch fails, fallback to synthetic contact name."""
     digikala_order = NormalizedOrder(

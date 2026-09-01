@@ -242,26 +242,7 @@ class SyncEngine:
             return
 
         try:
-            if not order.items:
-                # Several adapters' list endpoints omit line items -
-                # fetch the full order before pushing to Didar.
-                order = adapter.fetch_order_detail(order.source_order_id)
-
-            # Enrich Digikala SBS orders with customer data from the
-            # ship-by-seller customer API before pushing to Didar. This runs
-            # only for new un-synced orders (not re-syncs) and only for
-            # Digikala orders that have a shipment_id. If the API fails or
-            # returns no data, fall back to a synthetic contact name so the
-            # sync still succeeds (Didar can still create a deal without a
-            # real customer name).
-            if (
-                order.source == "digikala"
-                and order.shipment_id
-                and not order.customer_full_name
-            ):
-                self._enrich_digikala_sbs_customer(adapter, order)
-
-            deal_id = self._didar.sync_order(order)
+            deal_id, order = self._prepare_and_push_to_didar(adapter, order)
             products_amount, shipping_amount, total_amount = self._order_amounts(order)
             self._repo.mark_synced(
                 order.source, order.source_order_id, deal_id,
@@ -277,6 +258,46 @@ class SyncEngine:
                 "sync_engine: failed to sync %s order %s", order.source, order.source_order_id
             )
             self._repo.record_failure(order.source, order.source_order_id, str(exc))
+
+    def _prepare_and_push_to_didar(
+        self, adapter: MarketplaceAdapter, order: NormalizedOrder
+    ) -> tuple[str, NormalizedOrder]:
+        """Shared prep + push step used by BOTH the first-attempt sync
+        path (_sync_one_order) AND the retry path (retry_pending_failures).
+
+        BUGFIX (2026-09): retry_pending_failures() used to call
+        self._didar.sync_order(order) directly, completely bypassing the
+        Digikala SBS customer-name enrichment below. In production this
+        meant customer_full_name was NEVER populated for any order that
+        failed even once on its first attempt (for ANY reason, including
+        transient/unrelated errors) and only went through on a later
+        retry - confirmed live: every single synced Digikala order in
+        the account's logs had gone through the retry path, so
+        enrichment had in effect never run at all. Centralizing the
+        fetch-detail + enrich + sync_order sequence here, and having
+        both callers use it, makes that impossible to diverge again.
+        """
+        if not order.items:
+            # Several adapters' list endpoints omit line items -
+            # fetch the full order before pushing to Didar.
+            order = adapter.fetch_order_detail(order.source_order_id)
+
+        # Enrich Digikala SBS orders with customer data from the
+        # ship-by-seller customer API before pushing to Didar. Only for
+        # Digikala orders that have a shipment_id and don't already have
+        # a real customer name. If the API fails or returns no data,
+        # fall back to a synthetic contact name so the sync still
+        # succeeds (Didar can still create a deal without a real
+        # customer name).
+        if (
+            order.source == "digikala"
+            and order.shipment_id
+            and not order.customer_full_name
+        ):
+            self._enrich_digikala_sbs_customer(adapter, order)
+
+        deal_id = self._didar.sync_order(order)
+        return deal_id, order
 
     def _enrich_digikala_sbs_customer(
         self, adapter: MarketplaceAdapter, order: NormalizedOrder
@@ -346,7 +367,12 @@ class SyncEngine:
 
             try:
                 order = adapter.fetch_order_detail(failure.source_order_id)
-                deal_id = self._didar.sync_order(order)
+                # See _prepare_and_push_to_didar's docstring - this used to
+                # call self._didar.sync_order(order) directly here, which
+                # skipped Digikala SBS customer-name enrichment on every
+                # retry (i.e. on effectively every order that ever failed
+                # once, for any reason).
+                deal_id, order = self._prepare_and_push_to_didar(adapter, order)
                 products_amount, shipping_amount, total_amount = self._order_amounts(order)
                 self._repo.mark_synced(
                     failure.platform, failure.source_order_id, deal_id,

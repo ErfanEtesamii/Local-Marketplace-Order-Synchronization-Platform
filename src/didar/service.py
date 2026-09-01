@@ -6,6 +6,8 @@ in isolation while still being trivial to use together.
 """
 from __future__ import annotations
 
+from urllib.parse import urlparse
+
 import httpx
 
 from src.didar.activity_client import DidarActivityClient
@@ -107,7 +109,18 @@ def _fetch_product_image(order: NormalizedOrder) -> tuple[bytes, str, str] | Non
         return None
 
     content_type = resp.headers.get("content-type", "application/octet-stream").split(";")[0]
-    filename = order.product_image_url.rstrip("/").rsplit("/", 1)[-1] or "product.jpg"
+    # BUGFIX: filename must come from the URL's PATH only, not the raw
+    # string. Digikala's CDN URLs carry image-transform params in the
+    # query string using "/" as a separator (e.g.
+    # ".../xxx.jpg?x-oss-process=image/resize,m_lfit/quality,q_60"), so
+    # naively taking the text after the last "/" in the full URL grabs a
+    # piece of that query string ("quality,q_60") instead of the real
+    # filename - confirmed live: every single "ارسال محصول" attachment
+    # in production logs was named literally "quality,q_60". Parsing out
+    # the path component first fixes this regardless of what query
+    # string is appended.
+    path = urlparse(order.product_image_url).path
+    filename = path.rstrip("/").rsplit("/", 1)[-1] or "product.jpg"
     return resp.content, filename, content_type
 
 
