@@ -30,6 +30,7 @@ DESIGN CHOICES:
 """
 from __future__ import annotations
 
+import asyncio
 import os
 from datetime import datetime, timedelta, timezone
 from typing import Optional
@@ -160,7 +161,16 @@ class TelegramNotifier:
             # get_me() validates the token and is the cheapest call to
             # confirm we can talk to the Telegram API. Catches both
             # network errors and "token revoked" responses.
-            bot.get_me()
+            #
+            # IMPORTANT: python-telegram-bot v20+ made every Bot method a
+            # coroutine. Calling bot.get_me() directly (no await) does NOT
+            # run the request - it just builds and immediately discards a
+            # coroutine object (that's the "coroutine was never awaited"
+            # RuntimeWarning pytest was flagging). No exception, no network
+            # call, is_configured() silently "succeeds" either way. Every
+            # Telegram notification since this file was written has
+            # therefore been a no-op. asyncio.run() actually executes it.
+            asyncio.run(bot.get_me())
         except TelegramError as exc:
             log.warning("telegram: get_me() failed (%s) - notifications disabled", exc)
             return False
@@ -398,15 +408,24 @@ class TelegramNotifier:
     def _send(self, text: str) -> None:
         """Actually send a message. Caller is responsible for catching
         TelegramError - this method lets unexpected exceptions bubble so
-        they're logged at the caller's exception site with context."""
+        they're logged at the caller's exception site with context.
+
+        Every self._bot.send_message(...) call below is run through
+        asyncio.run() because Bot.send_message is a coroutine (PTB v20+) -
+        calling it directly with no await would build the coroutine and
+        immediately drop it without ever hitting Telegram's API. See the
+        matching comment in is_configured() for the get_me() half of this.
+        """
         # Telegram caps a single text message at 4096 chars; the reports
         # are well under that, but split defensively if anything ever
         # grows. Splitting on blank lines keeps sections together.
         if len(text) <= 4000:
-            self._bot.send_message(
-                chat_id=self._chat_id,
-                text=text,
-                parse_mode=ParseMode.MARKDOWN_V2,
+            asyncio.run(
+                self._bot.send_message(
+                    chat_id=self._chat_id,
+                    text=text,
+                    parse_mode=ParseMode.MARKDOWN_V2,
+                )
             )
             return
 
@@ -422,10 +441,12 @@ class TelegramNotifier:
             chunks.append(current)
 
         for chunk in chunks:
-            self._bot.send_message(
-                chat_id=self._chat_id,
-                text=chunk,
-                parse_mode=ParseMode.MARKDOWN_V2,
+            asyncio.run(
+                self._bot.send_message(
+                    chat_id=self._chat_id,
+                    text=chunk,
+                    parse_mode=ParseMode.MARKDOWN_V2,
+                )
             )
 
     @staticmethod

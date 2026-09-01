@@ -46,7 +46,9 @@ def test_telegram_notifier_is_configured_when_credentials_set(monkeypatch):
     monkeypatch.setenv("TELEGRAM_CHAT_ID", "775753176")
 
     notifier = TelegramNotifier()
-    # Mock the Bot.get_me() call to avoid actual network requests
+    # Bot.get_me is a coroutine function (python-telegram-bot v20+); patch()
+    # auto-detects that and uses an AsyncMock, so setting return_value here
+    # is what the mock resolves to once is_configured() actually awaits it.
     with patch('telegram.Bot.get_me') as mock_get_me:
         mock_get_me.return_value = MagicMock()
         assert notifier.is_configured() is True
@@ -86,12 +88,11 @@ def test_telegram_notifier_is_configured_false_when_bot_unreachable(monkeypatch)
     monkeypatch.setenv("TELEGRAM_CHAT_ID", "775753176")
 
     notifier = TelegramNotifier()
-    # Mock Bot.get_me to raise TelegramError.
-    # Use new_callable=MagicMock so the exception is raised synchronously
-    # (python-telegram's get_me is async, and patch would otherwise wrap it
-    # in an AsyncMock whose side_effect only fires on await - but our code
-    # doesn't await, so we force a plain MagicMock).
-    with patch('telegram.Bot.get_me', new_callable=MagicMock) as mock_get_me:
+    # Bot.get_me is a coroutine function (python-telegram-bot v20+), so
+    # patch() auto-detects that and uses an AsyncMock - side_effect fires
+    # when the code actually awaits it (via asyncio.run() in
+    # is_configured()), same as it would against the real Telegram API.
+    with patch('telegram.Bot.get_me') as mock_get_me:
         from telegram.error import TelegramError
         mock_get_me.side_effect = TelegramError("Bot unreachable")
         assert notifier.is_configured() is False
@@ -183,6 +184,29 @@ def test_to_persian_digits_converts_ascii_to_persian():
     assert notifier._to_persian_digits("Test 123 abc 456") == "Test ۱۲۳ abc ۴۵۶"
     assert notifier._to_persian_digits("No digits here!") == "No digits here!"
     assert notifier._to_persian_digits("") == ""
+
+
+def test_notify_new_order_actually_sends_message(monkeypatch):
+    """Regression test for the coroutine-never-awaited bug: before the fix,
+    self._bot.send_message(...) built a coroutine and immediately discarded
+    it without ever calling Telegram's API - notify_new_order would report
+    success while sending nothing. Bot.send_message is a coroutine function,
+    so patch() auto-detects that and uses an AsyncMock; asserting it was
+    called only proves something if the code actually awaits it."""
+    notifier = TelegramNotifier()
+    notifier._bot = MagicMock()
+    notifier._chat_id = 775753176
+
+    order = _order_with_items("digikala", "12345", "250000")
+
+    with patch.object(notifier, "is_configured", return_value=True), \
+         patch.object(notifier._bot, "send_message") as mock_send:
+        notifier.notify_new_order(order, "deal-12345")
+
+    mock_send.assert_called_once()
+    _, kwargs = mock_send.call_args
+    assert kwargs["chat_id"] == 775753176
+    assert "12345" in kwargs["text"]
 
 
 if __name__ == "__main__":
