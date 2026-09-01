@@ -21,9 +21,14 @@ DESIGN CHOICES:
   Telegram connection (and should never make a network call at import
   time - tests import SyncEngine without env vars set).
 
-- TELEGRAM_CHAT_ID accepts either a numeric chat id or a
-  "@channel_username" string, per the feature request - only bare
-  int() parsing is rejected as a config error.
+- Fan-out to multiple recipients: TELEGRAM_CHAT_ID (legacy, single) and
+  TELEGRAM_CHAT_ID_1..TELEGRAM_CHAT_ID_10 are all merged into one list -
+  every per-order notification and every report is sent to every
+  configured chat id independently. Each accepts either a numeric chat
+  id or a "@channel_username" string, per the feature request - only a
+  value that's neither numeric nor "@..." is skipped (logged) rather
+  than disabling the whole feature, and a send failure to one recipient
+  never blocks sends to the others (see _send()).
 
 - Reports are built directly from Repository.get_amount_stats_since()
   (see src/db/repository.py) rather than reusing src/reporting.py's
@@ -207,7 +212,7 @@ class TelegramNotifier:
 
     def __init__(self) -> None:
         self._bot: Optional[Bot] = None
-        self._chat_id: Optional[Union[int, str]] = None
+        self._chat_ids: list[Union[int, str]] = []
         self._configured: bool = False
         self._loop: Optional[asyncio.AbstractEventLoop] = None
 
@@ -270,35 +275,46 @@ class TelegramNotifier:
     # Configuration gate
     # ------------------------------------------------------------------
     def is_configured(self) -> bool:
-        """True iff TELEGRAM_BOT_TOKEN + TELEGRAM_CHAT_ID are set and the
-        bot can be reached. Caches the result so we only call get_me() once
-        per process. Returns False (no exception) on any failure.
+        """True iff TELEGRAM_BOT_TOKEN is set, at least one recipient chat
+        id is set and valid, and the bot can be reached. Caches the result
+        so we only call get_me() once per process. Returns False (no
+        exception) on any failure.
 
-        TELEGRAM_CHAT_ID may be a numeric chat id or a "@channel_username"
-        string - only a non-numeric value that also doesn't start with
-        "@" is treated as a configuration error."""
+        Recipients come from TELEGRAM_CHAT_ID (legacy, single) plus
+        TELEGRAM_CHAT_ID_1..TELEGRAM_CHAT_ID_10, merged into one
+        deduplicated list - every one of them gets every notification and
+        report (see _send()). Each may be a numeric chat id or a
+        "@channel_username" string; a value that's neither is skipped
+        (logged) rather than disabling the whole feature - only having
+        zero valid recipients (or no token) disables it."""
         if self._configured:
             return True
 
         token = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
-        chat_id_raw = os.getenv("TELEGRAM_CHAT_ID", "").strip()
-        if not token or not chat_id_raw:
+        raw_ids = self._collect_raw_chat_ids()
+        if not token or not raw_ids:
             log.debug("telegram: credentials not set, notifications disabled")
             return False
 
-        chat_id: Union[int, str]
-        if chat_id_raw.startswith("@"):
-            chat_id = chat_id_raw
-        else:
-            try:
-                chat_id = int(chat_id_raw)
-            except ValueError:
-                log.warning(
-                    "telegram: TELEGRAM_CHAT_ID=%r is neither numeric nor a "
-                    "@channel_username - notifications disabled",
-                    chat_id_raw,
-                )
-                return False
+        chat_ids: list[Union[int, str]] = []
+        for raw in raw_ids:
+            if raw.startswith("@"):
+                chat_ids.append(raw)
+            else:
+                try:
+                    chat_ids.append(int(raw))
+                except ValueError:
+                    log.warning(
+                        "telegram: chat id %r is neither numeric nor a "
+                        "@channel_username - skipping this recipient",
+                        raw,
+                    )
+        if not chat_ids:
+            log.warning(
+                "telegram: no valid chat ids among %r - notifications disabled",
+                raw_ids,
+            )
+            return False
 
         try:
             bot = Bot(token=token)
@@ -323,10 +339,33 @@ class TelegramNotifier:
             return False
 
         self._bot = bot
-        self._chat_id = chat_id
+        self._chat_ids = chat_ids
         self._configured = True
-        log.info("telegram: bot configured (chat_id=%r)", chat_id)
+        log.info("telegram: bot configured (%d recipient(s): %r)", len(chat_ids), chat_ids)
         return True
+
+    @staticmethod
+    def _collect_raw_chat_ids() -> list[str]:
+        """Merge TELEGRAM_CHAT_ID (legacy, single) with
+        TELEGRAM_CHAT_ID_1..TELEGRAM_CHAT_ID_10 into one deduplicated,
+        order-preserved list of raw (unparsed) chat id strings. Blank
+        values are skipped."""
+        raw_ids: list[str] = []
+        legacy = os.getenv("TELEGRAM_CHAT_ID", "").strip()
+        if legacy:
+            raw_ids.append(legacy)
+        for i in range(1, 11):
+            value = os.getenv(f"TELEGRAM_CHAT_ID_{i}", "").strip()
+            if value:
+                raw_ids.append(value)
+
+        seen: set[str] = set()
+        unique: list[str] = []
+        for raw in raw_ids:
+            if raw not in seen:
+                seen.add(raw)
+                unique.append(raw)
+        return unique
 
     # ------------------------------------------------------------------
     # Per-order notification (Requirement 1)
@@ -629,12 +668,19 @@ class TelegramNotifier:
     # Low-level sender
     # ------------------------------------------------------------------
     def _send(self, text: str) -> None:
-        """Actually send a message, plain text (no Markdown parse mode) -
-        every report/message format here is an exact literal template, so
-        parsing/escaping Markdown would only risk corrupting it. Caller is
-        responsible for catching TelegramError - this method lets
-        unexpected exceptions bubble so they're logged at the caller's
-        exception site with context.
+        """Send a message, plain text (no Markdown parse mode), to every
+        configured recipient in self._chat_ids - every report/message
+        format here is an exact literal template, so parsing/escaping
+        Markdown would only risk corrupting it.
+
+        Fan-out semantics: each recipient is sent to independently, so one
+        bad chat id (bot blocked/kicked, chat deleted, etc.) never stops
+        the message from reaching the others - that failure is logged
+        here and skipped. Only if EVERY recipient fails does this method
+        re-raise (the last error), so a total outage still surfaces via
+        the caller's existing TelegramError handling (logged with the
+        order/report context - see notify_new_order() etc.) exactly like
+        before there was more than one recipient.
 
         Every self._bot.send_message(...) call is run through
         self._run() (this notifier's single persistent event loop, see
@@ -649,19 +695,32 @@ class TelegramNotifier:
         # are well under that, but split defensively if anything ever
         # grows. Splitting on blank lines keeps sections together.
         if len(text) <= 4000:
-            self._run(self._bot.send_message(chat_id=self._chat_id, text=text))
-            return
-
-        chunks: list[str] = []
-        current = ""
-        for paragraph in text.split("\n\n"):
-            if len(current) + len(paragraph) + 2 > 4000 and current:
+            chunks = [text]
+        else:
+            chunks = []
+            current = ""
+            for paragraph in text.split("\n\n"):
+                if len(current) + len(paragraph) + 2 > 4000 and current:
+                    chunks.append(current)
+                    current = paragraph
+                else:
+                    current = (current + "\n\n" + paragraph).strip() if current else paragraph
+            if current:
                 chunks.append(current)
-                current = paragraph
-            else:
-                current = (current + "\n\n" + paragraph).strip() if current else paragraph
-        if current:
-            chunks.append(current)
 
-        for chunk in chunks:
-            self._run(self._bot.send_message(chat_id=self._chat_id, text=chunk))
+        any_success = False
+        last_exc: Optional[BaseException] = None
+        for chat_id in self._chat_ids:
+            try:
+                for chunk in chunks:
+                    self._run(self._bot.send_message(chat_id=chat_id, text=chunk))
+                any_success = True
+            except TelegramError as exc:
+                last_exc = exc
+                log.error("telegram: failed to send to chat_id=%r: %s", chat_id, exc)
+            except Exception as exc:  # pragma: no cover - defensive
+                last_exc = exc
+                log.exception("telegram: unexpected error sending to chat_id=%r", chat_id)
+
+        if not any_success and last_exc is not None:
+            raise last_exc

@@ -373,7 +373,12 @@ vs. "is polling still healthy?").
 - **Per-order alert**: `SyncEngine` calls `notify_new_order()` from the
   single point an order is confirmed synced to Didar (no per-platform
   trigger logic - see `sync_engine.py`). No-ops safely if
-  `TELEGRAM_BOT_TOKEN`/`TELEGRAM_CHAT_ID` are unset.
+  `TELEGRAM_BOT_TOKEN` or every recipient env var is unset. Recipients
+  fan out: `TELEGRAM_CHAT_ID` (legacy, single) plus
+  `TELEGRAM_CHAT_ID_1`..`TELEGRAM_CHAT_ID_10` are merged into one list,
+  and every notification/report is sent to all of them independently -
+  one bad recipient never blocks the others (see `telegram.py`'s
+  `_send()`).
 - **Daily/weekly/monthly reports**: `main.py`'s poll cycle calls
   `check_and_send_reports()` every cycle. This is a rollover check
   (Iran-local day / Saturday-Friday week / Jalali month), not a cron

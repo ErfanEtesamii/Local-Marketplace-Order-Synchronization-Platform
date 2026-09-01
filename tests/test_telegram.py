@@ -13,6 +13,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import jdatetime
 import pytest
+from telegram.error import TelegramError
 
 from src.db.repository import Repository
 from src.marketplaces.base import NormalizedOrder, OrderItem
@@ -87,7 +88,37 @@ def test_is_configured_true_with_channel_username(monkeypatch):
     with patch("telegram.Bot.get_me") as mock_get_me:
         mock_get_me.return_value = MagicMock()
         assert notifier.is_configured() is True
-    assert notifier._chat_id == "@my_channel"
+    assert notifier._chat_ids == ["@my_channel"]
+
+
+def test_is_configured_true_with_multiple_numbered_chat_ids(monkeypatch):
+    """TELEGRAM_CHAT_ID_1..TELEGRAM_CHAT_ID_10 (plus the legacy single
+    TELEGRAM_CHAT_ID) all merge into one recipient list."""
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11")
+    monkeypatch.delenv("TELEGRAM_CHAT_ID", raising=False)
+    monkeypatch.setenv("TELEGRAM_CHAT_ID_1", "111")
+    monkeypatch.setenv("TELEGRAM_CHAT_ID_2", "@second_channel")
+    monkeypatch.setenv("TELEGRAM_CHAT_ID_3", "333")
+
+    notifier = TelegramNotifier()
+    with patch("telegram.Bot.get_me") as mock_get_me:
+        mock_get_me.return_value = MagicMock()
+        assert notifier.is_configured() is True
+    assert notifier._chat_ids == [111, "@second_channel", 333]
+
+
+def test_is_configured_skips_invalid_recipient_but_keeps_valid_ones(monkeypatch):
+    """One bad id among several must not disable the whole feature."""
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11")
+    monkeypatch.delenv("TELEGRAM_CHAT_ID", raising=False)
+    monkeypatch.setenv("TELEGRAM_CHAT_ID_1", "111")
+    monkeypatch.setenv("TELEGRAM_CHAT_ID_2", "not_a_number")
+
+    notifier = TelegramNotifier()
+    with patch("telegram.Bot.get_me") as mock_get_me:
+        mock_get_me.return_value = MagicMock()
+        assert notifier.is_configured() is True
+    assert notifier._chat_ids == [111]
 
 
 def test_is_configured_false_when_missing_token(monkeypatch):
@@ -276,7 +307,7 @@ def test_notify_new_order_actually_sends_message(monkeypatch):
     it without ever calling Telegram's API."""
     notifier = TelegramNotifier()
     notifier._bot = MagicMock()
-    notifier._chat_id = 775753176
+    notifier._chat_ids = [775753176]
 
     order = _order_with_items("digikala", "12345", "250000")
 
@@ -291,6 +322,49 @@ def test_notify_new_order_actually_sends_message(monkeypatch):
     # No parse_mode - messages are sent as literal plain text so the
     # exact template can't be corrupted by Markdown escaping.
     assert "parse_mode" not in kwargs
+
+
+def test_send_fans_out_to_every_configured_chat_id():
+    """A single _send() call must reach every recipient, not just one."""
+    notifier = TelegramNotifier()
+    notifier._bot = MagicMock()
+    notifier._bot.send_message = AsyncMock()
+    notifier._chat_ids = [111, "@second_channel", 333]
+
+    notifier._send("hello")
+
+    assert notifier._bot.send_message.call_count == 3
+    sent_to = {call.kwargs["chat_id"] for call in notifier._bot.send_message.call_args_list}
+    assert sent_to == {111, "@second_channel", 333}
+
+
+def test_send_one_bad_recipient_does_not_block_the_others():
+    """A blocked/kicked bot on one chat must not stop delivery to the
+    rest of the recipients."""
+    notifier = TelegramNotifier()
+    notifier._bot = MagicMock()
+
+    async def fake_send_message(chat_id, text):
+        if chat_id == 222:
+            raise TelegramError("bot was blocked by the user")
+        return MagicMock()
+
+    notifier._bot.send_message = AsyncMock(side_effect=fake_send_message)
+    notifier._chat_ids = [111, 222, 333]
+
+    notifier._send("hello")  # must not raise - 111 and 333 still succeeded
+
+    assert notifier._bot.send_message.call_count == 3
+
+
+def test_send_raises_only_when_every_recipient_fails():
+    notifier = TelegramNotifier()
+    notifier._bot = MagicMock()
+    notifier._bot.send_message = AsyncMock(side_effect=TelegramError("boom"))
+    notifier._chat_ids = [111, 222]
+
+    with pytest.raises(TelegramError):
+        notifier._send("hello")
 
 
 # ---------------------------------------------------------------------
@@ -480,7 +554,7 @@ def test_send_reuses_one_persistent_event_loop_across_calls():
     notifier = TelegramNotifier()
     notifier._bot = MagicMock()
     notifier._bot.send_message = AsyncMock()
-    notifier._chat_id = 775753176
+    notifier._chat_ids = [775753176]
 
     notifier._send("first message")
     loop_after_first = notifier._loop
