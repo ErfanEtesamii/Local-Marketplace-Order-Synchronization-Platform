@@ -15,7 +15,7 @@ from src.marketplaces.base import NormalizedOrder, OrderItem
 _CFG = DidarConfig(
     base_url="https://app.didar.me/api", api_key="test-key",
     pipeline_id="p1", pipeline_stage_id="stage-1",
-    label_tapsishop="label-tapsishop-guid",
+    deal_label_title_tapsishop="تپسی",
     default_product_category_id="cat-default",
     # Explicitly blank (not left to field default_factory / real .env) so
     # these tests are hermetic: the post-sale checklist should be a no-op
@@ -39,6 +39,21 @@ _CATEGORIES_RESPONSE = {
 def _mock_categories():
     return respx.post("https://app.didar.me/api/product/categories").mock(
         return_value=httpx.Response(200, json=_CATEGORIES_RESPONSE)
+    )
+
+
+# Shared Deal Labels list - Title "تپسی" matches _CFG's
+# deal_label_title_tapsishop, resolving to "label-tapsishop-guid".
+_DEAL_LABELS_RESPONSE = {
+    "Response": [
+        {"Id": "label-tapsishop-guid", "Title": "تپسی", "Code": 1, "Type": "Deal"},
+    ]
+}
+
+
+def _mock_deal_labels():
+    return respx.get("https://app.didar.me/api/Label/GetDealLabels").mock(
+        return_value=httpx.Response(200, json=_DEAL_LABELS_RESPONSE)
     )
 
 
@@ -106,6 +121,7 @@ def test_create_deal_title_uses_didar_default_convention():
 @respx.mock
 def test_create_deal_sends_person_id_pipeline_stage_and_label():
     _mock_categories()
+    _mock_deal_labels()
     _mock_product_search_no_match()
     respx.post("https://app.didar.me/api/product/save").mock(
         return_value=httpx.Response(200, json={"Response": {"Product": {"Id": "p-1"}}})
@@ -120,7 +136,7 @@ def test_create_deal_sends_person_id_pipeline_stage_and_label():
     body = route.calls[0].request.content
     assert b'"PersonId":"c-1"' in body  # confirmed via live testing - not ContactId
     assert b'"PipelineStageId":"stage-1"' in body
-    assert b'"LabelId":"label-tapsishop-guid"' in body
+    assert b'"LabelIds":["label-tapsishop-guid"]' in body
 
 
 @respx.mock
@@ -137,6 +153,30 @@ def test_create_deal_omits_label_when_source_not_mapped():
 
     client = DidarDealClient(config=_CFG)
     client.create_deal(contact_id="c-1", display_name="Someone", order=unmapped_order)
+
+    body = route.calls[0].request.content
+    assert b"LabelId" not in body
+
+
+@respx.mock
+def test_create_deal_omits_label_when_title_not_found_in_didar():
+    """Source has a configured Title, but GetDealLabels doesn't return a
+    matching Deal Label (e.g. wrong/stale Title) - the deal must still
+    be created, just without a label."""
+    _mock_categories()
+    _mock_product_search_no_match()
+    respx.get("https://app.didar.me/api/Label/GetDealLabels").mock(
+        return_value=httpx.Response(200, json={"Response": []})
+    )
+    respx.post("https://app.didar.me/api/product/save").mock(
+        return_value=httpx.Response(200, json={"Response": {"Product": {"Id": "p-1"}}})
+    )
+    route = respx.post("https://app.didar.me/api/deal/save").mock(
+        return_value=httpx.Response(200, json={"Response": {"Deal": {"Id": "d-1"}}})
+    )
+
+    client = DidarDealClient(config=_CFG)
+    client.create_deal(contact_id="c-1", display_name="Someone", order=_ORDER)
 
     body = route.calls[0].request.content
     assert b"LabelId" not in body

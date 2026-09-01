@@ -205,27 +205,38 @@ Three-step process per order (`src/didar/service.py`):
    (pipeline "سفارشات", stage "مشتری جدید"), with structured
    `DealItems` (`ProductId`, `Quantity`, `UnitPrice`, `Discount`) - not
    text. `Title` follows Didar's own default convention for
-   manually-created deals: `"معامله {display_name}"`. `LabelId` is set
+   manually-created deals: `"معامله {display_name}"`. `LabelIds` is set
    per source (see the table below) so the originating marketplace
-   shows as a proper Didar Tag, not a text field.
+   shows as a proper Didar **Deal Label** (not a Tag - corrected 2026-09,
+   see below).
 
 Both `contact/save`, `product/save`, and `deal/save` use `POST` with
 the API key as a **query parameter** (`?apikey=...`), confirmed from
 `didar.me/api-help` - not an `Authorization` header.
 
-**Source → Label (Tag) mapping**, configured via `.env`
-(`DIDAR_LABEL_*`), GUIDs fetched from `GET /Tag/GetTagList`:
+**Source → Deal Label mapping**: confirmed 2026-09 directly from
+Didar's own support agent that this is a **Deal Label**, not a Tag -
+an earlier version of this doc/implementation had it wrong (hardcoded
+Tag GUIDs fetched from `GET /Tag/GetTagList`). The corrected flow:
+`GET /Label/GetDealLabels` returns every Deal Label as
+`{Id, Title, Code, Type}`; the code matches by `Title` (configured per
+source via `.env`, `DIDAR_DEAL_LABEL_TITLE_*`) and sends the resulting
+Id(s) as a list in `Deal.save`'s `LabelIds` field - see
+`DidarDealClient._label_id_for_source()`. Resolving by Title instead of
+a hardcoded GUID means a label being deleted/recreated in Didar doesn't
+require a code or `.env` change.
 
-| Source | Didar Tag |
+| Source | Deal Label Title |
 |---|---|
 | Tapsi Shop | تپسی |
 | Digikala | دیجی کالا |
 | SnappShop | اسنپ |
 | Basalam | باسلام |
-| Faraz Honar | سایت فرازهنر |
+| Faraz Honar | سایت فرامرزی (confirmed from a live screenshot) |
 
-A source with no configured Label GUID simply omits `LabelId` from the
-request rather than failing - partial rollout is safe.
+A source with no configured Title, or whose Title doesn't match any
+live Deal Label, simply omits `LabelIds` from the request (logged as a
+warning) rather than failing - partial rollout is safe.
 
 **Description** also carries the source label (Persian display name)
 and an order link, per a later client request - separate from the

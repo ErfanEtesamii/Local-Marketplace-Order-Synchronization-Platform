@@ -130,14 +130,49 @@ class DidarConfig:
     product_catalog_xlsx: str = field(
         default_factory=lambda: _get("DIDAR_PRODUCT_CATALOG_XLSX")
     )
-    # Label (Tag) GUIDs, one per marketplace source - see docs/architecture.md
-    # for how to fetch these via GET /Tag/GetTagList. Any left blank simply
-    # means that source's Deals won't carry a LabelId (not an error).
-    label_tapsishop: str = field(default_factory=lambda: _get("DIDAR_LABEL_TAPSISHOP"))
-    label_digikala: str = field(default_factory=lambda: _get("DIDAR_LABEL_DIGIKALA"))
-    label_basalam: str = field(default_factory=lambda: _get("DIDAR_LABEL_BASALAM"))
-    label_snappshop: str = field(default_factory=lambda: _get("DIDAR_LABEL_SNAPPSHOP"))
-    label_farazhonar: str = field(default_factory=lambda: _get("DIDAR_LABEL_FARAZHONAR"))
+    # Deal Labels (a distinct Didar concept from Tags - confirmed 2026-09
+    # directly from Didar's own support agent, after the earlier LabelId
+    # implementation below turned out to be based on a wrong assumption
+    # (treating this as a Tag, matched via GET /Tag/GetTagList, with a
+    # manually hardcoded GUID per source and a singular "LabelId" field).
+    #
+    # The confirmed, correct flow: GET /Label/GetDealLabels returns every
+    # Deal Label as {Id, Title, Code, Type} - the caller matches by
+    # Title and sends the resulting Id(s) as a LIST in Deal.save's
+    # "LabelIds" (not the old singular "LabelId") - see
+    # DidarDealClient._label_id_for_source().
+    #
+    # One Title per marketplace source rather than a hardcoded GUID, so
+    # this survives the label being deleted/recreated in Didar (a new
+    # GUID) without a code or .env change - same tradeoff as the
+    # category-by-title matching in product_client.py. "سایت فرامرزی"
+    # for farazhonar is CONFIRMED (seen directly in a screenshot of this
+    # account's Deal Labels, 2026-09); the other four are best guesses
+    # and MUST be verified against a live GET /Label/GetDealLabels
+    # response for this account. Matching is exact after Persian
+    # normalization (see _normalize_fa) - a Title here that doesn't
+    # match what's actually in Didar just means that source's Deals get
+    # created without a label (logged as a warning), never an error.
+    deal_label_title_tapsishop: str = field(
+        default_factory=lambda: _get("DIDAR_DEAL_LABEL_TITLE_TAPSISHOP", "تپسی")
+    )
+    deal_label_title_digikala: str = field(
+        default_factory=lambda: _get("DIDAR_DEAL_LABEL_TITLE_DIGIKALA", "دیجی کالا")
+    )
+    deal_label_title_basalam: str = field(
+        default_factory=lambda: _get("DIDAR_DEAL_LABEL_TITLE_BASALAM", "باسلام")
+    )
+    deal_label_title_snappshop: str = field(
+        default_factory=lambda: _get("DIDAR_DEAL_LABEL_TITLE_SNAPPSHOP", "اسنپ")
+    )
+    deal_label_title_farazhonar: str = field(
+        default_factory=lambda: _get("DIDAR_DEAL_LABEL_TITLE_FARAZHONAR", "سایت فرامرزی")
+    )
+    # Confirmed 2026-09 from Didar's own support agent. Relative to
+    # base_url (same convention as every other path in this project).
+    get_deal_labels_path: str = field(
+        default_factory=lambda: _get("DIDAR_GET_DEAL_LABELS_PATH", "/Label/GetDealLabels")
+    )
     # Optional - Activity.OwnerId is always present in the docs' own
     # /activity/save example, but NOT confirmed required (create_deal()
     # already works fine without ever setting Deal's OwnerId - see
@@ -179,13 +214,13 @@ class DidarConfig:
     )
 
     @property
-    def label_by_source(self) -> dict[str, str]:
+    def deal_label_title_by_source(self) -> dict[str, str]:
         return {
-            "tapsishop": self.label_tapsishop,
-            "digikala": self.label_digikala,
-            "basalam": self.label_basalam,
-            "snappshop": self.label_snappshop,
-            "farazhonar": self.label_farazhonar,
+            "tapsishop": self.deal_label_title_tapsishop,
+            "digikala": self.deal_label_title_digikala,
+            "basalam": self.deal_label_title_basalam,
+            "snappshop": self.deal_label_title_snappshop,
+            "farazhonar": self.deal_label_title_farazhonar,
         }
 
 

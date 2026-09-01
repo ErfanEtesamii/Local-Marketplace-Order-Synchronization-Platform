@@ -10,10 +10,14 @@ Specifically:
   - Product name        -> DealItems[].ProductId, linked to a real
                            catalog Product (auto-created if no match -
                            see product_client.py)
-  - Order source (site) -> Deal.LabelId (a Tag) AND, per a later client
-                           request, also written as readable text in
-                           Description alongside a link back to the
-                           order on its origin platform - see below
+  - Order source (site) -> Deal.LabelIds (a Deal Label - see
+                           _label_id_for_source() below; NOT a Tag,
+                           corrected 2026-09 after direct confirmation
+                           from Didar's own support agent) AND, per a
+                           later client request, also written as
+                           readable text in Description alongside a
+                           link back to the order on its origin
+                           platform - see below
   - Title                -> "معامله {display_name}", matching Didar's
                            own default naming convention for manually
                            created deals - NOT "{order_number} - {source}"
@@ -46,6 +50,7 @@ from decimal import Decimal
 import httpx
 
 from src.config import DidarConfig, settings
+from src.didar.category_mapping import _normalize_fa
 from src.didar.contact_client import DidarApiError
 from src.didar.product_client import DidarProductClient
 from src.http_utils import default_retry, raise_for_status_with_body
@@ -119,12 +124,84 @@ class DidarDealClient:
         self._config = config or settings.didar
         self._products = product_client or DidarProductClient(config=self._config)
         self._client = httpx.Client(base_url=self._config.base_url, timeout=30.0)
+        self._label_id_by_title: dict[str, str] | None = None  # populated lazily
 
     @default_retry()
     def _post(self, path: str, json: dict) -> dict:
         resp = self._client.post(path, params={"apikey": self._config.api_key}, json=json)
         raise_for_status_with_body(resp)
         return resp.json()
+
+    @default_retry()
+    def _get(self, path: str) -> dict:
+        resp = self._client.get(path, params={"apikey": self._config.api_key})
+        raise_for_status_with_body(resp)
+        return resp.json()
+
+    def _label_id_by_title_map(self) -> dict[str, str]:
+        """Title -> Id map for every Deal Label, built once per client
+        lifetime from the documented GET /Label/GetDealLabels (confirmed
+        2026-09 from Didar's own support agent - see config.py's
+        deal_label_title_by_source docstring for the full history of why
+        this replaced an earlier, wrong Tag-based implementation).
+
+        Only entries with Type == "Deal" are kept - Didar's Label list
+        can include other label Types too (e.g. for Contacts), and a
+        same-named non-Deal label must never be matched here.
+
+        Fetched lazily on first use and cached for this client's
+        lifetime (one instance per process - see DidarSyncService),
+        same tradeoff as product_client.py's category cache. NOT cached
+        on failure (unlike product_client's catalog load) - a transient
+        network error here is worth retrying on the next order, since
+        the cost of one extra GET is negligible next to silently
+        disabling labels for the rest of the process's life.
+        """
+        if self._label_id_by_title is None:
+            payload = self._get(self._config.get_deal_labels_path)
+            self._label_id_by_title = {
+                _normalize_fa(str(item.get("Title", ""))): str(item["Id"])
+                for item in payload.get("Response", [])
+                if isinstance(item, dict)
+                and item.get("Id")
+                and item.get("Title")
+                and item.get("Type") == "Deal"
+            }
+        return self._label_id_by_title
+
+    def _label_id_for_source(self, source: str) -> str | None:
+        """Resolves one marketplace source to its Deal Label Id, via the
+        Title configured in DidarConfig.deal_label_title_by_source (see
+        that property's docstring). Returns None - never raises - on
+        any failure (no Title configured for this source, the API call
+        itself failing, or no live Deal Label matching that Title): a
+        missing/wrong label must never be the reason an order's whole
+        sync fails, same fire-and-forget philosophy as the post-sale
+        checklist.
+        """
+        title = self._config.deal_label_title_by_source.get(source)
+        if not title:
+            return None
+
+        try:
+            label_id = self._label_id_by_title_map().get(_normalize_fa(title))
+        except Exception:
+            log.exception(
+                "didar: failed to fetch Deal Labels via %s - creating "
+                "deal for %s order without a label",
+                self._config.get_deal_labels_path, source,
+            )
+            return None
+
+        if not label_id:
+            log.warning(
+                "didar: no Deal Label titled %r found via %s for source "
+                "%r - creating this deal without a label. Verify the "
+                "Title in DidarConfig.deal_label_title_by_source matches "
+                "exactly what Didar returns for this account.",
+                title, self._config.get_deal_labels_path, source,
+            )
+        return label_id
 
     def find_existing_deal_id(self, order: NormalizedOrder) -> str | None:
         """
@@ -204,9 +281,9 @@ class DidarDealClient:
             "PipelineStageId": self._config.pipeline_stage_id,
             "Description": _build_description(order),
         }
-        label_id = self._config.label_by_source.get(order.source)
+        label_id = self._label_id_for_source(order.source)
         if label_id:
-            deal_body["LabelId"] = label_id
+            deal_body["LabelIds"] = [label_id]
 
         body = {
             "Deal": deal_body,
