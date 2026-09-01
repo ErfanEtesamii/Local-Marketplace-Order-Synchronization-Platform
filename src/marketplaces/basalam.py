@@ -220,6 +220,17 @@ class BasalamAdapter(MarketplaceAdapter):
             for item in raw_items
         ]
 
+        # BUGFIX (2026-09, confirmed against Basalam's own OpenAPI Gateway
+        # doc - developers.basalam.com/docs/api/gateway, Order section):
+        # name/mobile/postal_code/postal_address are NOT direct children of
+        # "customer" - they live one level deeper, under "customer.recipient".
+        # The previous customer.get("name")/customer.get("mobile") always
+        # read a key that doesn't exist in the real response, which is why
+        # every Basalam order silently fell back to a synthetic contact
+        # name - it was never actually an API/data-availability limitation.
+        recipient = customer.get("recipient") or {}
+        city = customer.get("city") or {}
+
         return NormalizedOrder(
             source=self.name,
             source_order_id=str(raw.get("id")),
@@ -228,17 +239,25 @@ class BasalamAdapter(MarketplaceAdapter):
             total_price=to_rial(_to_decimal(raw.get("total_items_price")), self._config.price_unit),
             status=str(status.get("title", "unknown")),
             items=items,
-            # Confirmed via live testing: customer name/mobile came back
-            # empty on real orders (order.customer exists in the schema
-            # but wasn't populated in practice). Falls back to a
-            # synthetic CustomerCode (basalam-{parcel_id}) via
-            # src/didar/service.py, same as Tapsi Shop and Digikala.
             # A customer typing their name with an English keyboard
             # (e.g. "mohammad ahmadi") is converted back to Persian
             # script here - see src/finglish.py for how/why this is
             # approximate.
-            customer_full_name=persianize_name(customer.get("name") or customer.get("title")),
-            customer_mobile=customer.get("mobile") or customer.get("phone_number"),
+            customer_full_name=persianize_name(recipient.get("name") or None),
+            customer_mobile=recipient.get("mobile") or None,
+            # Confirmed on the same recipient object as name/mobile above -
+            # full delivery address text and postal code, same
+            # None-means-"don't touch it" convention as every other source
+            # (see NormalizedOrder.customer_address's docstring).
+            customer_address=recipient.get("postal_address") or None,
+            customer_postal_code=recipient.get("postal_code") or None,
+            # Only the city name is confirmed here - customer.city.parent
+            # (which would presumably be the province) is documented only
+            # as an untyped/empty object in the gateway spec, with no
+            # confirmed field name for the province's own title. Leaving
+            # customer_province unset rather than guessing a key, same
+            # caution as Faraz Honar's billing.state note above.
+            customer_city=city.get("title") or None,
             # Same confirmed field as _normalize_list_item - see its comment.
             ship_time=_parse_date_or_none(raw.get("estimate_send_at")),
             # CONFIRMED via docs/document.json (Basalam's own OpenAPI spec):

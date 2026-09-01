@@ -136,11 +136,15 @@ that was fixed).
 - Auth: Bearer Personal Access Token (scope `vendor.parcel.read`) from
   `developers.basalam.com/panel`. No confirmed refresh-token endpoint
   for this project yet - a 401 requires manually issuing a fresh PAT.
-- Customer name/mobile came back empty on the real orders tested so
-  far - `order.customer` exists in the schema but wasn't populated in
-  practice. Orders from this source currently fall back to the same
-  synthetic `CustomerCode` (`basalam-{parcel_id}`) as Tapsi Shop and
-  Digikala; revisit if a populated example ever turns up.
+- Customer name/mobile/address/postal code ARE available, but nested
+  one level deeper than the adapter originally assumed: they live at
+  `order.customer.recipient.{name,mobile,postal_address,postal_code}`,
+  not directly on `order.customer` (confirmed 2026-09 against Basalam's
+  own OpenAPI Gateway doc). The earlier "comes back empty" note was a
+  parsing bug, not an API/data limitation - fixed; `CustomerCode` now
+  uses the real mobile number when present, same as Faraz Honar,
+  falling back to `basalam-{parcel_id}` only when a given order truly
+  has no recipient mobile.
 - **Confirmed via live testing, undocumented:**
   - `per_page` max is **30**, not the 50 assumed from other adapters -
     rejected with a 422 otherwise.

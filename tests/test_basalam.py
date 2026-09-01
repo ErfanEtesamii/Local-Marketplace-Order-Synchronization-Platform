@@ -88,7 +88,15 @@ def test_fetch_order_detail_includes_items_and_customer():
                 "order": {
                     "id": 9001,
                     "paid_at": "2026-08-10T09:59:00Z",
-                    "customer": {"name": "علی رضایی", "mobile": "09121234567"},
+                    "customer": {
+                        "recipient": {
+                            "name": "علی رضایی",
+                            "mobile": "09121234567",
+                            "postal_code": "1234567890",
+                            "postal_address": "تهران، خیابان ولیعصر، پلاک ۱۰",
+                        },
+                        "city": {"title": "تهران"},
+                    },
                 },
                 "estimate_send_at": "2026-08-12T18:00:00Z",
                 "items": [
@@ -110,8 +118,62 @@ def test_fetch_order_detail_includes_items_and_customer():
     assert order.items[0].final_price == 4800000  # (price * quantity) تومان × ۱۰
     assert order.customer_full_name == "علی رضایی"
     assert order.customer_mobile == "09121234567"
+    assert order.customer_postal_code == "1234567890"
+    assert order.customer_address == "تهران، خیابان ولیعصر، پلاک ۱۰"
+    assert order.customer_city == "تهران"
     assert order.ship_time == datetime(2026, 8, 12, 18, 0, tzinfo=timezone.utc)
     assert order.product_image_url == "https://cdn.basalam.com/photos/4242-original.jpg"
+
+
+@respx.mock
+def test_fetch_order_detail_finglish_customer_name_converted_to_persian():
+    respx.get("https://order-processing.basalam.com/v3/vendor-parcels/556").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "id": 556,
+                "total_items_price": 100000,
+                "created_at": "2026-08-10T10:00:00Z",
+                "status": {"id": 3739, "title": "جدید"},
+                "order": {
+                    "id": 9002,
+                    "paid_at": "2026-08-10T09:59:00Z",
+                    "customer": {
+                        "recipient": {"name": "mohammad ahmadi", "mobile": "09121234567"},
+                    },
+                },
+                "items": [],
+            },
+        )
+    )
+
+    adapter = BasalamAdapter(config=_CFG)
+    order = adapter.fetch_order_detail("556")
+
+    assert order.customer_full_name == "محمد احمدی"
+
+
+@respx.mock
+def test_fetch_order_detail_missing_recipient_falls_back_to_none():
+    respx.get("https://order-processing.basalam.com/v3/vendor-parcels/557").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "id": 557,
+                "total_items_price": 100000,
+                "created_at": "2026-08-10T10:00:00Z",
+                "status": {"id": 3739, "title": "جدید"},
+                "order": {"id": 9003, "paid_at": "2026-08-10T09:59:00Z", "customer": {}},
+                "items": [],
+            },
+        )
+    )
+
+    adapter = BasalamAdapter(config=_CFG)
+    order = adapter.fetch_order_detail("557")
+
+    assert order.customer_full_name is None
+    assert order.customer_mobile is None
 
 
 @respx.mock
