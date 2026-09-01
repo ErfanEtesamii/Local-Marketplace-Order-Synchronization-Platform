@@ -106,7 +106,7 @@ def test_create_deal_title_uses_didar_default_convention():
     respx.post("https://app.didar.me/api/product/save").mock(
         return_value=httpx.Response(200, json={"Response": {"Product": {"Id": "p-1"}}})
     )
-    route = respx.post("https://app.didar.me/api/deal/save").mock(
+    route = respx.post("https://app.didar.me/api/deal/save_v2").mock(
         return_value=httpx.Response(200, json={"Response": {"Deal": {"Id": "d-1"}}})
     )
 
@@ -126,7 +126,7 @@ def test_create_deal_sends_person_id_pipeline_stage_and_label():
     respx.post("https://app.didar.me/api/product/save").mock(
         return_value=httpx.Response(200, json={"Response": {"Product": {"Id": "p-1"}}})
     )
-    route = respx.post("https://app.didar.me/api/deal/save").mock(
+    route = respx.post("https://app.didar.me/api/deal/save_v2").mock(
         return_value=httpx.Response(200, json={"Response": {"Deal": {"Id": "d-1"}}})
     )
 
@@ -135,6 +135,7 @@ def test_create_deal_sends_person_id_pipeline_stage_and_label():
 
     body = route.calls[0].request.content
     assert b'"PersonId":"c-1"' in body  # confirmed via live testing - not ContactId
+    assert b'"PipelineId":"p1"' in body  # matches _CFG.pipeline_id above
     assert b'"PipelineStageId":"stage-1"' in body
     assert b'"LabelIds":["label-tapsishop-guid"]' in body
 
@@ -147,7 +148,7 @@ def test_create_deal_omits_label_when_source_not_mapped():
     respx.post("https://app.didar.me/api/product/save").mock(
         return_value=httpx.Response(200, json={"Response": {"Product": {"Id": "p-1"}}})
     )
-    route = respx.post("https://app.didar.me/api/deal/save").mock(
+    route = respx.post("https://app.didar.me/api/deal/save_v2").mock(
         return_value=httpx.Response(200, json={"Response": {"Deal": {"Id": "d-1"}}})
     )
 
@@ -171,7 +172,7 @@ def test_create_deal_omits_label_when_title_not_found_in_didar():
     respx.post("https://app.didar.me/api/product/save").mock(
         return_value=httpx.Response(200, json={"Response": {"Product": {"Id": "p-1"}}})
     )
-    route = respx.post("https://app.didar.me/api/deal/save").mock(
+    route = respx.post("https://app.didar.me/api/deal/save_v2").mock(
         return_value=httpx.Response(200, json={"Response": {"Deal": {"Id": "d-1"}}})
     )
 
@@ -189,7 +190,7 @@ def test_description_includes_source_label_and_panel_link_for_marketplaces():
     respx.post("https://app.didar.me/api/product/save").mock(
         return_value=httpx.Response(200, json={"Response": {"Product": {"Id": "p-1"}}})
     )
-    route = respx.post("https://app.didar.me/api/deal/save").mock(
+    route = respx.post("https://app.didar.me/api/deal/save_v2").mock(
         return_value=httpx.Response(200, json={"Response": {"Deal": {"Id": "d-1"}}})
     )
 
@@ -215,7 +216,7 @@ def test_description_includes_direct_order_link_for_farazhonar():
     respx.post("https://app.didar.me/api/product/save").mock(
         return_value=httpx.Response(200, json={"Response": {"Product": {"Id": "p-1"}}})
     )
-    route = respx.post("https://app.didar.me/api/deal/save").mock(
+    route = respx.post("https://app.didar.me/api/deal/save_v2").mock(
         return_value=httpx.Response(200, json={"Response": {"Deal": {"Id": "d-1"}}})
     )
 
@@ -238,7 +239,7 @@ def test_create_deal_builds_structured_deal_items_not_description_text():
     product_route = respx.post("https://app.didar.me/api/product/save").mock(
         return_value=httpx.Response(200, json={"Response": {"Product": {"Id": "p-999"}}})
     )
-    deal_route = respx.post("https://app.didar.me/api/deal/save").mock(
+    deal_route = respx.post("https://app.didar.me/api/deal/save_v2").mock(
         return_value=httpx.Response(200, json={"Response": {"Deal": {"Id": "d-1"}}})
     )
 
@@ -295,7 +296,7 @@ def test_deal_item_uses_catalog_code_and_title_when_excel_match_found(tmp_path):
     save_route = respx.post("https://app.didar.me/api/product/save").mock(
         return_value=httpx.Response(200, json={"Response": {"Product": {"Id": "should-not-be-used"}}})
     )
-    deal_route = respx.post("https://app.didar.me/api/deal/save").mock(
+    deal_route = respx.post("https://app.didar.me/api/deal/save_v2").mock(
         return_value=httpx.Response(200, json={"Response": {"Deal": {"Id": "d-1"}}})
     )
 
@@ -320,7 +321,7 @@ def test_deal_item_description_includes_order_number():
     respx.post("https://app.didar.me/api/product/save").mock(
         return_value=httpx.Response(200, json={"Response": {"Product": {"Id": "p-1"}}})
     )
-    route = respx.post("https://app.didar.me/api/deal/save").mock(
+    route = respx.post("https://app.didar.me/api/deal/save_v2").mock(
         return_value=httpx.Response(200, json={"Response": {"Deal": {"Id": "d-1"}}})
     )
 
@@ -343,7 +344,7 @@ def test_deal_item_discount_reflects_gap_between_unit_and_final_price():
     respx.post("https://app.didar.me/api/product/save").mock(
         return_value=httpx.Response(200, json={"Response": {"Product": {"Id": "p-1"}}})
     )
-    route = respx.post("https://app.didar.me/api/deal/save").mock(
+    route = respx.post("https://app.didar.me/api/deal/save_v2").mock(
         return_value=httpx.Response(200, json={"Response": {"Deal": {"Id": "d-1"}}})
     )
     discounted_order = NormalizedOrder(**{
@@ -374,7 +375,7 @@ def test_deal_item_discount_never_goes_negative_when_final_price_is_higher():
     respx.post("https://app.didar.me/api/product/save").mock(
         return_value=httpx.Response(200, json={"Response": {"Product": {"Id": "p-1"}}})
     )
-    route = respx.post("https://app.didar.me/api/deal/save").mock(
+    route = respx.post("https://app.didar.me/api/deal/save_v2").mock(
         return_value=httpx.Response(200, json={"Response": {"Deal": {"Id": "d-1"}}})
     )
     marked_up_order = NormalizedOrder(**{
@@ -405,7 +406,7 @@ def test_description_includes_unique_order_reference_for_dedupe():
     respx.post("https://app.didar.me/api/product/save").mock(
         return_value=httpx.Response(200, json={"Response": {"Product": {"Id": "p-1"}}})
     )
-    route = respx.post("https://app.didar.me/api/deal/save").mock(
+    route = respx.post("https://app.didar.me/api/deal/save_v2").mock(
         return_value=httpx.Response(200, json={"Response": {"Deal": {"Id": "d-1"}}})
     )
 
@@ -539,7 +540,7 @@ def test_sync_service_calls_contact_then_deal_in_order():
     respx.post("https://app.didar.me/api/product/save").mock(
         return_value=httpx.Response(200, json={"Response": {"Product": {"Id": "p-1"}}})
     )
-    deal_route = respx.post("https://app.didar.me/api/deal/save").mock(
+    deal_route = respx.post("https://app.didar.me/api/deal/save_v2").mock(
         return_value=httpx.Response(200, json={"Response": {"Deal": {"Id": "d-42"}}})
     )
 
@@ -575,7 +576,7 @@ def test_sync_service_creates_post_sale_checklist_after_a_new_deal():
     respx.post("https://app.didar.me/api/product/save").mock(
         return_value=httpx.Response(200, json={"Response": {"Product": {"Id": "p-1"}}})
     )
-    respx.post("https://app.didar.me/api/deal/save").mock(
+    respx.post("https://app.didar.me/api/deal/save_v2").mock(
         return_value=httpx.Response(200, json={"Response": {"Deal": {"Id": "d-42"}}})
     )
     activity_route = respx.post("https://app.didar.me/api/activity/save").mock(

@@ -23,7 +23,7 @@ Specifically:
                            created deals - NOT "{order_number} - {source}"
                            as originally implemented
 
-Endpoint: POST {DIDAR_BASE_URL}/deal/save?apikey={API_KEY}
+Endpoint: POST {DIDAR_BASE_URL}/deal/save_v2?apikey={API_KEY}
 Confirmed via live testing: Deal.save expects PersonId (not ContactId).
 
 DESCRIPTION - source label + order link (client request, 2026-08):
@@ -37,11 +37,8 @@ panel *home page* (confirmed URLs, from the original project proposal)
 plus the order number as text, to be searched manually. Revisit with a
 real per-order URL once one is confirmed from any of those panels.
 
-NOT YET CONFIRMED (pending a live test of the DealItems rewrite):
-  - Whether DealItems is a top-level sibling key alongside "Deal" in
-    the request body (assumed here) or nested inside the Deal object.
-  - The exact DealItems field names beyond ProductId/Quantity/UnitPrice/
-    Discount, which are confirmed from the API docs.
+DealItems are sent as a top-level sibling of "Deal", matching the
+request example in the current Didar API documentation.
 """
 from __future__ import annotations
 
@@ -212,7 +209,7 @@ class DidarDealClient:
         that local check only catches a duplicate if mark_synced() ran
         for the earlier attempt. It doesn't run in at least two real
         scenarios:
-          1. /deal/save succeeds on Didar's side, but the response never
+          1. /deal/save_v2 succeeds on Didar's side, but the response never
              reaches us (timeout, connection drop) - http_utils'
              default_retry then automatically retries the SAME POST
              (TransportError is retryable), which creates a SECOND real
@@ -276,8 +273,8 @@ class DidarDealClient:
     def create_deal(self, contact_id: str, display_name: str, order: NormalizedOrder) -> str:
         deal_body = {
             "Title": f"معامله {display_name}".strip(),
-            "BizdomainId": self._config.bizdomain_id,
             "PersonId": contact_id,
+            "PipelineId": self._config.pipeline_id,
             "PipelineStageId": self._config.pipeline_stage_id,
             "Description": _build_description(order),
         }
@@ -289,7 +286,7 @@ class DidarDealClient:
             "Deal": deal_body,
             "DealItems": [self._build_deal_item(item, order) for item in order.items],
         }
-        payload = self._post("/deal/save", json=body)
+        payload = self._post("/deal/save_v2", json=body)
         deal_id = _extract_deal_id(payload)
         log.info(
             "didar: created deal for %s order %s -> Id=%s",
