@@ -40,6 +40,7 @@ from __future__ import annotations
 import json
 import uuid
 from datetime import datetime, timedelta, timezone
+from decimal import Decimal
 from pathlib import Path
 
 from src.config import settings
@@ -261,7 +262,13 @@ class SyncEngine:
                 self._enrich_digikala_sbs_customer(adapter, order)
 
             deal_id = self._didar.sync_order(order)
-            self._repo.mark_synced(order.source, order.source_order_id, deal_id)
+            products_amount, shipping_amount, total_amount = self._order_amounts(order)
+            self._repo.mark_synced(
+                order.source, order.source_order_id, deal_id,
+                products_amount=products_amount,
+                shipping_amount=shipping_amount,
+                total_amount=total_amount,
+            )
             # Fire and forget - notify_new_order catches and logs its own
             # errors, so a Telegram outage can never break the sync itself.
             self._telegram.notify_new_order(order, deal_id)
@@ -313,6 +320,20 @@ class SyncEngine:
             order.source_order_id, full_name, mobile,
         )
 
+    def _order_amounts(self, order: NormalizedOrder):
+        """Money breakdown persisted alongside the dedup row, so the
+        Telegram daily/weekly/monthly reports (see src/telegram.py) can
+        aggregate straight from synced_orders instead of a second parallel
+        tracking table. products_amount is the sum of each line's
+        final_price (already the per-line total, not per-unit - see
+        OrderItem/NormalizedOrder in src/marketplaces/base.py); shipping
+        comes straight off the order; total is the order's own total_price.
+        """
+        products_amount = sum((item.final_price for item in order.items), Decimal("0"))
+        shipping_amount = order.shipping_cost if order.shipping_cost is not None else Decimal("0")
+        total_amount = order.total_price
+        return products_amount, shipping_amount, total_amount
+
     def retry_pending_failures(self, max_attempts: int = 5) -> None:
         for failure in self._repo.get_pending_failures(max_attempts=max_attempts):
             adapter = self._adapters.get(failure.platform)
@@ -326,7 +347,13 @@ class SyncEngine:
             try:
                 order = adapter.fetch_order_detail(failure.source_order_id)
                 deal_id = self._didar.sync_order(order)
-                self._repo.mark_synced(failure.platform, failure.source_order_id, deal_id)
+                products_amount, shipping_amount, total_amount = self._order_amounts(order)
+                self._repo.mark_synced(
+                    failure.platform, failure.source_order_id, deal_id,
+                    products_amount=products_amount,
+                    shipping_amount=shipping_amount,
+                    total_amount=total_amount,
+                )
                 self._telegram.notify_new_order(order, deal_id)
                 log.info(
                     "sync_engine: retry succeeded for %s order %s",

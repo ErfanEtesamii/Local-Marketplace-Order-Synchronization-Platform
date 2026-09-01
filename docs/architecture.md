@@ -348,6 +348,31 @@ staying off the network (Section 2). Instead:
   counts for the last 24h, last successful poll time, pending failure
   counts.
 
+## 7a. Telegram notifications (`src/telegram.py`)
+
+A separate, Persian/RTL-facing channel - distinct from the English
+ops-facing file report above, and deliberately not built on top of it
+(different audience, different data shape: money breakdown per order
+vs. "is polling still healthy?").
+
+- **Per-order alert**: `SyncEngine` calls `notify_new_order()` from the
+  single point an order is confirmed synced to Didar (no per-platform
+  trigger logic - see `sync_engine.py`). No-ops safely if
+  `TELEGRAM_BOT_TOKEN`/`TELEGRAM_CHAT_ID` are unset.
+- **Daily/weekly/monthly reports**: `main.py`'s poll cycle calls
+  `check_and_send_reports()` every cycle. This is a rollover check
+  (Iran-local day / Saturday-Friday week / Jalali month), not a cron
+  job - a Gregorian cron trigger doesn't line up with Jalali month
+  boundaries. Markers persisted in `Repository.report_progress` make
+  this idempotent across restarts.
+- Money breakdown (`products_amount`/`shipping_amount`/`total_amount`)
+  is stored directly on `synced_orders` (see `src/db/repository.py`)
+  rather than a second tracking table, so reports aggregate from the
+  same dedup rows.
+- Iran time is a fixed UTC+03:30 offset (`IRAN_TZ` in `telegram.py`),
+  not `zoneinfo`/`tzdata` - Iran hasn't observed DST since 2022, and
+  this avoids a Windows-only dependency (`tzdata`) for a fixed offset.
+
 ## 8. Testing strategy
 
 `pytest` + `respx` (HTTP mocking) throughout - no test hits a real

@@ -1,198 +1,225 @@
 """
-Tests for the Telegram notification feature.
+Tests for the Telegram notification feature (src/telegram.py).
+
+Covers: per-order message formatting (Requirement 1), report-message
+formatting and money aggregation (Requirements 2-4), and the day/week/
+month rollover detection that drives when reports fire.
 """
 from __future__ import annotations
 
-import os
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from unittest.mock import MagicMock, patch
 
+import jdatetime
 import pytest
 
 from src.db.repository import Repository
 from src.marketplaces.base import NormalizedOrder, OrderItem
-from src.telegram import TelegramNotifier
+from src.telegram import (
+    IRAN_TZ,
+    TelegramNotifier,
+    _emoji_number,
+    _format_rial,
+    _iranian_weekday,
+    _jalali_key,
+)
 
 
 def _order_with_items(
     source: str,
     order_id: str,
     total: str = "100000",
-    shipping_cost: str = "0"
+    shipping_cost: str = "0",
+    customer_full_name: str | None = "علی رضایی",
+    items: list[OrderItem] | None = None,
 ) -> NormalizedOrder:
-    """Helper to create a NormalizedOrder with items for testing."""
     return NormalizedOrder(
         source=source,
         source_order_id=order_id,
         order_number=order_id,
-        created_at=datetime.now(timezone.utc),
+        created_at=datetime(2026, 8, 31, 15, 12, 0, tzinfo=timezone.utc),
         total_price=Decimal(total),
         status="confirmed",
-        items=[OrderItem(
-            sku="TEST001",
-            title="Test Product",
-            quantity=2,
-            unit_price=Decimal("50000"),
-            final_price=Decimal("50000")
-        )],
-        shipping_cost=Decimal(shipping_cost)
+        customer_full_name=customer_full_name,
+        items=items if items is not None else [
+            OrderItem(
+                sku="TEST001",
+                title="Test Product",
+                quantity=2,
+                unit_price=Decimal("50000"),
+                final_price=Decimal("100000"),
+            )
+        ],
+        shipping_cost=Decimal(shipping_cost),
     )
 
 
-def test_telegram_notifier_is_configured_when_credentials_set(monkeypatch):
-    """Test that is_configured returns True when credentials are properly set."""
+@pytest.fixture
+def repo(tmp_path):
+    return Repository(db_path=str(tmp_path / "test.db"))
+
+
+# ---------------------------------------------------------------------
+# is_configured()
+# ---------------------------------------------------------------------
+
+def test_is_configured_true_with_numeric_chat_id(monkeypatch):
     monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11")
     monkeypatch.setenv("TELEGRAM_CHAT_ID", "775753176")
 
     notifier = TelegramNotifier()
-    # Bot.get_me is a coroutine function (python-telegram-bot v20+); patch()
-    # auto-detects that and uses an AsyncMock, so setting return_value here
-    # is what the mock resolves to once is_configured() actually awaits it.
-    with patch('telegram.Bot.get_me') as mock_get_me:
+    with patch("telegram.Bot.get_me") as mock_get_me:
         mock_get_me.return_value = MagicMock()
         assert notifier.is_configured() is True
         mock_get_me.assert_called_once()
 
 
-def test_telegram_notifier_is_configured_false_when_missing_token(monkeypatch):
-    """Test that is_configured returns False when bot token is missing."""
+def test_is_configured_true_with_channel_username(monkeypatch):
+    """TELEGRAM_CHAT_ID as "@channel_username" must work, not just a
+    numeric id - this was the exact bug flagged in review."""
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11")
+    monkeypatch.setenv("TELEGRAM_CHAT_ID", "@my_channel")
+
+    notifier = TelegramNotifier()
+    with patch("telegram.Bot.get_me") as mock_get_me:
+        mock_get_me.return_value = MagicMock()
+        assert notifier.is_configured() is True
+    assert notifier._chat_id == "@my_channel"
+
+
+def test_is_configured_false_when_missing_token(monkeypatch):
     monkeypatch.delenv("TELEGRAM_BOT_TOKEN", raising=False)
     monkeypatch.setenv("TELEGRAM_CHAT_ID", "775753176")
-
-    notifier = TelegramNotifier()
-    assert notifier.is_configured() is False
+    assert TelegramNotifier().is_configured() is False
 
 
-def test_telegram_notifier_is_configured_false_when_missing_chat_id(monkeypatch):
-    """Test that is_configured returns False when chat ID is missing."""
+def test_is_configured_false_when_missing_chat_id(monkeypatch):
     monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11")
     monkeypatch.delenv("TELEGRAM_CHAT_ID", raising=False)
-
-    notifier = TelegramNotifier()
-    assert notifier.is_configured() is False
+    assert TelegramNotifier().is_configured() is False
 
 
-def test_telegram_notifier_is_configured_false_when_invalid_chat_id(monkeypatch):
-    """Test that is_configured returns False when chat ID is not numeric."""
+def test_is_configured_false_when_chat_id_invalid(monkeypatch):
+    """Neither numeric nor "@..." -> config error, not a crash."""
     monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11")
     monkeypatch.setenv("TELEGRAM_CHAT_ID", "not_a_number")
-
-    notifier = TelegramNotifier()
-    assert notifier.is_configured() is False
+    assert TelegramNotifier().is_configured() is False
 
 
-def test_telegram_notifier_is_configured_false_when_bot_unreachable(monkeypatch):
-    """Test that is_configured returns False when bot cannot be reached."""
+def test_is_configured_false_when_bot_unreachable(monkeypatch):
     monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11")
     monkeypatch.setenv("TELEGRAM_CHAT_ID", "775753176")
 
     notifier = TelegramNotifier()
-    # Bot.get_me is a coroutine function (python-telegram-bot v20+), so
-    # patch() auto-detects that and uses an AsyncMock - side_effect fires
-    # when the code actually awaits it (via asyncio.run() in
-    # is_configured()), same as it would against the real Telegram API.
-    with patch('telegram.Bot.get_me') as mock_get_me:
+    with patch("telegram.Bot.get_me") as mock_get_me:
         from telegram.error import TelegramError
         mock_get_me.side_effect = TelegramError("Bot unreachable")
         assert notifier.is_configured() is False
 
 
-def test_format_new_order_message_creates_proper_persian_rtl():
-    """Test that _format_new_order_message creates properly formatted Persian RTL message."""
+# ---------------------------------------------------------------------
+# Per-order message formatting (Requirement 1)
+# ---------------------------------------------------------------------
+
+def test_format_new_order_message_matches_exact_template():
     notifier = TelegramNotifier()
+    order = _order_with_items(
+        "digikala", "12345", total="130000", shipping_cost="30000",
+        customer_full_name="علی رضایی",
+    )
 
-    order = _order_with_items("digikala", "12345", "250000", "30000")
+    message = notifier._format_new_order_message(order)
 
-    # We'll test the private method by patching is_configured to return True
-    with patch.object(notifier, 'is_configured', return_value=True):
-        message = notifier._format_new_order_message(order, "deal-12345")
+    # The date line's exact Jalali value is a calendar-conversion detail
+    # of jdatetime itself, not this module's logic - compute it the same
+    # way _format_jalali_datetime() does rather than hardcoding a literal
+    # that could silently drift from whatever jdatetime actually returns.
+    # 15:12 UTC + 03:30 (Iran, fixed offset) = 18:42 local, which IS this
+    # module's own arithmetic and is safe to assert literally.
+    local_date = order.created_at.astimezone(IRAN_TZ).date()
+    jalali = jdatetime.date.fromgregorian(date=local_date)
+    expected_date_str = notifier._to_persian_digits(f"{jalali.year:04d}/{jalali.month:02d}/{jalali.day:02d}")
 
-        # Check that key components are present
-        assert "🆕 *سفارش جدید در دیدار*" in message
-        assert "فروشگاه: دیجی‌کالا 📦" in message  # platform name with emoji
-        assert "`12345`" in message  # order ID
-        assert "`deal-12345`" in message  # deal ID
-        assert "📦 تعداد آیتم: ۲" in message  # Persian digit for quantity
-        assert "💰 مبلغ کل: *۲۵۰٬۰۰۰*" in message  # Persian formatted price
-        assert "🚚 هزینه ارسال: ۳۰٬۰۰۰" in message  # shipping cost line
-        assert "📋 *اقلام سفارش:*" in message
-        assert "▫️ Test Product × ۲ = ۵۰٬۰۰۰ ریال" in message
+    assert message == (
+        "🟢 سفارش جدید ثبت شد\n"
+        "🛍 پلتفرم: 🟣 دیجی‌کالا\n"
+        "👤 مشتری:\n"
+        "علی رضایی\n"
+        "📦 محصولات:\n"
+        "1️⃣ Test Product\n"
+        "   └─ 50,000 ریال × 2\n"
+        "🚚 هزینه ارسال:\n"
+        "30,000 ریال\n"
+        "━━━━━━━━━━━━━━━━━━━━\n"
+        "💰 مبلغ محصولات:\n"
+        "100,000 ریال\n"
+        "🚚 ارسال:\n"
+        "30,000 ریال\n"
+        "💳 مبلغ کل:\n"
+        "130,000 ریال\n"
+        "━━━━━━━━━━━━━━━━━━━━\n"
+        f"🕐 {expected_date_str} — ۱۸:۴۲\n"
+        "🟢 ثبت موفق در دیدار"
+    )
 
 
-def test_format_new_order_message_handles_zero_shipping():
-    """Test that _format_new_order_message hides shipping line when cost is zero."""
+def test_format_new_order_message_numbers_multiple_products():
     notifier = TelegramNotifier()
+    items = [
+        OrderItem(sku="A", title="Product A", quantity=1,
+                  unit_price=Decimal("10000"), final_price=Decimal("10000")),
+        OrderItem(sku="B", title="Product B", quantity=3,
+                  unit_price=Decimal("20000"), final_price=Decimal("60000")),
+    ]
+    order = _order_with_items("basalam", "999", total="70000", items=items)
 
-    order = _order_with_items("basalam", "67890", "150000", "0")
+    message = notifier._format_new_order_message(order)
 
-    with patch.object(notifier, 'is_configured', return_value=True):
-        message = notifier._format_new_order_message(order, "deal-67890")
+    assert "1️⃣ Product A" in message
+    assert "   └─ 10,000 ریال × 1" in message
+    assert "2️⃣ Product B" in message
+    assert "   └─ 20,000 ریال × 3" in message
+    assert "🛍 پلتفرم: 🟢 باسلام" in message
 
-        # Shipping line should not appear when cost is 0
-        assert "🚚 هزینه ارسال" not in message
-        assert "💰 مبلغ کل: *۱۵۰٬۰۰۰*" in message
 
-
-def test_escape_md_handles_special_characters():
-    """Test that _escape_md properly escapes Telegram MarkdownV2 special characters."""
+def test_format_new_order_message_missing_customer_name_shows_placeholder():
     notifier = TelegramNotifier()
+    order = _order_with_items("tapsishop", "1", customer_full_name=None)
 
-    # Test string with all special characters that need escaping
-    # Backtick ` is intentionally NOT escaped - used for inline code blocks in MarkdownV2
-    test_string = r"_*[]()~`>#+-=|{}.!"
-    escaped = notifier._escape_md(test_string)
+    message = notifier._format_new_order_message(order)
 
-    # Per Telegram's MarkdownV2 spec, these chars MUST be escaped:
-    # ! # * + - . [ ] ( ) ~ > | = { } % \
-    # Backtick ` is NOT in the list - it's used for inline code blocks
-    expected = r'_\*\[\]\(\)\~`\>\#\+\-\=\|\{\}\.\!'
-    assert escaped == expected
+    assert "👤 مشتری:\nنامشخص\n" in message
+    assert "🛍 پلتفرم: 🟠 تپسی‌شاپ" in message
 
 
-def test_format_price_converts_to_persian_digits_and_separators():
-    """Test that _format_price correctly formats numbers with Persian digits and separators."""
+def test_format_new_order_message_farazhonar_platform_emoji():
     notifier = TelegramNotifier()
-
-    # Test various amounts
-    assert notifier._format_rial("1250000") == "۱٬۲۵۰٬۰۰۰"
-    assert notifier._format_rial(1000) == "۱٬۰۰۰"
-    assert notifier._format_rial(0) == "۰"
-    assert notifier._format_rial("999999999") == "۹۹۹٬۹۹۹٬۹۹۹"
+    order = _order_with_items("farazhonar", "1")
+    message = notifier._format_new_order_message(order)
+    assert "🛍 پلتفرم: 🔵 فرازهنر" in message
 
 
-def test_format_jalali_date_handles_none_and_valid_dates():
-    """Test that _format_jalali_date handles None and valid dates correctly."""
-    notifier = TelegramNotifier()
-
-    # Test None case
-    assert notifier._format_jalali_date(None) == "نامشخص"
-
-    # Test valid date (we'll check it returns a string, exact format depends on system locale)
-    test_date = datetime(2026, 8, 31, 10, 30, 0, tzinfo=timezone.utc)
-    result = notifier._format_jalali_date(test_date)
-    assert isinstance(result, str)
-    assert len(result) > 0
-    assert result != "نامشخص"
+def test_emoji_number_keycaps():
+    assert _emoji_number(1) == "1️⃣"
+    assert _emoji_number(9) == "9️⃣"
+    assert _emoji_number(10) == "🔟"
+    assert _emoji_number(11) == "1️⃣1️⃣"
+    assert _emoji_number(23) == "2️⃣3️⃣"
 
 
-def test_to_persian_digits_converts_ascii_to_persian():
-    """Test that _to_persian_digits converts ASCII digits to Persian digits."""
-    notifier = TelegramNotifier()
-
-    assert notifier._to_persian_digits("0123456789") == "۰۱۲۳۴۵۶۷۸۹"
-    assert notifier._to_persian_digits("Test 123 abc 456") == "Test ۱۲۳ abc ۴۵۶"
-    assert notifier._to_persian_digits("No digits here!") == "No digits here!"
-    assert notifier._to_persian_digits("") == ""
+def test_format_rial_uses_ascii_digits_and_comma():
+    assert _format_rial("1250000") == "1,250,000"
+    assert _format_rial(1000) == "1,000"
+    assert _format_rial(0) == "0"
+    assert _format_rial(None) == "0"
+    assert _format_rial(Decimal("12500000")) == "12,500,000"
 
 
 def test_notify_new_order_actually_sends_message(monkeypatch):
     """Regression test for the coroutine-never-awaited bug: before the fix,
     self._bot.send_message(...) built a coroutine and immediately discarded
-    it without ever calling Telegram's API - notify_new_order would report
-    success while sending nothing. Bot.send_message is a coroutine function,
-    so patch() auto-detects that and uses an AsyncMock; asserting it was
-    called only proves something if the code actually awaits it."""
+    it without ever calling Telegram's API."""
     notifier = TelegramNotifier()
     notifier._bot = MagicMock()
     notifier._chat_id = 775753176
@@ -206,7 +233,165 @@ def test_notify_new_order_actually_sends_message(monkeypatch):
     mock_send.assert_called_once()
     _, kwargs = mock_send.call_args
     assert kwargs["chat_id"] == 775753176
-    assert "12345" in kwargs["text"]
+    assert "سفارش جدید ثبت شد" in kwargs["text"]
+    # No parse_mode - messages are sent as literal plain text so the
+    # exact template can't be corrupted by Markdown escaping.
+    assert "parse_mode" not in kwargs
+
+
+# ---------------------------------------------------------------------
+# Report aggregation (Requirements 2-4)
+# ---------------------------------------------------------------------
+
+def test_repository_aggregates_amounts_for_reports(repo):
+    repo.mark_synced("digikala", "1", "deal-1",
+                      products_amount=Decimal("100000"),
+                      shipping_amount=Decimal("20000"),
+                      total_amount=Decimal("120000"))
+    repo.mark_synced("digikala", "2", "deal-2",
+                      products_amount=Decimal("50000"),
+                      shipping_amount=Decimal("0"),
+                      total_amount=Decimal("50000"))
+    # Order synced before this feature existed - NULL amounts, must not
+    # break aggregation or be treated as zero-inflating the count wrongly.
+    repo.mark_synced("digikala", "3", "deal-3")
+
+    since = datetime.now(timezone.utc) - timedelta(hours=1)
+    products, shipping, total, count = repo.get_amount_stats_since("digikala", since)
+
+    assert products == 150000
+    assert shipping == 20000
+    assert total == 170000
+    assert count == 3
+
+
+def test_repository_amount_stats_respects_until_bound(repo):
+    repo.mark_synced("basalam", "1", "deal-1",
+                      products_amount=Decimal("10000"),
+                      shipping_amount=Decimal("0"),
+                      total_amount=Decimal("10000"))
+
+    far_future_since = datetime.now(timezone.utc) - timedelta(hours=1)
+    far_past_until = datetime.now(timezone.utc) - timedelta(hours=1)
+
+    _, _, _, count = repo.get_amount_stats_since("basalam", far_future_since, far_past_until)
+    assert count == 0
+
+
+def test_format_report_message_matches_expected_shape():
+    notifier = TelegramNotifier()
+    message = notifier._format_report_message(
+        "📊 گزارش پایان روز", "📊 گزارش روزانه", "📅 شنبه ۱۴۰۵/۰۶/۰۷",
+        products=1000000, shipping=50000, total=1050000, count=4,
+    )
+
+    assert message.startswith("📊 گزارش پایان روز\n╔")
+    assert "📅 شنبه ۱۴۰۵/۰۶/۰۷" in message
+    assert "└─ 4 سفارش" in message
+    assert "└─ 1,000,000 ریال" in message  # products
+    assert "└─ 50,000 ریال" in message      # shipping
+    assert "└─ 1,050,000 ریال" in message   # total
+    assert "└─ 262,500 ریال" in message     # average (1,050,000 / 4)
+    assert message.endswith("🟢 همه سفارش‌ها با موفقیت\nدر دیدار ثبت شده‌اند.")
+
+
+def test_format_report_message_handles_zero_orders():
+    notifier = TelegramNotifier()
+    message = notifier._format_report_message(
+        "📊 گزارش پایان روز", "📊 گزارش روزانه", "📅 شنبه ۱۴۰۵/۰۶/۰۷",
+        products=0, shipping=0, total=0, count=0,
+    )
+    assert "└─ 0 سفارش" in message
+    assert "└─ 0 ریال" in message
+
+
+# ---------------------------------------------------------------------
+# Day/week/month rollover detection
+# ---------------------------------------------------------------------
+
+def test_daily_rollover_first_run_sets_marker_without_sending(repo):
+    notifier = TelegramNotifier()
+    today = jdatetime.date(1405, 6, 9)
+
+    with patch.object(notifier, "_send_daily_report") as mock_send:
+        notifier._check_daily_rollover(repo, ["digikala"], today)
+
+    mock_send.assert_not_called()
+    assert repo.get_report_marker("day") == _jalali_key(today)
+
+
+def test_daily_rollover_same_day_does_not_resend(repo):
+    notifier = TelegramNotifier()
+    today = jdatetime.date(1405, 6, 9)
+    repo.set_report_marker("day", _jalali_key(today))
+
+    with patch.object(notifier, "_send_daily_report") as mock_send:
+        notifier._check_daily_rollover(repo, ["digikala"], today)
+
+    mock_send.assert_not_called()
+
+
+def test_daily_rollover_sends_report_for_day_that_ended(repo):
+    notifier = TelegramNotifier()
+    yesterday = jdatetime.date(1405, 6, 9)
+    today = jdatetime.date(1405, 6, 10)
+    repo.set_report_marker("day", _jalali_key(yesterday))
+
+    with patch.object(notifier, "_send_daily_report") as mock_send:
+        notifier._check_daily_rollover(repo, ["digikala"], today)
+
+    mock_send.assert_called_once_with(repo, ["digikala"], yesterday)
+    assert repo.get_report_marker("day") == _jalali_key(today)
+
+
+def test_weekly_rollover_fires_only_when_week_anchor_changes(repo):
+    notifier = TelegramNotifier()
+    # Derive this week's Saturday anchor and the following week's from an
+    # arbitrary reference date, rather than hardcoding which real-world
+    # weekday a specific Jalali date falls on - only jdatetime.date
+    # arithmetic is relied on here, not its own weekday() convention
+    # (see _iranian_weekday's docstring in src/telegram.py for why).
+    reference = jdatetime.date(1405, 6, 15)
+    this_saturday = reference - timedelta(days=_iranian_weekday(reference))
+    last_day_of_week = this_saturday + timedelta(days=6)  # this week's Friday
+    next_saturday = this_saturday + timedelta(days=7)
+
+    with patch.object(notifier, "_send_weekly_report") as mock_send:
+        notifier._check_weekly_rollover(repo, ["digikala"], last_day_of_week)
+        mock_send.assert_not_called()  # first run - just sets the marker
+
+        notifier._check_weekly_rollover(repo, ["digikala"], last_day_of_week)
+        mock_send.assert_not_called()  # same week, no rollover yet
+
+        notifier._check_weekly_rollover(repo, ["digikala"], next_saturday)
+        mock_send.assert_called_once()
+
+
+def test_monthly_rollover_fires_when_jalali_month_changes(repo):
+    notifier = TelegramNotifier()
+    end_of_month = jdatetime.date(1405, 6, 31)
+    start_of_next_month = jdatetime.date(1405, 7, 1)
+
+    with patch.object(notifier, "_send_monthly_report") as mock_send:
+        notifier._check_monthly_rollover(repo, ["digikala"], end_of_month)
+        mock_send.assert_not_called()
+
+        notifier._check_monthly_rollover(repo, ["digikala"], start_of_next_month)
+        mock_send.assert_called_once_with(repo, ["digikala"], jdatetime.date(1405, 6, 1))
+
+
+def test_send_daily_report_noops_when_not_configured(repo, monkeypatch):
+    """Rollover math must still be safe with Telegram unconfigured -
+    the marker check in check_and_send_reports doesn't gate on
+    is_configured(), so the send methods themselves must."""
+    monkeypatch.delenv("TELEGRAM_BOT_TOKEN", raising=False)
+    monkeypatch.delenv("TELEGRAM_CHAT_ID", raising=False)
+    notifier = TelegramNotifier()
+
+    with patch.object(notifier, "_send") as mock_send:
+        notifier._send_daily_report(repo, ["digikala"], jdatetime.date(1405, 6, 9))
+
+    mock_send.assert_not_called()
 
 
 if __name__ == "__main__":

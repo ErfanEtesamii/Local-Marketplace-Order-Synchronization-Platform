@@ -51,12 +51,18 @@ def build_engine() -> tuple[SyncEngine, Repository]:
     return engine, repository
 
 
-def _poll_cycle(engine: SyncEngine, repository: Repository) -> None:
+def _poll_cycle(engine: SyncEngine, repository: Repository, telegram: TelegramNotifier) -> None:
     engine.run_once()
     # Cheap SQLite lookups - safe to run every cycle rather than on a
     # separate schedule. Logs a WARNING for anything that looks stuck;
     # see src/reporting.py for what "stale" means.
     check_health(repository, engine.adapter_names)
+    # Telegram daily/weekly/monthly reports: a per-cycle rollover check
+    # rather than a cron job - see src/telegram.py's module docstring for
+    # why (Gregorian cron triggers don't line up with Jalali month
+    # boundaries). Best-effort - logs and swallows its own errors, so a
+    # Telegram outage can never break the poll cycle itself.
+    telegram.check_and_send_reports(repository, engine.adapter_names)
 
 
 def run_forever() -> None:
@@ -68,7 +74,7 @@ def run_forever() -> None:
         _poll_cycle,
         "interval",
         seconds=settings.poll_interval_seconds,
-        args=[engine, repository],
+        args=[engine, repository, telegram],
         # NOTE: do NOT pass next_run_time=None here - in APScheduler that
         # means "add this job paused", not "run immediately". It was
         # silently preventing the interval job from ever firing after the
@@ -84,32 +90,6 @@ def run_forever() -> None:
         minute=5,
         args=[repository, engine.adapter_names],
     )
-    # Telegram reports - same data as the daily file plus weekly/monthly
-    # aggregates. Each method is best-effort (logs and swallows errors),
-    # so a Telegram outage can never break the scheduler itself.
-    scheduler.add_job(
-        telegram.notify_daily_report,
-        "cron",
-        hour=0,
-        minute=10,
-        args=[repository, engine.adapter_names],
-    )
-    scheduler.add_job(
-        telegram.notify_weekly_report,
-        "cron",
-        day_of_week="fri",
-        hour=23,
-        minute=55,
-        args=[repository, engine.adapter_names],
-    )
-    scheduler.add_job(
-        telegram.notify_monthly_report,
-        "cron",
-        day=1,
-        hour=0,
-        minute=30,
-        args=[repository, engine.adapter_names],
-    )
 
     log.info(
         "order-sync-platform starting - polling every %d seconds",
@@ -118,7 +98,7 @@ def run_forever() -> None:
 
     # Run once immediately on startup rather than waiting a full interval.
     try:
-        _poll_cycle(engine, repository)
+        _poll_cycle(engine, repository, telegram)
     except Exception:
         log.exception("sync_engine: initial run_once failed - will retry on schedule")
 
