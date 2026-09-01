@@ -514,10 +514,11 @@ def test_deal_item_description_prefers_tracking_code_over_shipment_id():
 
 
 @respx.mock
-def test_deal_item_description_digikala_uses_flat_239_toman_fee():
-    """Client request (2026-09): Digikala's DealItem Description always
-    shows the flat 239 Toman shipping fee (src/shipping_fees.py),
-    regardless of whatever real shipping_cost Digikala's own API
+def test_deal_item_description_digikala_uses_flat_239000_toman_fee():
+    """Client request (2026-09; corrected 2026-09 to 1,000x the original
+    figure - see src/shipping_fees.py's module docstring): Digikala's
+    DealItem Description always shows the flat 239,000 Toman shipping
+    fee, regardless of whatever real shipping_cost Digikala's own API
     reports for this order."""
     _mock_categories()
     _mock_product_search_no_match()
@@ -534,12 +535,12 @@ def test_deal_item_description_digikala_uses_flat_239_toman_fee():
     client.create_deal(contact_id="c-1", display_name="Someone", order=order)
 
     deal_body = route.calls[0].request.content
-    assert "هزینه ارسال: 239 تومان".encode() in deal_body
+    assert "هزینه ارسال: 239,000 تومان".encode() in deal_body
     assert b"999,999" not in deal_body
 
 
 @respx.mock
-def test_deal_item_description_farazhonar_pishtaz_uses_225_toman_fee():
+def test_deal_item_description_farazhonar_pishtaz_uses_225000_toman_fee():
     _mock_categories()
     _mock_product_search_no_match()
     respx.post("https://app.didar.me/api/product/save").mock(
@@ -555,11 +556,11 @@ def test_deal_item_description_farazhonar_pishtaz_uses_225_toman_fee():
     client.create_deal(contact_id="c-1", display_name="Someone", order=order)
 
     deal_body = route.calls[0].request.content
-    assert "هزینه ارسال: 225 تومان".encode() in deal_body
+    assert "هزینه ارسال: 225,000 تومان".encode() in deal_body
 
 
 @respx.mock
-def test_deal_item_description_farazhonar_tipax_uses_250_toman_fee():
+def test_deal_item_description_farazhonar_tipax_uses_250000_toman_fee():
     _mock_categories()
     _mock_product_search_no_match()
     respx.post("https://app.didar.me/api/product/save").mock(
@@ -575,7 +576,7 @@ def test_deal_item_description_farazhonar_tipax_uses_250_toman_fee():
     client.create_deal(contact_id="c-1", display_name="Someone", order=order)
 
     deal_body = route.calls[0].request.content
-    assert "هزینه ارسال: 250 تومان".encode() in deal_body
+    assert "هزینه ارسال: 250,000 تومان".encode() in deal_body
 
 
 @respx.mock
