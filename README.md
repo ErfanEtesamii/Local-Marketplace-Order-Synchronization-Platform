@@ -21,7 +21,7 @@ uses official/documented APIs wherever they exist.
 | SnappShop | `src/marketplaces/snappshop.py` | Bearer token + Agent-User header | ⏸️ disabled by default — client hasn't been granted API access yet (`SNAPPSHOP_ENABLED=false`); code is written but unverified against real data |
 | Didar CRM | `src/didar/*.py` | API key (query param) | ✅ Contact, Product, Deal, and post-sale checklist Activity creation all confirmed live |
 
-104 automated tests passing (`pytest tests/ -v`). See [`docs/architecture.md`](docs/architecture.md)
+243 automated tests passing (`pytest tests/ -v`). See [`docs/architecture.md`](docs/architecture.md)
 for design decisions and [`docs/installation.md`](docs/installation.md) for
 Windows deployment.
 
@@ -80,14 +80,20 @@ production incident that proved this.
 
 ```
 src/
-├── config.py               # all environment/config loading, one place
+├── config.py                # all environment/config loading, one place
 ├── logger.py                # rotating file + console logging (Windows-safe rollover)
-├── http_utils.py            # shared retry policy used by every HTTP client
-├── sync_engine.py           # orchestrates adapters + dedupe + watermark + Didar sync
-├── reporting.py             # daily summary report + per-cycle health check
+├── http_utils.py             # shared retry policy used by every HTTP client
+├── currency.py               # Toman -> Rial conversion (per-source unit)
+├── finglish.py               # Finglish (Latin-typed Persian names) -> Persian script
+├── shipping_fees.py          # fixed client-specified shipping-fee display amounts
+├── telegram.py               # per-order alerts + daily/weekly/monthly/yearly reports
+├── sync_engine.py            # orchestrates adapters + dedupe + watermark + Didar sync
+├── reporting.py              # daily summary report + per-cycle health check
 ├── main.py                   # service entrypoint (APScheduler polling loop)
 ├── db/
 │   └── repository.py         # SQLite: dedupe, retry tracking, sync watermark
+├── memory/
+│   └── didar-sbs-api-integration.md   # engineering notes on the Didar SBS integration
 ├── marketplaces/
 │   ├── base.py                # NormalizedOrder + MarketplaceAdapter interface
 │   ├── tapsishop.py
@@ -97,15 +103,21 @@ src/
 │   └── farazhonar.py
 └── didar/
     ├── contact_client.py       # upsert Contact - search-first by CustomerCode/MobilePhone
-    ├── product_client.py        # upsert Product per line item - search-first by Code + category resolution
-    ├── category_mapping.py      # keyword→category-title guesses for items with no marketplace category
-    ├── deal_client.py            # create Deal with structured DealItems - dedupe against Didar first
-    ├── activity_client.py        # post-sale follow-up checklist Activities
-    └── service.py                 # combines Contact + Deal + checklist per order
+    ├── product_client.py       # upsert Product per line item - search-first by Code + category resolution
+    ├── product_catalog.py      # marketplace title -> Didar catalog Code, from client's Excel export
+    ├── category_mapping.py     # keyword→category-title guesses for items with no marketplace category
+    ├── deal_client.py          # create Deal with structured DealItems - dedupe against Didar first
+    ├── activity_client.py      # post-sale follow-up checklist Activities
+    ├── scheduling.py           # checklist due-date rules (anchored to ship time / registration time)
+    └── service.py               # combines Contact + Deal + checklist per order
 
 tests/                      # pytest + respx (HTTP mocking), one file per module
 deploy/                     # NSSM Windows Service install/uninstall/restart scripts
 docs/                       # installation guide, architecture notes
+scripts/                    # one-off ops helpers (e.g. list_activity_types.py)
+memory/                     # project-level engineering notes (e.g. sliding-window algorithm)
+data/                       # sync.db, digikala_tokens.json, Didar product-catalog export (gitignored)
+logs/                       # rotating order-sync.log + NSSM service-stdout/stderr logs (gitignored)
 ```
 
 ## Local development setup
