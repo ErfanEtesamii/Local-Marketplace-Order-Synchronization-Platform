@@ -16,7 +16,22 @@ the "محصولات" section header text search picks up:
 
     POST /product/search      - Criteria.Keywords (required) + From/Limit
     POST /product/categories  - list valid ProductCategoryIds
-    POST /product/GetProductsList - list ALL products, no filter params
+    POST /product/getproductbycodes - {"Code": [...]}, exact Code match
+
+CORRECTION (2026-09, production incident - order 364139925): the code
+here previously used POST /product/GetProductsList (assumed to list
+the whole catalog, cached client-side for exact Code lookups) instead
+of getproductbycodes. Confirmed live that GetProductsList returned 0
+products on this account even though the catalog has 3000+ entries,
+which meant search_by_code() could never find an existing product via
+that path - it silently fell through to /product/search's full-text
+ranking, which also missed short/generic codes like "38", so
+upsert_product() then tried to CREATE a product that already existed
+and Didar correctly rejected it with "duplicate product code",
+failing the whole order. getproductbycodes was confirmed live to
+return the exact match Didar's docs promise (see _lookup_by_codes()
+below), so GetProductsList and its client-side cache were removed
+entirely in favor of it.
 
 /product/save IS ALSO documented (found later, under "پارامترهای
 خروجی ایجاد/ویرایش محصول" - easy to miss since the docx's text
@@ -130,8 +145,6 @@ class DidarProductClient:
         self._category_by_title: dict[str, str] | None = None  # populated lazily
         self._catalog: ProductCatalog | None = None  # populated lazily
         self._catalog_load_attempted = False
-        self._code_to_id: dict[str, str] | None = None  # populated lazily
-        self._code_map_load_failed = False
 
     @default_retry()
     def _post(self, path: str, json: dict | None = None) -> dict:
@@ -206,68 +219,53 @@ class DidarProductClient:
         payload = self._post("/product/categories")
         return payload.get("Response", [])
 
-    def _code_map(self) -> dict[str, str]:
-        """Code -> Id map for every product in Didar, built once per
-        client lifetime from the documented POST /product/GetProductsList
-        (no filter params - returns everything).
+    def _lookup_by_codes(self, codes: list[str]) -> dict[str, str]:
+        """Exact Code -> Id lookup via the documented
+        POST /product/getproductbycodes. Unlike /product/search (a
+        full-text, relevance-ranked search that can silently miss
+        short/generic codes like "38" once the catalog has thousands
+        of entries - see the 2026-09 production incident, order
+        364139925) and unlike the old GetProductsList-based full-catalog
+        cache it replaced (which returned 0 products on this account -
+        same incident), this is a targeted exact-match lookup, confirmed
+        live to correctly find Code=38:
 
-        This exists because /product/search's Criteria.Keywords is a
-        full-text, relevance-ranked search, not an exact-Code lookup -
-        confirmed in production to silently miss real products when the
-        Code is short/generic (e.g. catalog codes like "38" - see
-        product_catalog.py) and the catalog has thousands of entries: the
-        real product doesn't rank within Limit results, so search_by_code
-        wrongly reports "not found" even though the product genuinely
-        exists. That in turn breaks the "duplicate product code" recovery
-        path too, since recovery re-runs the exact same narrow query -
-        so a real "already exists" case was falling through to a raised
-        error and failing the whole order (see the 2026-09 production
-        incident: catalog Code=38 for a Digikala order).
+            POST /product/getproductbycodes  {"Code": ["38"]}
+            -> {"Response": {"Total": 1, "Products": [{"Id": "...",
+                "Code": "38", ...}]}}
 
-        Fetched lazily on first use and cached for this client's
-        lifetime (one instance per process - see DidarSyncService) rather
-        than per order, same tradeoff as _category_by_title_map(). A
-        failure here (network error, unexpected response shape) is
-        caught and logged rather than raised: it must never be the
-        reason an order fails, since search_by_code() below still works
-        as a (less reliable) fallback when this map is unavailable.
+        Note Response is an OBJECT with a "Products" list inside, not a
+        bare array like /product/search and /product/categories return.
         """
-        if self._code_to_id is None and not self._code_map_load_failed:
-            try:
-                payload = self._post("/product/GetProductsList")
-                products = payload.get("Response", [])
-                self._code_to_id = {
-                    _normalize_code(str(p.get("Code", ""))): str(p["Id"])
-                    for p in products
-                    if isinstance(p, dict) and p.get("Code") and p.get("Id")
-                }
-                log.info(
-                    "didar: loaded %d products from GetProductsList for "
-                    "Code->Id lookup",
-                    len(self._code_to_id),
-                )
-            except Exception:
-                self._code_map_load_failed = True
-                log.exception(
-                    "didar: failed to load /product/GetProductsList - "
-                    "Code->Id lookup falls back to the less reliable "
-                    "/product/search for the rest of this run"
-                )
-        return self._code_to_id or {}
+        body = {"Code": codes}
+        payload = self._post("/product/getproductbycodes", json=body)
+        products = payload.get("Response", {}).get("Products", [])
+        return {
+            _normalize_code(str(p.get("Code", ""))): str(p["Id"])
+            for p in products
+            if isinstance(p, dict) and p.get("Code") and p.get("Id")
+        }
 
     def search_by_code(self, code: str, limit: int = 20) -> str | None:
-        """Look up an existing product by Code - first against the
-        cached GetProductsList Code->Id map (exact, reliable - see
-        _code_map()), then, only as a fallback (map unavailable, or a
-        product created after the map was cached), via the documented
-        POST /product/search (Criteria.Keywords is a full-text search,
-        not an exact-Code filter, so results are filtered down to an
-        exact normalized Code match here - a partial/fuzzy hit on the
-        wrong product would be worse than not finding one at all)."""
+        """Look up an existing product by Code - first via the exact,
+        documented POST /product/getproductbycodes, then, only if that
+        call itself fails (network error etc.), via /product/search as
+        a fallback (Criteria.Keywords is a full-text search, not an
+        exact-Code filter, so results are filtered down to an exact
+        normalized Code match here - a partial/fuzzy hit on the wrong
+        product would be worse than not finding one at all)."""
         target = _normalize_code(code)
-        cached = self._code_map().get(target)
-        if cached:
-            return cached
+        try:
+            exact = self._lookup_by_codes([code])
+            if target in exact:
+                return exact[target]
+            return None
+        except Exception:
+            log.exception(
+                "didar: /product/getproductbycodes lookup failed for "
+                "Code=%s - falling back to /product/search",
+                code,
+            )
 
         body = {"Criteria": {"Keywords": code}, "From": 0, "Limit": limit}
         payload = self._post("/product/search", json=body)
@@ -404,17 +402,9 @@ class DidarProductClient:
             # save call. Recover by searching once more rather than
             # failing the whole order for a timing issue.
             if exc.response is not None and "duplicate product code" in exc.response.text.lower():
-                # Didar itself just confirmed this Code exists, so it's
-                # worth forcing a fresh GetProductsList fetch here rather
-                # than trusting a cache that may predate whoever created
-                # it (another writer, or this same map simply not having
-                # had the product in it to begin with - see _code_map()
-                # docstring for the production incident this guards
-                # against). This is deliberately the only place that pays
-                # the cost of a reload - everywhere else the cache from
-                # startup is treated as good enough for the run.
-                self._code_to_id = None
-                self._code_map_load_failed = False
+                # Didar itself just confirmed this Code exists - recover
+                # by looking it up directly rather than failing the
+                # whole order for a create/search race.
                 recovered_id = self.search_by_code(code)
                 if recovered_id:
                     log.info(
@@ -430,12 +420,6 @@ class DidarProductClient:
             "didar: created product Code=%s Title=%s CategoryId=%s -> Id=%s",
             code, title, category_id, product_id,
         )
-        # Keep the cached Code->Id map (see _code_map()) in sync with what
-        # we just created, so a second item with the same Code later in
-        # this same run resolves from cache instead of depending on
-        # /product/search to have already indexed the new product.
-        if self._code_to_id is not None:
-            self._code_to_id[_normalize_code(code)] = product_id
         return product_id
 
 

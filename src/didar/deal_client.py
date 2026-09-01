@@ -352,17 +352,22 @@ class DidarDealClient:
             "Quantity": item.quantity,
             "UnitPrice": int(item.unit_price),
             "Discount": int(per_unit_discount),
+            # Didar's DealItems schema DOES define a per-item TaxPercent
+            # field (confirmed against current Didar API docs, 2026-09) -
+            # sent explicitly as "0" so every auto-created deal item has
+            # no tax applied, rather than whatever Didar's own default is.
+            "TaxPercent": "0",
             # Order-traceability text, matching the convention seen on
             # manually-entered deals (client feedback 2026-08) - those
             # have "شماره سفارش: X/شماره مرسوله: Y" typed into each
             # item's توضیحات; we only have the order number reliably
             # across all 5 sources (no NormalizedOrder field carries a
             # shipment/parcel number yet), so that's what's written here.
-            # Note: Didar's DealItems schema has no dedicated tax/duty field.
-            # Tax/fees are represented as Discount = 0 when final_price >
-            # unit_price*quantity (see per-unit discount logic above at lines
-            # 270-273 where it's clamped to >= 0, meaning a higher final_price
-            # is not treated as a negative discount but as zero discount).
+            # Separately, non-tax fees/markups from the source are still
+            # represented as Discount = 0 when final_price > unit_price*
+            # quantity (see per-unit discount logic above, clamped to
+            # >= 0: a higher final_price is treated as zero discount,
+            # not a negative one).
             "Description": f"شماره سفارش: {order.order_number}",
         }
 
