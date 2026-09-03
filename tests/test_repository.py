@@ -43,6 +43,22 @@ def test_sync_watermark_roundtrip(repo):
     assert stored == now
 
 
+def test_shipment_watermark_roundtrip(repo):
+    assert repo.get_last_shipment_id("digikala") is None
+
+    repo.set_last_shipment_id("digikala", 42)
+    assert repo.get_last_shipment_id("digikala") == 42
+
+    repo.set_last_shipment_id("digikala", 99)
+    assert repo.get_last_shipment_id("digikala") == 99
+
+
+def test_shipment_watermark_is_scoped_per_platform(repo):
+    repo.set_last_shipment_id("digikala", 10)
+    assert repo.get_last_shipment_id("tapsishop") is None
+    assert repo.get_last_shipment_id("digikala") == 10
+
+
 def test_count_synced_since_only_counts_within_window(repo):
     repo.mark_synced("farazhonar", "1", "deal-1")
 

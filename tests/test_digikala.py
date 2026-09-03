@@ -6,206 +6,344 @@ import respx
 import httpx
 
 from src.config import DigikalaConfig
+from src.db.repository import Repository
 from src.marketplaces.digikala import DigikalaAdapter
-
-def _row(order_id, item_suffix):
-    return {
-        "order_id": order_id,
-        "order_created_at": "2026-08-10T09:00:00+03:30",
-        "product_variant_title": f"Product {item_suffix}",
-        "product_supplier_code": f"SKU-{item_suffix}",
-        "quantity": 1,
-        "unit_price": 10000,
-        "total_price": 10000,
-        "order_status": {"key": "confirmed", "title": "نهایی شده"},
-    }
 
 _CFG = DigikalaConfig(base_url="https://seller.digikala.com", access_token="test-token")
 
+_SBS_URL = "https://seller.digikala.com/open-api/v1/ship-by-seller-orders"
 
-@respx.mock
-def test_fetch_new_orders_groups_multi_item_rows_into_one_order():
-    respx.get("https://seller.digikala.com/open-api/v1/orders/history").mock(
-        return_value=httpx.Response(
-            200,
-            json={
-                "status": "ok",
-                "data": {
-                    "pager": {"page": 1, "item_per_page": 50, "total_pages": 1, "total_rows": 2},
-                    "items": [
-                        {
-                            "order_id": 999,
-                            "order_created_at": "2026-08-10T09:00:00+03:30",
-                            "product_variant_title": "Product A",
-                            "product_supplier_code": "SKU-A",
-                            "quantity": 1,
-                            "unit_price": 100000,
-                            "total_price": 100000,
-                            "order_status": {"key": "confirmed", "title": "نهایی شده"},
-                        },
-                        {
-                            "order_id": 999,
-                            "order_created_at": "2026-08-10T09:00:00+03:30",
-                            "product_variant_title": "Product B",
-                            "product_supplier_code": "SKU-B",
-                            "quantity": 2,
-                            "unit_price": 50000,
-                            "total_price": 100000,
-                            "order_status": {"key": "confirmed", "title": "نهایی شده"},
-                        },
-                    ],
-                },
+
+@pytest.fixture
+def repo(tmp_path):
+    return Repository(db_path=str(tmp_path / "test.db"))
+
+
+def _sbs_row(shipment_id, order_id=None, **overrides):
+    row = {
+        "orderId": order_id if order_id is not None else shipment_id,
+        "shipmentId": shipment_id,
+        "orderDate": "1403/11/07",
+        "address": {"state": "تهران", "city": "تهران", "district": "ونک"},
+        "trackingCode": "11234",
+        "shippingCost": 650000,
+        "status": {"text": "processing", "text_fa": "در حال پردازش"},
+        "isCancelled": False,
+        "hasFailedDeliveryBefore": False,
+        "customer_name": "علی علیایی",
+        "customer_address": "تهران، تهران، ونک، خدامی",
+        "customer_postal_code": "111111111",
+        "customer_phone_number": "09121212121",
+        "variants": [
+            {
+                "image_url": "https://dkstatics-public.digikala.com/example.jpg",
+                "title": "تیشرت مردانه",
+                "productId": "123",
+                "sellerCode": 1,
+                "count": 1,
+                "price": 1200000,
+            }
+        ],
+    }
+    row.update(overrides)
+    return row
+
+
+def _sbs_list_response(items, page=1, total_pages=1):
+    return httpx.Response(
+        200,
+        json={
+            "status": "ok",
+            "data": {
+                "pager": {"page": page, "item_per_page": 50, "total_pages": total_pages, "total_rows": len(items)},
+                "items": items,
             },
-        )
+        },
     )
 
-    adapter = DigikalaAdapter(config=_CFG)
+
+# --- cold start / watermark ------------------------------------------------
+
+@respx.mock
+def test_cold_start_seeds_watermark_without_syncing_anything(repo):
+    """No watermark yet -> a single size=1/sort=id/order=desc request seeds
+    it to the account's current highest shipmentId, and NO order is synced
+    (Decision 5, digikala-sbs-migration-prompt.md)."""
+    route = respx.get(_SBS_URL).mock(
+        return_value=_sbs_list_response([_sbs_row(shipment_id=777)])
+    )
+
+    adapter = DigikalaAdapter(config=_CFG, repository=repo)
     orders = adapter.fetch_new_orders(since=None)
 
-    # Two item rows sharing order_id=999 must collapse into a single order.
-    assert len(orders) == 1
-    order = orders[0]
-    assert order.source == "digikala"
-    assert order.source_order_id == "999"
-    assert len(order.items) == 2
-    assert order.total_price == 200000
-    assert order.customer_mobile is None
-    assert order.customer_full_name is None
+    assert orders == []
+    assert repo.get_last_shipment_id("digikala") == 777
+    assert route.calls[0].request.url.params["sort"] == "id"
+    assert route.calls[0].request.url.params["order"] == "desc"
+    assert route.calls[0].request.url.params["size"] == "1"
 
 
 @respx.mock
-def test_pagination_continues_even_when_total_pages_is_wrong():
-    """
-    Regression test for a real bug found in review: pagination previously
-    trusted `pager.total_pages` alone. If the API reports it as 0/incorrect
-    (as it does in Digikala's own documented example, despite items being
-    present), orders on later pages were silently dropped. A full page of
-    results must now be enough to keep paginating even if total_pages says
-    otherwise.
-    """
-    route = respx.get("https://seller.digikala.com/open-api/v1/orders/history")
+def test_cold_start_seeds_zero_when_account_has_no_shipments(repo):
+    respx.get(_SBS_URL).mock(return_value=_sbs_list_response([]))
 
-    # Page 1: a FULL page (size=50) but total_pages incorrectly reports 0.
+    adapter = DigikalaAdapter(config=_CFG, repository=repo)
+    orders = adapter.fetch_new_orders(since=None)
+
+    assert orders == []
+    assert repo.get_last_shipment_id("digikala") == 0
+
+
+@respx.mock
+def test_fetch_new_orders_uses_watermark_plus_one_and_advances_it(repo):
+    """With a watermark already set, fetch_new_orders must request
+    search[min_shipment_id]=watermark+1 and, once new rows come back,
+    persist the new max shipmentId as the watermark."""
+    repo.set_last_shipment_id("digikala", 100)
+    route = respx.get(_SBS_URL).mock(
+        return_value=_sbs_list_response([_sbs_row(shipment_id=101), _sbs_row(shipment_id=105)])
+    )
+
+    adapter = DigikalaAdapter(config=_CFG, repository=repo)
+    orders = adapter.fetch_new_orders(since=None)
+
+    assert len(orders) == 2
+    assert route.calls[0].request.url.params["search[min_shipment_id]"] == "101"
+    assert route.calls[0].request.url.params["sort"] == "shipment_id"
+    assert route.calls[0].request.url.params["order"] == "asc"
+    assert repo.get_last_shipment_id("digikala") == 105
+
+
+@respx.mock
+def test_fetch_new_orders_returns_nothing_when_no_new_shipments(repo):
+    """Immediately re-polling with no new shipments must return zero
+    orders and leave the watermark unchanged."""
+    repo.set_last_shipment_id("digikala", 500)
+    respx.get(_SBS_URL).mock(return_value=_sbs_list_response([]))
+
+    adapter = DigikalaAdapter(config=_CFG, repository=repo)
+    orders = adapter.fetch_new_orders(since=None)
+
+    assert orders == []
+    assert repo.get_last_shipment_id("digikala") == 500
+
+
+@respx.mock
+def test_watermark_persisted_after_every_page_not_just_at_the_end(repo):
+    """Regression guard for Decision 4: a crash between pages must not
+    lose progress from pages already fetched. We simulate this by
+    asserting the watermark reflects page 1's max even though we can
+    inspect it (via the route side_effect) before page 2 is requested."""
+    repo.set_last_shipment_id("digikala", 0)
+    route = respx.get(_SBS_URL)
+    seen_watermark_before_page_2 = {}
+
+    def _responder(request):
+        params = dict(request.url.params)
+        page = int(params["page"])
+        if page == 1:
+            return _sbs_list_response(
+                [_sbs_row(shipment_id=i) for i in range(1, 51)], page=1, total_pages=2
+            )
+        # By the time page 2 is requested, page 1's max must already be persisted.
+        seen_watermark_before_page_2["value"] = repo.get_last_shipment_id("digikala")
+        return _sbs_list_response([_sbs_row(shipment_id=51)], page=2, total_pages=2)
+
+    route.mock(side_effect=_responder)
+
+    adapter = DigikalaAdapter(config=_CFG, repository=repo)
+    orders = adapter.fetch_new_orders(since=None)
+
+    assert seen_watermark_before_page_2["value"] == 50
+    assert len(orders) == 51
+    assert repo.get_last_shipment_id("digikala") == 51
+
+
+@respx.mock
+def test_fetch_new_orders_paginates_via_full_page_guard(repo):
+    """Same double-signal pagination guard as the old /orders/history
+    fetch: a full page keeps paginating even if total_pages under-reports."""
+    repo.set_last_shipment_id("digikala", 0)
+    route = respx.get(_SBS_URL)
     route.mock(
         side_effect=[
-            httpx.Response(200, json={
-                "data": {
-                    "pager": {"page": 1, "total_pages": 0, "total_rows": 51},
-                    "items": [_row(f"order-{i}", i) for i in range(50)],
-                },
-            }),
-            # Page 2: the remaining single row - a non-full page ends pagination.
-            httpx.Response(200, json={
-                "data": {
-                    "pager": {"page": 2, "total_pages": 0, "total_rows": 51},
-                    "items": [_row("order-50", 50)],
-                },
-            }),
+            _sbs_list_response([_sbs_row(shipment_id=i) for i in range(1, 51)], page=1, total_pages=0),
+            _sbs_list_response([_sbs_row(shipment_id=51)], page=2, total_pages=0),
         ]
     )
 
-    adapter = DigikalaAdapter(config=_CFG)
+    adapter = DigikalaAdapter(config=_CFG, repository=repo)
     orders = adapter.fetch_new_orders(since=None)
 
     assert route.call_count == 2
-    assert len(orders) == 51  # all orders across both pages recovered
+    assert len(orders) == 51
 
+
+def test_since_argument_is_ignored(repo):
+    """fetch_new_orders must not raise or behave differently regardless of
+    what `since` is passed - it's watermark-driven, not time-driven."""
+    with respx.mock:
+        respx.get(_SBS_URL).mock(return_value=_sbs_list_response([]))
+        adapter = DigikalaAdapter(config=_CFG, repository=repo)
+        adapter.fetch_new_orders(since=datetime.now(timezone.utc))
+    assert repo.get_last_shipment_id("digikala") is not None
+
+
+# --- row normalization -------------------------------------------------
+
+def test_normalize_sbs_row_maps_customer_and_address_fields(repo):
+    adapter = DigikalaAdapter(config=_CFG, repository=repo)
+    order = adapter._normalize_sbs_row(_sbs_row(shipment_id=1, order_id=9))
+
+    assert order.source == "digikala"
+    assert order.source_order_id == "1"
+    assert order.order_number == "9"
+    assert order.shipment_id == "1"
+    assert order.customer_full_name == "علی علیایی"
+    assert order.customer_mobile == "09121212121"
+    assert order.customer_address == "تهران، تهران، ونک، خدامی"
+    assert order.customer_postal_code == "111111111"
+    assert order.customer_province == "تهران"
+    assert order.customer_city == "تهران"
+    assert order.shipment_tracking_code == "11234"
+    assert order.shipping_cost == Decimal("650000")
+
+
+def test_normalize_sbs_row_builds_items_from_variants_price_times_count(repo):
+    """Decision 2 (unconfirmed assumption): price is per-unit, no discount
+    field exists, final_price = price * count."""
+    adapter = DigikalaAdapter(config=_CFG, repository=repo)
+    row = _sbs_row(
+        shipment_id=1,
+        variants=[
+            {
+                "title": "Product A",
+                "sellerCode": 42,
+                "count": 3,
+                "price": 100000,
+                "image_url": "https://example.com/a.jpg",
+            }
+        ],
+    )
+    order = adapter._normalize_sbs_row(row)
+
+    assert len(order.items) == 1
+    item = order.items[0]
+    assert item.sku == "42"
+    assert item.title == "Product A"
+    assert item.quantity == 3
+    assert item.unit_price == Decimal("100000")
+    assert item.final_price == Decimal("300000")
+    assert item.product_image_url == "https://example.com/a.jpg"
+    assert order.total_price == Decimal("300000")
+    assert order.product_image_url == "https://example.com/a.jpg"
+
+
+@pytest.mark.parametrize(
+    "overrides,expected_status",
+    [
+        ({"isCancelled": True, "status": {"text": "processing"}}, "cancelled"),
+        ({"isCancelled": False, "status": {"text": "rejected"}}, "rejected"),
+        ({"isCancelled": False, "status": {"text": "pending"}}, "pending"),
+        ({"isCancelled": False, "status": {"text": "processing"}}, "processing"),
+        ({"isCancelled": False, "status": {"text": "processed"}}, "processed"),
+        ({"isCancelled": False, "status": {"text": "edited"}}, "edited"),
+        ({"isCancelled": False, "status": {}}, "unknown"),
+    ],
+)
+def test_normalize_sbs_row_status_mapping(repo, overrides, expected_status):
+    """Decision 3: isCancelled wins over status.text; rejected is the other
+    terminal state; everything else passes through as-is."""
+    adapter = DigikalaAdapter(config=_CFG, repository=repo)
+    order = adapter._normalize_sbs_row(_sbs_row(shipment_id=1, **overrides))
+    assert order.status == expected_status
+
+
+def test_normalize_sbs_row_isCancelled_wins_even_if_status_text_is_rejected(repo):
+    adapter = DigikalaAdapter(config=_CFG, repository=repo)
+    order = adapter._normalize_sbs_row(
+        _sbs_row(shipment_id=1, isCancelled=True, status={"text": "rejected"})
+    )
+    assert order.status == "cancelled"
+
+
+def test_normalize_sbs_row_handles_missing_variants(repo):
+    adapter = DigikalaAdapter(config=_CFG, repository=repo)
+    row = _sbs_row(shipment_id=1)
+    row["variants"] = []
+    order = adapter._normalize_sbs_row(row)
+
+    assert order.items == []
+    assert order.total_price == Decimal("0")
+    assert order.product_image_url is None
+
+
+def test_normalize_sbs_row_parses_jalali_order_date(repo):
+    adapter = DigikalaAdapter(config=_CFG, repository=repo)
+    order = adapter._normalize_sbs_row(_sbs_row(shipment_id=1, orderDate="1403/11/07"))
+
+    # 1403/11/07 is 2025-01-26 on the Gregorian calendar.
+    assert order.created_at.year == 2025
+    assert order.created_at.month == 1
+    assert order.created_at.day == 26
+
+
+def test_normalize_sbs_row_missing_order_date_falls_back_to_now(repo):
+    adapter = DigikalaAdapter(config=_CFG, repository=repo)
+    row = _sbs_row(shipment_id=1)
+    row.pop("orderDate")
+    before = datetime.now(timezone.utc)
+    order = adapter._normalize_sbs_row(row)
+    assert order.created_at >= before
+
+
+# --- fetch_order_detail --------------------------------------------------
 
 @respx.mock
-def test_history_requests_use_descending_order():
-    """order=desc (not the original asc) - see the early-stop test below
-    for why."""
-    route = respx.get("https://seller.digikala.com/open-api/v1/orders/history").mock(
-        return_value=httpx.Response(200, json={"data": {"pager": {"total_pages": 1}, "items": []}})
+def test_fetch_order_detail_uses_single_shipment_endpoint(repo):
+    respx.get(f"{_SBS_URL}/42").mock(
+        return_value=httpx.Response(200, json={"status": "ok", "data": _sbs_row(shipment_id=42)})
     )
 
-    adapter = DigikalaAdapter(config=_CFG)
-    adapter.fetch_new_orders(since=None)
+    adapter = DigikalaAdapter(config=_CFG, repository=repo)
+    order = adapter.fetch_order_detail("42")
 
-    assert route.calls[0].request.url.params["order"] == "desc"
+    assert order.source_order_id == "42"
+    assert len(order.items) == 1
 
 
 @respx.mock
-def test_early_stop_pagination_once_a_page_is_older_than_since():
-    """
-    Optimization discovered from a real production log (2026-08-27):
-    order_created_at_from/_to don't actually filter server-side - a real
-    poll returned orders back to 2024 despite `since` being "yesterday".
-    SyncEngine._drop_orders_older_than_since() is the real safety net
-    regardless (see its module docstring) - but without this, every poll
-    cycle would walk the account's ENTIRE order history page by page.
-    Fetching newest-first (order=desc) and stopping the moment a page's
-    OLDEST row already predates `since` avoids that, without ever having
-    to trust the marketplace's own (apparently non-functional) filter.
-    """
-    route = respx.get("https://seller.digikala.com/open-api/v1/orders/history")
-    route.mock(
-        side_effect=[
-            # Page 1: a FULL page, every row newer than `since` - must
-            # keep paginating.
-            httpx.Response(200, json={
-                "data": {
-                    "pager": {"page": 1, "total_pages": 3, "total_rows": 150},
-                    "items": [
-                        {**_row(f"new-{i}", i), "order_created_at": "2026-08-20T09:00:00+03:30"}
-                        for i in range(50)
-                    ],
-                },
-            }),
-            # Page 2: a FULL page whose LAST row (oldest on the page,
-            # since order=desc) already predates `since` - must stop
-            # right here and never request page 3.
-            httpx.Response(200, json={
-                "data": {
-                    "pager": {"page": 2, "total_pages": 3, "total_rows": 150},
-                    "items": [
-                        {**_row(f"mixed-{i}", i), "order_created_at": "2026-08-15T09:00:00+03:30"}
-                        for i in range(49)
-                    ] + [
-                        {**_row("too-old", 99), "order_created_at": "2025-01-01T09:00:00+03:30"}
-                    ],
-                },
-            }),
-            # Pages 2 and 3 are full (50 items each) with total_pages=3, so
-            # the Digikala adapter's fetch_new_orders() fetches all three pages.
-            # Since the adapter passes order_created_at_from=None (the API's
-            # date filter is unreliable anyway), the early-stop optimization
-            # never fires here. This third page is full, so a fourth empty
-            # page is needed to terminate pagination.
-            httpx.Response(200, json={
-                "data": {
-                    "pager": {"page": 3, "total_pages": 3, "total_rows": 150},
-                    "items": [
-                        {**_row(f"old-{i}", i + 100), "order_created_at": "2025-12-01T09:00:00+03:30"}
-                        for i in range(50)
-                    ],
-                },
-            }),
-            # Page 4: empty items to terminate pagination (page 3 was a full page).
-            httpx.Response(200, json={
-                "data": {
-                    "pager": {"page": 4, "total_pages": 3, "total_rows": 150},
-                    "items": [],
-                },
-            }),
-        ]
+def test_fetch_order_detail_supports_items_wrapped_shape(repo):
+    """fetch_shipment_details observed a different real-payload shape
+    ({"items": [...]}) for this same endpoint - fetch_order_detail must
+    not break on it."""
+    respx.get(f"{_SBS_URL}/42").mock(
+        return_value=httpx.Response(
+            200, json={"status": "ok", "data": {"items": [_sbs_row(shipment_id=42)]}}
+        )
     )
 
-    adapter = DigikalaAdapter(config=_CFG)
-    orders = adapter.fetch_new_orders(since=None)
+    adapter = DigikalaAdapter(config=_CFG, repository=repo)
+    order = adapter.fetch_order_detail("42")
 
-    # DigikalaAdapter.fetch_new_orders() passes order_created_at_from=None
-    # to _fetch_history_rows (the API's date filter is unreliable anyway),
-    # so the early-stop optimization never fires here. All three full pages
-    # are fetched (150 orders), plus one extra call that returns an empty
-    # page 4 to terminate pagination (page 3 was full with 50 items).
-    # The dedup itself is DB-backed in SyncEngine.
-    assert route.call_count == 4
-    assert len(orders) == 150
+    assert order.source_order_id == "42"
 
 
 @respx.mock
-def test_expired_access_token_triggers_refresh_and_retry(tmp_path):
+def test_fetch_order_detail_raises_when_shipment_not_found(repo):
+    respx.get(f"{_SBS_URL}/999").mock(
+        return_value=httpx.Response(200, json={"status": "ok", "data": {}})
+    )
+
+    adapter = DigikalaAdapter(config=_CFG, repository=repo)
+    with pytest.raises(ValueError, match="999"):
+        adapter.fetch_order_detail("999")
+
+
+# --- auth / token lifecycle (unaffected by the SBS migration) -----------
+
+@respx.mock
+def test_expired_access_token_triggers_refresh_and_retry(tmp_path, repo):
     """
     Regression test for the real discovery: access_token expires in
     ~24 hours (refresh_token lasts ~1 year). A 401 on the actual request
@@ -217,14 +355,15 @@ def test_expired_access_token_triggers_refresh_and_retry(tmp_path):
         access_token="stale-token",
         refresh_token="my-refresh-token",
     )
-    adapter = DigikalaAdapter(config=cfg)
+    repo.set_last_shipment_id("digikala", 100)  # skip cold-start seeding for this test
+    adapter = DigikalaAdapter(config=cfg, repository=repo)
     adapter._token_cache_path = tmp_path / "digikala_tokens.json"  # isolate from real cache
 
-    history_route = respx.get("https://seller.digikala.com/open-api/v1/orders/history")
-    history_route.mock(
+    sbs_route = respx.get(_SBS_URL)
+    sbs_route.mock(
         side_effect=[
             httpx.Response(401, json={"status": "error", "message": "token expired"}),
-            httpx.Response(200, json={"data": {"pager": {"total_pages": 1}, "items": []}}),
+            _sbs_list_response([]),
         ]
     )
     refresh_route = respx.post("https://seller.digikala.com/open-api/v1/auth/refresh-token").mock(
@@ -242,12 +381,12 @@ def test_expired_access_token_triggers_refresh_and_retry(tmp_path):
 
     assert orders == []
     assert refresh_route.called
-    assert history_route.call_count == 2
+    assert sbs_route.call_count == 2
     # The retried request must use the freshly refreshed token, not the stale one.
-    assert history_route.calls[1].request.headers["Authorization"] == "Bearer fresh-token"
+    assert sbs_route.calls[1].request.headers["Authorization"] == "Bearer fresh-token"
 
 
-def test_refreshed_tokens_are_persisted_and_reused_on_restart(tmp_path):
+def test_refreshed_tokens_are_persisted_and_reused_on_restart(tmp_path, repo):
     """
     A rotating refresh_token must survive a service restart - otherwise
     the *static* .env value goes stale after the first refresh and every
@@ -257,14 +396,14 @@ def test_refreshed_tokens_are_persisted_and_reused_on_restart(tmp_path):
     cfg = DigikalaConfig(base_url="https://seller.digikala.com",
                           access_token="seed-access", refresh_token="seed-refresh")
 
-    adapter = DigikalaAdapter(config=cfg)
+    adapter = DigikalaAdapter(config=cfg, repository=repo)
     adapter._token_cache_path = cache_path
     adapter._access_token = "fresh-token"
     adapter._refresh_token = "rotated-refresh-token"
     adapter._save_tokens()
 
     # Simulate a restart: a brand new adapter instance pointed at the same cache file.
-    restarted = DigikalaAdapter(config=cfg)
+    restarted = DigikalaAdapter(config=cfg, repository=repo)
     restarted._token_cache_path = cache_path
     access_token, refresh_token = restarted._load_tokens()
 
@@ -272,141 +411,10 @@ def test_refreshed_tokens_are_persisted_and_reused_on_restart(tmp_path):
     assert refresh_token == "rotated-refresh-token"
 
 
-@respx.mock
-def test_fetch_order_detail_finds_order_in_full_history():
-    """
-    Regression test for a real bug: fetch_order_detail previously passed
-    search_text_all=source_order_id, but that param doesn't search by
-    order_id - it matches serial / shipment_id / product identifiers.
-    The local filter found nothing, so every detail fetch failed with
-    "order not found in history", breaking the entire Digikala sync.
-
-    The fix: fetch full history (no search_text_all) and let
-    _group_rows_into_orders group by order_id, then pick the matching one.
-    """
-    route = respx.get("https://seller.digikala.com/open-api/v1/orders/history").mock(
-        return_value=httpx.Response(
-            200,
-            json={
-                "data": {
-                    "pager": {"total_pages": 1},
-                    "items": [
-                        {
-                            "order_id": "371575168",
-                            "order_created_at": "2026-08-10T09:00:00+03:30",
-                            "product_variant_title": "محصول A",
-                            "product_supplier_code": "SKU-A",
-                            "quantity": 1,
-                            "unit_price": 100000,
-                            "total_price": 100000,
-                            "order_status": {"key": "confirmed", "title": "نهایی شده"},
-                        },
-                        {
-                            "order_id": "371573884",
-                            "order_created_at": "2026-08-11T09:00:00+03:30",
-                            "product_variant_title": "محصول B",
-                            "product_supplier_code": "SKU-B",
-                            "quantity": 2,
-                            "unit_price": 50000,
-                            "total_price": 100000,
-                            "order_status": {"key": "confirmed", "title": "نهایی شده"},
-                        },
-                    ],
-                },
-            },
-        )
-    )
-
-    adapter = DigikalaAdapter(config=_CFG)
-    order = adapter.fetch_order_detail("371575168")
-
-    assert order.source == "digikala"
-    assert order.source_order_id == "371575168"
-    assert order.order_number == "371575168"
-    assert len(order.items) == 1
-    assert order.items[0].title == "محصول A"
-    assert order.status == "نهایی شده"
-    # The request must NOT use search_text_all (the broken param).
-    assert "search_text_all" not in route.calls[0].request.url.params
-
+# --- SBS customer/shipment detail fallback endpoints (unchanged) --------
 
 @respx.mock
-def test_fetch_order_detail_groups_multi_item_rows_for_target_order():
-    """A multi-item order must be grouped correctly when fetched by detail."""
-    route = respx.get("https://seller.digikala.com/open-api/v1/orders/history").mock(
-        return_value=httpx.Response(
-            200,
-            json={
-                "data": {
-                    "pager": {"total_pages": 1},
-                    "items": [
-                        {
-                            "order_id": "371575168",
-                            "order_created_at": "2026-08-10T09:00:00+03:30",
-                            "product_variant_title": "محصول A",
-                            "product_supplier_code": "SKU-A",
-                            "quantity": 1,
-                            "unit_price": 100000,
-                            "total_price": 100000,
-                            "order_status": {"key": "confirmed", "title": "نهایی شده"},
-                        },
-                        {
-                            "order_id": "371575168",
-                            "order_created_at": "2026-08-10T09:00:00+03:30",
-                            "product_variant_title": "محصول B",
-                            "product_supplier_code": "SKU-B",
-                            "quantity": 2,
-                            "unit_price": 50000,
-                            "total_price": 100000,
-                            "order_status": {"key": "confirmed", "title": "نهایی شده"},
-                        },
-                    ],
-                },
-            },
-        )
-    )
-
-    adapter = DigikalaAdapter(config=_CFG)
-    order = adapter.fetch_order_detail("371575168")
-
-    assert len(order.items) == 2
-    assert order.total_price == 200000
-
-
-@respx.mock
-def test_fetch_order_detail_raises_when_order_not_found():
-    """If the target order_id isn't in the history, fetch_order_detail must
-    raise ValueError - same as before the fix, but now for the right reason."""
-    respx.get("https://seller.digikala.com/open-api/v1/orders/history").mock(
-        return_value=httpx.Response(
-            200,
-            json={
-                "data": {
-                    "pager": {"total_pages": 1},
-                    "items": [
-                        {
-                            "order_id": "99999",
-                            "order_created_at": "2026-08-10T09:00:00+03:30",
-                            "product_variant_title": "محصول دیگر",
-                            "product_supplier_code": "SKU-OTHER",
-                            "quantity": 1,
-                            "unit_price": 10000,
-                            "total_price": 10000,
-                            "order_status": {"key": "confirmed", "title": "نهایی شده"},
-                        },
-                    ],
-                },
-            },
-        )
-    )
-
-    adapter = DigikalaAdapter(config=_CFG)
-    with pytest.raises(ValueError, match="371575168"):
-        adapter.fetch_order_detail("371575168")
-
-
-@respx.mock
-def test_fetch_sbs_customer_details_returns_customer_data():
+def test_fetch_sbs_customer_details_returns_customer_data(repo):
     """fetch_sbs_customer_details calls the correct SBS endpoint and returns
     customer name and mobile."""
     route = respx.get(
@@ -428,7 +436,7 @@ def test_fetch_sbs_customer_details_returns_customer_data():
         )
     )
 
-    adapter = DigikalaAdapter(config=_CFG)
+    adapter = DigikalaAdapter(config=_CFG, repository=repo)
     result = adapter.fetch_sbs_customer_details("12345")
 
     assert result["customer_full_name"] == "علی محمدی"
@@ -441,14 +449,14 @@ def test_fetch_sbs_customer_details_returns_customer_data():
 
 
 @respx.mock
-def test_fetch_sbs_customer_details_returns_none_on_failure():
+def test_fetch_sbs_customer_details_returns_none_on_failure(repo):
     """On any API error, fetch_sbs_customer_details returns both fields as None
     so the caller can fall back to a synthetic name."""
     respx.get(
         "https://seller.digikala.com/open-api/v1/ship-by-seller-orders/customer/99999"
     ).mock(return_value=httpx.Response(500, json={"status": "error"}))
 
-    adapter = DigikalaAdapter(config=_CFG)
+    adapter = DigikalaAdapter(config=_CFG, repository=repo)
     result = adapter.fetch_sbs_customer_details("99999")
 
     assert result["customer_full_name"] is None
@@ -460,7 +468,7 @@ def test_fetch_sbs_customer_details_returns_none_on_failure():
 
 
 @respx.mock
-def test_fetch_shipment_details_returns_tracking_code_and_shipping_cost():
+def test_fetch_shipment_details_returns_tracking_code_and_shipping_cost(repo):
     """fetch_shipment_details calls the confirmed /ship-by-seller-orders/
     {shipment_id} endpoint and extracts trackingCode + shippingCost from
     the first item - using the real payload shape the client supplied
@@ -486,7 +494,7 @@ def test_fetch_shipment_details_returns_tracking_code_and_shipping_cost():
         )
     )
 
-    adapter = DigikalaAdapter(config=_CFG)
+    adapter = DigikalaAdapter(config=_CFG, repository=repo)
     result = adapter.fetch_shipment_details("1")
 
     assert result["tracking_code"] == "11234"
@@ -495,14 +503,14 @@ def test_fetch_shipment_details_returns_tracking_code_and_shipping_cost():
 
 
 @respx.mock
-def test_fetch_shipment_details_returns_none_when_no_items():
+def test_fetch_shipment_details_returns_none_when_no_items(repo):
     """An empty items list (e.g. an invalid shipment_id) must yield both
     fields as None, not an IndexError."""
     respx.get(
         "https://seller.digikala.com/open-api/v1/ship-by-seller-orders/999"
     ).mock(return_value=httpx.Response(200, json={"status": "ok", "data": {"items": []}}))
 
-    adapter = DigikalaAdapter(config=_CFG)
+    adapter = DigikalaAdapter(config=_CFG, repository=repo)
     result = adapter.fetch_shipment_details("999")
 
     assert result["tracking_code"] is None
@@ -510,93 +518,15 @@ def test_fetch_shipment_details_returns_none_when_no_items():
 
 
 @respx.mock
-def test_fetch_shipment_details_returns_none_on_failure():
+def test_fetch_shipment_details_returns_none_on_failure(repo):
     """On any API error, fetch_shipment_details returns both fields as
     None so the caller can proceed without this data."""
     respx.get(
         "https://seller.digikala.com/open-api/v1/ship-by-seller-orders/2"
     ).mock(return_value=httpx.Response(500, json={"status": "error"}))
 
-    adapter = DigikalaAdapter(config=_CFG)
+    adapter = DigikalaAdapter(config=_CFG, repository=repo)
     result = adapter.fetch_shipment_details("2")
 
     assert result["tracking_code"] is None
     assert result["shipping_cost"] is None
-
-
-def test_group_rows_extracts_shipment_id():
-    """_group_rows_into_orders extracts shipment_id (the real top-level field
-    name confirmed in docs/api digikala.docx for /orders/history - NOT
-    "order_shipment_id", which is only a search_text_all field name, never a
-    response field) and populates NormalizedOrder.shipment_id."""
-    rows = [
-        {
-            "order_id": "100",
-            "shipment_id": "SHIP-100",
-            "order_created_at": "2026-08-10T09:00:00+03:30",
-            "product_variant_title": "Product",
-            "product_supplier_code": "SKU-1",
-            "quantity": 1,
-            "unit_price": 50000,
-            "total_price": 50000,
-            "order_status": {"key": "confirmed", "title": "نهایی شده"},
-        },
-    ]
-
-    adapter = DigikalaAdapter(config=_CFG)
-    orders = adapter._group_rows_into_orders(rows)
-
-    assert len(orders) == 1
-    assert orders[0].shipment_id == "SHIP-100"
-
-
-def test_group_rows_extracts_product_image_from_image_src():
-    """Product photo comes from the row's top-level "image_src" field (the
-    real /orders/history field, confirmed in docs/api digikala.docx) - NOT a
-    nested "product.photo.*" object, which belongs to a different, unused
-    endpoint. NormalizedOrder.product_image_url must be populated (not just
-    each OrderItem's), since that's the field DidarSyncService reads to
-    attach a photo to the "ارسال محصول" Activity."""
-    rows = [
-        {
-            "order_id": "300",
-            "order_created_at": "2026-08-10T09:00:00+03:30",
-            "product_variant_title": "Product",
-            "product_supplier_code": "SKU-1",
-            "quantity": 1,
-            "unit_price": 50000,
-            "total_price": 50000,
-            "order_status": {"key": "confirmed", "title": "نهایی شده"},
-            "image_src": "https://dkstatics-public.digikala.com/example.jpg",
-        },
-    ]
-
-    adapter = DigikalaAdapter(config=_CFG)
-    orders = adapter._group_rows_into_orders(rows)
-
-    assert len(orders) == 1
-    assert orders[0].product_image_url == "https://dkstatics-public.digikala.com/example.jpg"
-    assert orders[0].items[0].product_image_url == "https://dkstatics-public.digikala.com/example.jpg"
-
-
-def test_group_rows_handles_missing_shipment_id():
-    """If shipment_id is absent from the row, NormalizedOrder.shipment_id
-    is None (not an empty string)."""
-    rows = [
-        {
-            "order_id": "200",
-            "order_created_at": "2026-08-10T09:00:00+03:30",
-            "product_variant_title": "Product",
-            "product_supplier_code": "SKU-1",
-            "quantity": 1,
-            "unit_price": 50000,
-            "total_price": 50000,
-            "order_status": {"key": "confirmed", "title": "نهایی شده"},
-        },
-    ]
-
-    adapter = DigikalaAdapter(config=_CFG)
-    orders = adapter._group_rows_into_orders(rows)
-
-    assert len(orders) == 1
-    assert orders[0].shipment_id is None

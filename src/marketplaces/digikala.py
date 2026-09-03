@@ -2,33 +2,50 @@
 Digikala adapter.
 
 Based on the official Open API (seller.digikala.com/open-api/v1/doc):
-  - GET /open-api/v1/orders/history  -> paginated order *item* rows, with
-    precise date-range filtering (order_created_at_from / _to)
+  - GET /open-api/v1/ship-by-seller-orders           -> paginated SBS
+    shipment list, one row per SHIPMENT (not per line item - each row's
+    own "variants" array holds that shipment's line items)
+  - GET /open-api/v1/ship-by-seller-orders/{id}       -> single-shipment
+    detail, same row shape as one item of the list above
 
-IMPORTANT: this endpoint returns one row per order line item, not one row
-per order - a 3-item order produces 3 rows sharing the same order_id. This
-adapter groups rows by order_id before producing NormalizedOrder objects.
+2026-09 MIGRATION (see digikala-sbs-migration-prompt.md for the full
+write-up): fetch_new_orders() used to page through
+GET /open-api/v1/orders/history and rely on SyncEngine's client-side
+5-hour window to drop old orders, because that endpoint's own
+order_created_at_from/_to filter does not actually filter server-side
+(confirmed live, production log 2026-08-27 - a poll returned orders back
+to 2024 despite `since` being "yesterday"). That's not a bug that can be
+tuned away: a wider window risks re-syncing old orders (a real incident
+synced 43 two-month-old orders on 2026-08-31), while a narrower one
+silently drops any order that Digikala's own backend was slow to record,
+with no retry path picking it up. The fix is architectural, not a bigger
+or smaller number of hours: /ship-by-seller-orders exposes a documented,
+monotonic `search[min_shipment_id]` cursor, so fetch_new_orders() below
+tracks a persistent `last_shipment_id_seen` watermark (see
+src/db/repository.py's get_last_shipment_id/set_last_shipment_id) instead
+of any created_at comparison. Every row with shipmentId >= watermark + 1
+is new BY DEFINITION - no date logic, no dropped orders. SyncEngine
+bypasses its generic created_at window for this adapter accordingly (see
+`uses_id_based_watermark` below and sync_engine.py's _sync_source).
 
-Per project decision, customer contact details are not required for this
-source and are not requested - customer_full_name / customer_mobile are
-always None here (see src/didar/contact_client.py for the synthetic
-CustomerCode strategy this implies).
+One shipment = one Didar Deal now (previously: one Digikala order_id,
+grouped from /orders/history's per-line-item rows via
+_group_rows_into_orders - removed in this migration since
+/ship-by-seller-orders already returns one row per shipment with its own
+line items nested in "variants"). A single Digikala order that splits
+into multiple parcels now produces multiple Deals, one per shipment - this
+is intentional (see digikala-sbs-migration-prompt.md, Decision 1).
 
-DATE FILTER DOESN'T ACTUALLY FILTER (confirmed live, production log
-2026-08-27): order_created_at_from/_to are sent on every request exactly
-as the docs describe, but the API returns the account's ENTIRE order
-history regardless - a real poll returned orders back to 2024 despite
-`since` being "yesterday". SyncEngine._drop_orders_older_than_since()
-already guards against this at the application level (see
-sync_engine.py's module docstring), so no old order actually reaches
-Didar - but without the optimization below, every single poll cycle
-would walk the account's ENTIRE order history page by page just to
-throw almost all of it away client-side, getting slower forever as the
-account accumulates more orders. Fetching newest-first (order=desc,
-changed from the original asc) plus an early pagination stop the
-moment a page's oldest row predates `since` fixes the wasted work
-without weakening the actual safety guarantee, which still lives in
-SyncEngine, not here.
+Customer name/mobile/address ARE now available directly on every
+/ship-by-seller-orders row (customer_name / customer_phone_number /
+customer_address / customer_postal_code / address.state / address.city) -
+no longer "not requested for this source" as the old docstring here used
+to say. fetch_sbs_customer_details()/fetch_shipment_details() (a pair of
+separate, narrower endpoints used before this migration) are kept only as
+a best-effort FALLBACK for whichever of these fields end up null on a
+given row - see their own docstrings and sync_engine.py's
+_prepare_and_push_to_didar(), whose existing null-gated enrichment calls
+now rarely fire in practice.
 
 TOKEN LIFECYCLE (confirmed via a real /auth/token exchange):
   - access_token: short-lived, ~24 hours
@@ -68,20 +85,28 @@ needs to be repeated manually and the new tokens re-seeded into .env
 from __future__ import annotations
 
 import json
-from collections import defaultdict
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 
 import httpx
+import jdatetime
 
 from src.config import DigikalaConfig, settings
 from src.currency import to_rial
+from src.db.repository import Repository
 from src.http_utils import default_retry, raise_for_status_with_body
 from src.logger import get_logger
 from src.marketplaces.base import MarketplaceAdapter, NormalizedOrder, OrderItem
 
 log = get_logger(__name__)
+
+# Iran has not observed DST since 2022, so a fixed UTC+03:30 offset is
+# correct year-round - same constant/rationale as src/telegram.py's
+# IRAN_TZ, duplicated here rather than imported to avoid a src.telegram
+# -> src.marketplaces.digikala import for what is otherwise an unrelated
+# module.
+_IRAN_TZ = timezone(timedelta(hours=3, minutes=30))
 
 
 def _to_decimal(value) -> Decimal:
@@ -91,26 +116,32 @@ def _to_decimal(value) -> Decimal:
         return Decimal("0")
 
 
-def _first_item_photo_url(raw_items: list[dict]) -> str | None:
-    """
-    Best-effort product photo for the order - see the UNCONFIRMED note at
-    its call site in _normalize_detail. Tries the first item's nested
-    product.photo (confirmed shape: {"original", "xs", "sm", "md", "lg"}),
-    preferring "original" then falling back to the largest thumbnail.
-    """
-    for item in raw_items:
-        photo = ((item.get("product") or {}).get("photo")) or {}
-        url = photo.get("original") or photo.get("lg") or photo.get("md")
-        if url:
-            return str(url)
-    return None
-
-
 class DigikalaAdapter(MarketplaceAdapter):
     name = "digikala"
 
-    def __init__(self, config: DigikalaConfig | None = None) -> None:
+    # Tells SyncEngine._sync_source to bypass its generic created_at /
+    # FETCH_WINDOW_HOURS drop for this adapter - see this module's
+    # docstring and sync_engine.py's _sync_source. fetch_new_orders()
+    # already guarantees "new" via a monotonic shipmentId watermark, so a
+    # created_at comparison here would be redundant at best (every row is
+    # new by construction) and actively wrong at worst (Digikala's
+    # orderDate is a Jalali DATE with no time component - see
+    # _parse_jalali_date - making it a poor sub-hour freshness signal).
+    uses_id_based_watermark = True
+
+    def __init__(
+        self,
+        config: DigikalaConfig | None = None,
+        repository: Repository | None = None,
+    ) -> None:
         self._config = config or settings.digikala
+        # Own Repository handle for the shipment-ID watermark (get/set_
+        # last_shipment_id) - defaults to a fresh Repository() pointed at
+        # the same settings.db_path SyncEngine's own Repository uses, so
+        # both end up reading/writing the same SQLite file without this
+        # adapter needing SyncEngine to inject one explicitly (mirrors
+        # `config or settings.digikala` just above).
+        self._repo = repository or Repository()
         self._token_cache_path = Path(settings.db_path).resolve().parent / "digikala_tokens.json"
         self._access_token, self._refresh_token = self._load_tokens()
         self._client = httpx.Client(
@@ -173,35 +204,62 @@ class DigikalaAdapter(MarketplaceAdapter):
         return resp.json()
 
     def fetch_new_orders(self, since: datetime | None) -> list[NormalizedOrder]:
-        # The sync_engine now passes `since = now - 5h` and also drops
-        # orders outside the window client-side. We keep passing None for
-        # order_created_at_from so the adapter can use full-history mode
-        # (its API does not filter server-side) while still letting
-        # SyncEngine._sync_source enforce the window below. We DO pass
-        # order_type so that cancelled/failed orders can be mapped to
-        # status strings and filtered by the central filter in
-        # sync_engine.py.
-        now = datetime.now(timezone.utc)
-        rows = self._fetch_history_rows(
-            order_created_at_from=None,  # fetch all orders (API returns all; client-side window drops old)
-            order_created_at_to=now,
-            order_type=None,  # sync_engine handles order_type filtering via status mapping
+        """
+        `since` is accepted only to satisfy MarketplaceAdapter's interface
+        and is otherwise IGNORED - see this module's docstring and
+        `uses_id_based_watermark` above. "New" is defined entirely by the
+        persisted shipmentId watermark (src/db/repository.py's
+        get_last_shipment_id/set_last_shipment_id), not by any date.
+        """
+        watermark = self._repo.get_last_shipment_id(self.name)
+        if watermark is None:
+            # Cold start (Decision 5, digikala-sbs-migration-prompt.md):
+            # the watermark has never been set for this platform - seed it
+            # to the account's current highest shipmentId WITHOUT syncing
+            # any existing order, rather than walking the entire SBS
+            # history on the very first run. Deterministic "clean start",
+            # not a guessed time cutoff.
+            seeded = self._seed_watermark_from_latest()
+            self._repo.set_last_shipment_id(self.name, seeded)
+            log.info(
+                "digikala: cold start - seeded shipment watermark at %d, no orders synced",
+                seeded,
+            )
+            return []
+
+        rows = self._fetch_sbs_rows_since_watermark(watermark + 1)
+        orders = [self._normalize_sbs_row(row) for row in rows]
+        log.info(
+            "digikala: fetched %d new shipment(s) since watermark %d", len(orders), watermark
         )
-        orders = self._group_rows_into_orders(rows, order_type=None)
-        log.info("digikala: fetched %d orders for sync window", len(orders))
         return orders
 
     def fetch_order_detail(self, source_order_id: str) -> NormalizedOrder:
-        # The history endpoint has no direct order_id filter, and search_text_all
-        # does NOT search by order_id (it matches serial / order_shipment_id /
-        # product identifiers). Instead, fetch full history (newest-first) and
-        # let _group_rows_into_orders group by order_id, then pick the one we want.
-        rows = self._fetch_history_rows(order_type=None)
-        orders = self._group_rows_into_orders(rows, order_type=None)
-        for order in orders:
-            if order.source_order_id == source_order_id:
-                return order
-        raise ValueError(f"digikala: order {source_order_id} not found in history")
+        """
+        Full detail for a single shipment. `source_order_id` is a
+        shipmentId (Decision 1: one shipment = one Deal, so the dedup key
+        in synced_orders is now shipmentId, not Digikala's order_id).
+
+        Used by SyncEngine's retry path (retry_pending_failures always
+        re-fetches by source_order_id before retrying) and, defensively,
+        by _prepare_and_push_to_didar's "order has no items" fallback -
+        though that branch shouldn't actually trigger anymore since
+        fetch_new_orders already populates items from each row's own
+        "variants" array.
+        """
+        payload = self._get(f"/open-api/v1/ship-by-seller-orders/{source_order_id}", params={})
+        data = payload.get("data") or {}
+        # Official docs (SBSOrdersObjectView) show `data` as the shipment
+        # object directly. fetch_shipment_details()'s docstring notes a
+        # DIFFERENT observed shape ({"items": [...]}) for this SAME
+        # endpoint from a real client-supplied payload - support both
+        # rather than picking one and silently breaking on the other,
+        # until that discrepancy is reconciled against a live call.
+        if "shipmentId" not in data and data.get("items"):
+            data = data["items"][0]
+        if not data:
+            raise ValueError(f"digikala: shipment {source_order_id} not found")
+        return self._normalize_sbs_row(data)
 
     def fetch_sbs_customer_details(self, shipment_id: str) -> dict:
         """Fetch customer details for a Digikala Ship-by-Seller (SBS) order.
@@ -333,63 +391,51 @@ class DigikalaAdapter(MarketplaceAdapter):
             )
             return {"tracking_code": None, "shipping_cost": None}
 
-    def _fetch_history_rows(
-        self,
-        order_created_at_from: datetime | None = None,
-        order_created_at_to: datetime | None = None,
-        order_type: str | None = None,
-    ) -> list[dict]:
+    def _fetch_sbs_rows_since_watermark(self, min_shipment_id: int) -> list[dict]:
+        """
+        Page through GET /open-api/v1/ship-by-seller-orders starting at
+        `min_shipment_id`, sorted ascending by shipment_id (the documented
+        `search[min_shipment_id]` cursor - see this module's docstring and
+        digikala-sbs-migration-prompt.md, Section 2).
+
+        Persists the watermark after EVERY page (not just once at the end
+        of the whole poll) via self._repo.set_last_shipment_id - so a
+        crash mid-pagination resumes from the last completed page instead
+        of re-walking (or worse, re-syncing) everything already fetched.
+        Safe to persist per-page: order=asc means each page's own max
+        shipmentId is guaranteed >= every previous page's max.
+        """
         rows: list[dict] = []
         page = 1
         size = 50
 
         while True:
-            # order=desc (newest first) - changed from the original asc.
-            # See module docstring: order_created_at_from doesn't actually
-            # filter server-side, so with asc (oldest first) every poll
-            # cycle would walk the account's entire history from the very
-            # beginning. desc + the early-stop below fixes that.
-            params = {"page": page, "size": size, "sort": "id", "order": "desc"}
-            if order_created_at_from:
-                params["order_created_at_from"] = self._fmt(order_created_at_from)
-            if order_created_at_to:
-                params["order_created_at_to"] = self._fmt(order_created_at_to)
-            if order_type:
-                params["order_type"] = order_type
-
-            payload = self._get("/open-api/v1/orders/history", params=params)
+            params = {
+                "page": page,
+                "size": size,
+                "sort": "shipment_id",
+                "order": "asc",
+                "search[min_shipment_id]": min_shipment_id,
+            }
+            payload = self._get("/open-api/v1/ship-by-seller-orders", params=params)
             data = payload.get("data", {})
             items = data.get("items", [])
             rows.extend(items)
 
-            # Early stop (only meaningful in date-filtered mode, i.e. from
-            # fetch_new_orders - fetch_order_detail's lookup passes no
-            # order_created_at_from and so never takes this branch,
-            # matching its existing "fetch full history" behavior
-            # unchanged). Rows arrive newest-first, so once a page's
-            # OLDEST row already predates what we asked for, every row
-            # on every subsequent page is guaranteed even older - this
-            # is purely a wasted-work optimization, not a correctness
-            # guarantee: SyncEngine._drop_orders_older_than_since()
-            # is still the actual safety net regardless of what happens
-            # here (see its module docstring).
-            # NOTE: search_text_all parameter was removed in a previous fix
-            # as it does NOT search by order_id (it matches serial / order_shipment_id /
-            # product identifiers).
-            if order_created_at_from is not None and items:
-                oldest_on_page = _parse_date(items[-1].get("order_created_at"))
-                if oldest_on_page < order_created_at_from:
-                    break
+            page_shipment_ids = [
+                int(item["shipmentId"]) for item in items if item.get("shipmentId") is not None
+            ]
+            if page_shipment_ids:
+                self._repo.set_last_shipment_id(self.name, max(page_shipment_ids))
 
             pager = data.get("pager", {})
             total_pages = pager.get("total_pages", 0)
 
-            # Don't rely on total_pages alone - if the API ever reports it
-            # incorrectly (seen as 0 even with items present in the docs'
-            # own example response), a page full of items is itself a sign
-            # more may follow. Stopping only requires BOTH signals to agree
-            # there's nothing left, so a bad total_pages value can't cause
-            # silently-dropped orders.
+            # Same double-signal pagination guard as the old
+            # /orders/history fetch: total_pages alone isn't trusted (the
+            # docs' own example response shows it as 0 even with items
+            # present), so a full page is itself reason enough to keep
+            # going regardless of what total_pages claims.
             got_full_page = len(items) == size
             more_by_pager = page < total_pages
             if not items or not (got_full_page or more_by_pager):
@@ -398,104 +444,136 @@ class DigikalaAdapter(MarketplaceAdapter):
 
         return rows
 
-    def _group_rows_into_orders(self, rows: list[dict], order_type: str | None = None) -> list[NormalizedOrder]:
-        grouped: dict[str, list[dict]] = defaultdict(list)
-        for row in rows:
-            grouped[str(row.get("order_id"))].append(row)
+    def _normalize_sbs_row(self, row: dict) -> NormalizedOrder:
+        """
+        Build a NormalizedOrder directly from one /ship-by-seller-orders
+        row (list or single-shipment detail - both share this shape).
+        No cross-row grouping: one shipment = one Deal (Decision 1).
+        """
+        shipment_id = row.get("shipmentId")
+        order_id = row.get("orderId")
+        variants = row.get("variants") or []
 
-        orders: list[NormalizedOrder] = []
-        for order_id, item_rows in grouped.items():
-            first = item_rows[0]
-            items = [
-                OrderItem(
-                    sku=str(r.get("product_supplier_code", r.get("product_id", ""))),
-                    title=str(r.get("product_variant_title", "")),
-                    quantity=int(r.get("quantity", 1)),
-                    unit_price=to_rial(_to_decimal(r.get("unit_price")), self._config.price_unit),
-                    final_price=to_rial(_to_decimal(r.get("total_price")), self._config.price_unit),
-                    # Extract product image URL from the first item's product data
-                    # The Digikala API response structure may vary, but we assume
-                    # a "product" object with "photo" field containing image URLs
-                    product_image_url=self._extract_product_image_url(r),
-                )
-                for r in item_rows
-            ]
-            # Map order_type to status for Digikala (since order_status may not reflect cancelled/failed)
-            status = first.get("order_status", {})
-            if order_type == "canceled":
-                status_val = "canceled"
-            elif order_type == "returned":
-                status_val = "refunded"
-            else:
-                status_val = str(status.get("title") or status.get("key") or "unknown")
-            # NormalizedOrder.product_image_url (order-level, used by
-            # DidarSyncService._fetch_product_images to attach a photo to
-            # the "ارسال محصول" Activity) is now just a last-resort
-            # fallback - each OrderItem's OWN product_image_url (set
-            # above) is what actually gets attached, one photo per line
-            # item, so a multi-item order gets every product's photo, not
-            # just the first (client feedback, 2026-09). Order-level is
-            # still populated from the first item for the rare case an
-            # order's items carry no image URL at all.
-            product_image_url = items[0].product_image_url if items else None
-            # Extract shipment_id from the first row (all rows in group should have same shipment_id).
-            # NOTE: the real /orders/history response (confirmed against docs/api digikala.docx)
-            # returns this as a top-level "shipment_id" field. "order_shipment_id" only ever
-            # appears as one of the searchable fields for the search_text_all query param, not
-            # as a response field - using it here made shipment_id always None, which silently
-            # disabled SBS customer enrichment for every order.
-            shipment_id = str(first.get("shipment_id")) if first.get("shipment_id") else None
-            orders.append(
-                NormalizedOrder(
-                    source=self.name,
-                    source_order_id=order_id,
-                    order_number=order_id,
-                    created_at=_parse_date(first.get("order_created_at")),
-                    total_price=sum((i.final_price for i in items), Decimal("0")),
-                    status=status_val,
-                    items=items,
-                    customer_full_name=None,  # not requested for this project - see module docstring
-                    customer_mobile=None,
-                    shipment_id=shipment_id,
-                    product_image_url=product_image_url,
-                    # shipping_cost is NOT set here (stays the dataclass
-                    # default None): /orders/history (this endpoint) has
-                    # no shipping/delivery-cost field anywhere on the row
-                    # - only product pricing (unit_price/unit_discount).
-                    # It's populated separately, after this method
-                    # returns, by sync_engine._enrich_digikala_shipment_
-                    # details() calling fetch_shipment_details() against
-                    # the confirmed /ship-by-seller-orders/{shipment_id}
-                    # endpoint (client-supplied real payload, 2026-09) -
-                    # only reachable once shipment_id (set below) is
-                    # known, which is why it can't happen in this method.
-                )
+        items = [
+            OrderItem(
+                sku=str(v["sellerCode"]) if v.get("sellerCode") is not None else str(v.get("productId", "")),
+                title=str(v.get("title", "")),
+                quantity=int(v.get("count") or 1),
+                # ASSUMPTION, NOT yet confirmed against a real payload -
+                # see Decision 2, digikala-sbs-migration-prompt.md: the
+                # schema only ever exposes "price" + "count" per variant,
+                # with no separate unit_price/total_price split and no
+                # discount field anywhere. Treated as price=per-unit,
+                # final_price=price*count, no discount subtracted. Must be
+                # verified against at least one real shipment whose panel
+                # total is known (checking shippingCost as a possible home
+                # for any mismatch) before being trusted for real money.
+                unit_price=to_rial(_to_decimal(v.get("price")), self._config.price_unit),
+                final_price=to_rial(
+                    _to_decimal(v.get("price")) * _to_decimal(v.get("count") or 1),
+                    self._config.price_unit,
+                ),
+                product_image_url=str(v["image_url"]) if v.get("image_url") else None,
             )
-        return orders
+            for v in variants
+        ]
 
-    def _extract_product_image_url(self, row: dict) -> str | None:
+        # Status mapping - Decision 3, digikala-sbs-migration-prompt.md:
+        # isCancelled is the primary signal (an explicit, less
+        # semantically-drifty boolean vs. a free-text field); "rejected"
+        # is the other terminal status.text value. hasFailedDeliveryBefore
+        # is deliberately NOT used - it means "failed at least once
+        # before", not "currently failed"; a later attempt may still
+        # succeed. pending/processing/processed/edited are all active and
+        # sync normally.
+        if row.get("isCancelled"):
+            status_val = "cancelled"
+        elif (row.get("status") or {}).get("text") == "rejected":
+            status_val = "rejected"
+        else:
+            status_val = (row.get("status") or {}).get("text") or "unknown"
+
+        address = row.get("address") or {}
+        # Order-level fallback photo, same "last resort, per-item photo is
+        # the real one" convention this project already uses elsewhere -
+        # see OrderItem.product_image_url's docstring in base.py.
+        product_image_url = items[0].product_image_url if items else None
+
+        raw_shipping_cost = row.get("shippingCost")
+        shipping_cost = (
+            to_rial(_to_decimal(raw_shipping_cost), self._config.price_unit)
+            if raw_shipping_cost is not None
+            else None
+        )
+        tracking_code = str(row["trackingCode"]) if row.get("trackingCode") else None
+
+        return NormalizedOrder(
+            source=self.name,
+            # Decision 1: shipmentId (not Digikala's order_id) is the
+            # dedup key from here on.
+            source_order_id=str(shipment_id),
+            order_number=str(order_id) if order_id is not None else str(shipment_id),
+            created_at=_parse_jalali_date(row.get("orderDate")),
+            total_price=sum((i.final_price for i in items), Decimal("0")),
+            status=status_val,
+            items=items,
+            # Populated directly from this same row now (client_name /
+            # client_phone_number / address.* below) - see module
+            # docstring. fetch_sbs_customer_details() (a narrower, separate
+            # endpoint) remains a fallback in sync_engine.py's
+            # _prepare_and_push_to_didar for whichever of these end up
+            # null on a given row.
+            customer_full_name=row.get("customer_name") or None,
+            customer_mobile=row.get("customer_phone_number") or None,
+            customer_address=row.get("customer_address") or None,
+            customer_postal_code=row.get("customer_postal_code") or None,
+            customer_province=address.get("state") or None,
+            customer_city=address.get("city") or None,
+            shipment_id=str(shipment_id) if shipment_id is not None else None,
+            product_image_url=product_image_url,
+            shipping_cost=shipping_cost,
+            shipment_tracking_code=tracking_code,
+        )
+
+    def _seed_watermark_from_latest(self) -> int:
         """
-        Extract product image URL from a row.
-
-        CORRECTED: the real /orders/history response (confirmed against
-        docs/api digikala.docx) returns the image directly as a top-level
-        "image_src" string field - there is no nested "product.photo.*"
-        object on this endpoint (that shape belongs to a different,
-        unused endpoint: GET /open-api/v1/orders). The old lookup here
-        always returned None, so no order ever had a photo to attach.
+        Cold start only (Decision 5, digikala-sbs-migration-prompt.md): a
+        single request for the account's current highest shipmentId, so
+        the very first watermark is deterministic rather than a guessed
+        time cutoff, and no pre-existing order gets synced just because
+        the watermark had never been set. Returns 0 if the account has no
+        SBS shipments at all yet, so the very first real shipment (id
+        >= 1) is picked up on the next poll.
         """
-        url = row.get("image_src")
-        return str(url) if url else None
+        payload = self._get(
+            "/open-api/v1/ship-by-seller-orders",
+            params={"page": 1, "size": 1, "sort": "id", "order": "desc"},
+        )
+        items = (payload.get("data") or {}).get("items") or []
+        if not items or items[0].get("shipmentId") is None:
+            return 0
+        return int(items[0]["shipmentId"])
 
-    def _fmt(self, dt: datetime) -> str:
-        # Digikala's documented format: Y-m-d\TH:i:s.v\Z
-        return dt.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.") + f"{dt.microsecond // 1000:03d}Z"
 
-
-def _parse_date(value: str | None) -> datetime:
+def _parse_jalali_date(value: str | None) -> datetime:
+    """
+    /ship-by-seller-orders' `orderDate` is a Jalali calendar DATE-ONLY
+    string ("1403/11/07" - no time component, unlike /orders/history's
+    ISO order_created_at used before this migration). Interpreted as Iran-
+    local midnight on that date and converted to UTC - same convention
+    (and _IRAN_TZ constant/rationale) as src/telegram.py's
+    _iran_midnight_utc(). Date-only precision is a known limitation, not
+    yet flagged as a decision in digikala-sbs-migration-prompt.md - worth
+    revisiting if sub-day created_at precision ever matters for this
+    source. Falls back to "now" if missing/malformed, matching the old
+    _parse_date()'s convention in this file.
+    """
     if not value:
         return datetime.now(timezone.utc)
     try:
-        return datetime.fromisoformat(value.replace("Z", "+00:00"))
-    except ValueError:
+        year, month, day = (int(part) for part in value.split("/"))
+        gregorian_date = jdatetime.date(year, month, day).togregorian()
+        local_midnight = datetime.combine(gregorian_date, datetime.min.time(), tzinfo=_IRAN_TZ)
+        return local_midnight.astimezone(timezone.utc)
+    except (ValueError, TypeError):
         return datetime.now(timezone.utc)

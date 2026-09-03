@@ -24,10 +24,17 @@ Design choices worth calling out:
   history on a fresh DB (where ID-based dedup hasn't yet seen any orders
   and would otherwise let the entire account history through). ID-based
   dedup is the secondary guard, preventing re-syncs of orders already
-  pushed within the window. This matters because at least one adapter
-  (Digikala - see src/marketplaces/digikala.py) does not filter
-  server-side by date, so without the client-side drop the window would
-  be a no-op for it.
+  pushed within the window.
+  EXCEPTION: adapters that set `uses_id_based_watermark = True` (Digikala,
+  since its 2026-09 migration to a shipmentId watermark - see
+  src/marketplaces/digikala.py and digikala-sbs-migration-prompt.md) skip
+  this window entirely; their own fetch_new_orders() already guarantees
+  "new" via a persistent, monotonic ID cursor, which the old time-window
+  approach could never do safely for this adapter in the first place
+  (Digikala's history endpoint doesn't filter server-side by date at all,
+  and even a correctly-filtering endpoint's window is inherently a
+  double-edged tradeoff - too wide risks re-syncing old orders, too
+  narrow silently drops orders Digikala's backend was slow to record).
 - Failed Didar syncs are recorded via Repository.record_failure() rather
   than just logged and dropped, so retry_pending_failures() can give them
   another attempt on a later run without re-fetching the entire source.
@@ -120,17 +127,33 @@ class SyncEngine:
         # Orders without created_at (rare; defensive) are kept and let
         # the status filter / ID dedup decide - we don't want to drop
         # legitimate orders just because the adapter couldn't parse a date.
-        window_kept: list[NormalizedOrder] = []
-        window_dropped = 0
-        for order in orders:
-            if order.created_at is not None and order.created_at < since:
-                window_dropped += 1
-                log.info(
-                    "sync_engine: dropping %s order %s - created_at %s is outside the %dh window",
-                    platform, order.source_order_id, order.created_at, FETCH_WINDOW_HOURS,
-                )
-                continue
-            window_kept.append(order)
+        #
+        # BYPASS for adapters with an ID-based watermark (currently only
+        # Digikala - see its module docstring and
+        # digikala-sbs-migration-prompt.md): their fetch_new_orders()
+        # already guarantees "new" via a monotonic ID cursor, so a
+        # created_at comparison here is redundant at best. It would
+        # actively be WRONG for Digikala specifically, since its
+        # orderDate is a Jalali date with no time component (see
+        # _parse_jalali_date in digikala.py) - a poor sub-hour freshness
+        # signal that could wrongly drop a legitimately new shipment
+        # whose local calendar date happens to fall just outside the
+        # window's clock boundary.
+        if getattr(adapter, "uses_id_based_watermark", False):
+            window_kept: list[NormalizedOrder] = list(orders)
+            window_dropped = 0
+        else:
+            window_kept = []
+            window_dropped = 0
+            for order in orders:
+                if order.created_at is not None and order.created_at < since:
+                    window_dropped += 1
+                    log.info(
+                        "sync_engine: dropping %s order %s - created_at %s is outside the %dh window",
+                        platform, order.source_order_id, order.created_at, FETCH_WINDOW_HOURS,
+                    )
+                    continue
+                window_kept.append(order)
 
         for order in window_kept:
             # Build the unique ID used for dedup in the repository.
@@ -318,7 +341,16 @@ class SyncEngine:
     ) -> None:
         """Fetch SBS customer details for a Digikala order and enrich the
         NormalizedOrder in-place. Falls back to a synthetic contact name
-        if the API fails or returns no data."""
+        if the API fails or returns no data.
+
+        REVIEWED for the 2026-09 SBS shipment-watermark migration (see
+        digikala-sbs-migration-prompt.md): DigikalaAdapter._normalize_sbs_row
+        now populates customer_full_name directly from the same
+        /ship-by-seller-orders row fetch_new_orders() already made, so the
+        gate below (`not order.customer_full_name`) means this extra
+        endpoint call is only actually reached as a genuine FALLBACK - when
+        that row's own customer_name field was null - not on every order
+        as before this migration."""
         # Only DigikalaAdapter exposes fetch_sbs_customer_details.
         fetcher = getattr(adapter, "fetch_sbs_customer_details", None)
         if fetcher is None:
@@ -380,7 +412,15 @@ class SyncEngine:
         Best-effort: if the API fails or returns no data, both fields are
         simply left None - DidarDealClient's _build_item_description
         already omits any line it doesn't have data for, so this can
-        never break or block a sync."""
+        never break or block a sync.
+
+        REVIEWED for the 2026-09 SBS shipment-watermark migration (see
+        digikala-sbs-migration-prompt.md): DigikalaAdapter._normalize_sbs_row
+        now populates shipping_cost/shipment_tracking_code directly from
+        the same row fetch_new_orders() already fetched, so the gate below
+        (`order.shipping_cost is None`) means this extra endpoint call is
+        only actually reached as a genuine FALLBACK - not on every order
+        as before this migration."""
         # Only DigikalaAdapter exposes fetch_shipment_details.
         fetcher = getattr(adapter, "fetch_shipment_details", None)
         if fetcher is None:
@@ -470,7 +510,9 @@ class SyncEngine:
 # Uses NormalizedOrder.status rather than per-adapter filters so that
 # no order of any marketplace slips through if an adapter's own guard
 # is incomplete or outdated.
-# Values confirmed from each marketplace's official API docs (2026-08).
+# Values confirmed from each marketplace's official API docs (2026-08,
+# Digikala values updated 2026-09 per the SBS shipment-watermark
+# migration - see digikala-sbs-migration-prompt.md, Decision 3).
 # "unknown" (SnappShop default) is intentionally included so unconfirmed
 # schemas don't silently sync orders - they pass through for manual review.
 CANCELLED_OR_FAILED_STATUSES: set[str] = {
@@ -478,13 +520,15 @@ CANCELLED_OR_FAILED_STATUSES: set[str] = {
     # are explicitly excluded by the adapter's _ACTIVE_ORDER_STATUS_IDS = [4].
     "cancelled",
     "failed",
-    # Digikala: order_type query parameter values. The docs don't expose a
-    # full order_status.key enum, so the adapter passes order_type to
-    # _fetch_history_rows and maps it to a status string here:
-    #   order_type=canceled  -> status "canceled"
-    #   order_type=returned  -> status "refunded"
-    "canceled",          # Digikala order_type=canceled
-    "refunded",          # Digikala order_type=returned (treated as failed)
+    # Digikala (2026-09 migration to /ship-by-seller-orders - see
+    # digikala.py's _normalize_sbs_row and the migration prompt's
+    # Decision 3): the old order_type query parameter
+    # ("canceled"/"returned") is no longer sent at all, so those two
+    # status strings the adapter used to produce are gone. The SBS
+    # schema instead exposes isCancelled (boolean) and status.text
+    # (including "rejected"), which the adapter maps directly to:
+    "cancelled",         # Digikala isCancelled=true
+    "rejected",          # Digikala status.text == "rejected"
     # Basalam: confirmed status values for cancelled/failed orders
     # (from the "وضعیت‌های سفارش" section in the official docs).
     "cancelled",         # Basalam order_status=cancelled

@@ -1,7 +1,7 @@
 """
 Local persistence layer (SQLite).
 
-Four responsibilities:
+Five responsibilities:
   1. Remember which (platform, source_order_id) pairs have already been
      synced to Didar, so we never create a duplicate Deal.
   2. Track failed sync attempts so the SyncEngine can retry them later
@@ -15,6 +15,14 @@ Four responsibilities:
      for the Telegram daily/weekly/monthly reports in src/telegram.py, so
      those reports aggregate from the same dedup table rather than a
      second parallel tracking system.
+  5. Digikala's shipment-ID watermark (digikala_shipment_watermark table,
+     2026-09 migration - see digikala-sbs-migration-prompt.md). Deliberately
+     a SEPARATE table from sync_state above rather than reusing/extending
+     it: sync_state's `last_synced_at` is a point in TIME, while this is a
+     monotonic ID cursor - conflating the two concepts under one column
+     would make the semantics ambiguous for whoever reads this file next.
+     See src/marketplaces/digikala.py for why a time-based window can't
+     work for this source at all.
 
 Kept deliberately simple - one file, no ORM - matching the scale of a
 single-server background service.
@@ -58,6 +66,11 @@ CREATE TABLE IF NOT EXISTS sync_state (
 CREATE TABLE IF NOT EXISTS report_progress (
     period          TEXT PRIMARY KEY,
     marker          TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS digikala_shipment_watermark (
+    platform          TEXT PRIMARY KEY,
+    last_shipment_id  INTEGER NOT NULL
 );
 """
 
@@ -209,6 +222,31 @@ class Repository:
                 ON CONFLICT(source) DO UPDATE SET last_synced_at = excluded.last_synced_at
                 """,
                 (platform, when.isoformat()),
+            )
+
+    # --- Digikala shipment-ID watermark (2026-09 SBS migration) --------
+    # See digikala-sbs-migration-prompt.md and src/marketplaces/digikala.py:
+    # unlike the time-based sync_state above, this is a monotonic cursor
+    # over shipmentId, updated after every fetched PAGE (not just at the
+    # end of a whole poll) so a mid-pagination crash can't lose progress.
+
+    def get_last_shipment_id(self, platform: str) -> int | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT last_shipment_id FROM digikala_shipment_watermark WHERE platform = ?",
+                (platform,),
+            ).fetchone()
+        return row[0] if row is not None else None
+
+    def set_last_shipment_id(self, platform: str, shipment_id: int) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO digikala_shipment_watermark (platform, last_shipment_id)
+                VALUES (?, ?)
+                ON CONFLICT(platform) DO UPDATE SET last_shipment_id = excluded.last_shipment_id
+                """,
+                (platform, shipment_id),
             )
 
     # --- reporting / health check -----------------------------------

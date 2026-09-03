@@ -399,6 +399,39 @@ def test_orders_older_than_5_hours_are_dropped_client_side(repo, synced_ids_file
     assert "fake1-old-order-1" not in ids
 
 
+def test_id_based_watermark_adapter_bypasses_the_created_at_window(repo, synced_ids_file):
+    """An adapter that sets uses_id_based_watermark = True (Digikala, since
+    the 2026-09 SBS migration - see digikala-sbs-migration-prompt.md) must
+    have its orders kept regardless of created_at, since its own
+    fetch_new_orders() already guarantees "new" via a persisted ID
+    watermark rather than a time window."""
+    very_old_order = NormalizedOrder(
+        source="fake1",
+        source_order_id="ancient-1",
+        order_number="ancient-1",
+        created_at=datetime.now(timezone.utc) - timedelta(days=60),
+        total_price=Decimal("100000"),
+        status="confirmed",
+        items=[OrderItem(sku="s", title="t", quantity=1, unit_price=Decimal("1"),
+                          final_price=Decimal("100000"))],
+    )
+
+    adapter = FakeAdapter("fake1", list_orders=[very_old_order])
+    adapter.uses_id_based_watermark = True
+    didar = FakeDidarService()
+    engine = SyncEngine(
+        adapters=[adapter],
+        repository=repo,
+        didar_service=didar,
+        synced_ids_file_path=str(synced_ids_file),
+    )
+
+    engine.run_once()
+
+    assert len(didar.synced_orders) == 1
+    assert didar.synced_orders[0].source_order_id == "ancient-1"
+
+
 def test_digikala_sbs_enrichment_adds_customer_name_and_mobile(repo, synced_ids_file):
     """Digikala SBS orders with shipment_id get enriched with customer data
     from fetch_sbs_customer_details before syncing to Didar."""
