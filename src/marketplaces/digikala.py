@@ -47,6 +47,19 @@ given row - see their own docstrings and sync_engine.py's
 _prepare_and_push_to_didar(), whose existing null-gated enrichment calls
 now rarely fire in practice.
 
+AUTO-CONFIRM OF PENDING ORDERS (2026-09, client request, confirmed against
+the real seller panel via screenshots): those customer fields are null on
+a row while its status is "pending" (a brand-new order, shown in the panel
+as "سفارش جدید") - the panel only reveals full customer/item detail once
+the seller confirms the order, which advances its status to "processing"
+(در حال پردازش). Since this service has no human in the loop to click
+"confirm" in the panel, fetch_new_orders()/fetch_order_detail() now call
+_confirm_if_pending() on every row first, which does that confirmation via
+PUT /ship-by-seller-orders/update-status (using the row's own nextStatus/
+verificationCode) and re-fetches the row before normalizing. See
+_confirm_if_pending()'s own docstring for the full behavior and failure
+handling.
+
 TOKEN LIFECYCLE (confirmed via a real /auth/token exchange):
   - access_token: short-lived, ~24 hours
   - refresh_token: long-lived, ~1 year - matches the ~360-day validity
@@ -114,6 +127,15 @@ def _to_decimal(value) -> Decimal:
         return Decimal(str(value))
     except (InvalidOperation, TypeError):
         return Decimal("0")
+
+
+def _to_int_or_none(value) -> int | None:
+    if value is None:
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
 
 
 class DigikalaAdapter(MarketplaceAdapter):
@@ -203,6 +225,41 @@ class DigikalaAdapter(MarketplaceAdapter):
         raise_for_status_with_body(resp)
         return resp.json()
 
+    @default_retry()
+    def _update_status(
+        self,
+        shipment_id: int | str,
+        new_status: str,
+        verification_code: int | None,
+        _already_refreshed: bool = False,
+    ) -> None:
+        """
+        PUT /open-api/v1/ship-by-seller-orders/update-status - the API
+        equivalent of the seller-panel action that moves a shipment from
+        one status to the next (e.g. pending -> processing). Used by
+        _confirm_if_pending() below to auto-confirm new orders.
+
+        Same 401 -> refresh -> retry-once pattern as _get() above; only
+        order_shipment_id/new_status are documented as required, so
+        verification_code is omitted entirely when the row didn't have
+        one rather than sending a null.
+        """
+        body: dict = {"order_shipment_id": int(shipment_id), "new_status": new_status}
+        if verification_code is not None:
+            body["verification_code"] = verification_code
+        resp = self._client.put(
+            "/open-api/v1/ship-by-seller-orders/update-status",
+            json=body,
+            headers={"Authorization": f"Bearer {self._access_token}"},
+        )
+        if resp.status_code == 401 and not _already_refreshed:
+            log.info("digikala: access token expired (401) during update-status, refreshing")
+            self._refresh_access_token()
+            return self._update_status(
+                shipment_id, new_status, verification_code, _already_refreshed=True
+            )
+        raise_for_status_with_body(resp)
+
     def fetch_new_orders(self, since: datetime | None) -> list[NormalizedOrder]:
         """
         `since` is accepted only to satisfy MarketplaceAdapter's interface
@@ -228,11 +285,43 @@ class DigikalaAdapter(MarketplaceAdapter):
             return []
 
         rows = self._fetch_sbs_rows_since_watermark(watermark + 1)
+        # Client request (2026-09): auto-confirm every "new" (pending) SBS
+        # order the moment it's fetched, mirroring the seller panel's own
+        # confirm action - see _confirm_if_pending()'s docstring. Must
+        # happen BEFORE normalization: a still-pending row's own
+        # customer_name/customer_phone_number/customer_address fields may
+        # be null, and confirming replaces the row with a freshly
+        # re-fetched one that has them populated.
+        rows = [self._confirm_if_pending(row) for row in rows]
         orders = [self._normalize_sbs_row(row) for row in rows]
         log.info(
             "digikala: fetched %d new shipment(s) since watermark %d", len(orders), watermark
         )
         return orders
+
+    def _fetch_shipment_row(self, shipment_id: int | str) -> dict:
+        """
+        GET /open-api/v1/ship-by-seller-orders/{shipment_id} and return the
+        raw row dict (NOT normalized) - shared by fetch_order_detail() and
+        _confirm_if_pending()'s post-confirm re-fetch, so both go through
+        the exact same response-shape handling.
+
+        Official docs (SBSOrdersObjectView) show `data` as the shipment
+        object directly. fetch_shipment_details()'s docstring notes a
+        DIFFERENT observed shape ({"items": [...]}) for this SAME
+        endpoint from a real client-supplied payload - support both
+        rather than picking one and silently breaking on the other, until
+        that discrepancy is reconciled against a live call.
+
+        Returns {} (never raises) if the shipment genuinely has no data -
+        callers decide what that means for them (fetch_order_detail
+        raises, _confirm_if_pending falls back to the pre-confirm row).
+        """
+        payload = self._get(f"/open-api/v1/ship-by-seller-orders/{shipment_id}", params={})
+        data = payload.get("data") or {}
+        if "shipmentId" not in data and data.get("items"):
+            data = data["items"][0]
+        return data
 
     def fetch_order_detail(self, source_order_id: str) -> NormalizedOrder:
         """
@@ -246,20 +335,95 @@ class DigikalaAdapter(MarketplaceAdapter):
         though that branch shouldn't actually trigger anymore since
         fetch_new_orders already populates items from each row's own
         "variants" array.
+
+        Also runs the same _confirm_if_pending() auto-confirm as
+        fetch_new_orders(), since a shipment can still be "pending" the
+        first time it's re-fetched here (e.g. the retry path, or a caller
+        that never went through fetch_new_orders for this id).
         """
-        payload = self._get(f"/open-api/v1/ship-by-seller-orders/{source_order_id}", params={})
-        data = payload.get("data") or {}
-        # Official docs (SBSOrdersObjectView) show `data` as the shipment
-        # object directly. fetch_shipment_details()'s docstring notes a
-        # DIFFERENT observed shape ({"items": [...]}) for this SAME
-        # endpoint from a real client-supplied payload - support both
-        # rather than picking one and silently breaking on the other,
-        # until that discrepancy is reconciled against a live call.
-        if "shipmentId" not in data and data.get("items"):
-            data = data["items"][0]
+        data = self._fetch_shipment_row(source_order_id)
         if not data:
             raise ValueError(f"digikala: shipment {source_order_id} not found")
+        data = self._confirm_if_pending(data)
         return self._normalize_sbs_row(data)
+
+    def _confirm_if_pending(self, row: dict) -> dict:
+        """
+        Client request (2026-09): confirmed against the real seller panel
+        (screenshots) that a "new" SBS order (status.text == "pending")
+        shows only a bare summary row there with NO expandable
+        customer/item detail - the same shipment's full detail (customer
+        name/phone/address, item breakdown) only appears once its status
+        becomes "processing" (در حال پردازش), which happens when the
+        seller explicitly confirms the order. This method is the API
+        equivalent of that confirm action, run automatically for every
+        pending row this adapter sees, since this service has no human in
+        the loop to click "confirm" in the panel itself.
+
+        Uses PUT /ship-by-seller-orders/update-status via _update_status(),
+        with each row's OWN `nextStatus` (falling back to "processing" only
+        if a row is missing it) and `verificationCode` - both fields exist
+        on this exact row shape specifically to drive this transition (see
+        docs), so nothing here is guessed. verification_code is optional
+        per the docs' own validation-error example (only order_shipment_id
+        and new_status are listed as required), so a row without one is
+        confirmed without it rather than blocked on it.
+
+        Non-pending rows (including cancelled/rejected) pass through
+        untouched - there's nothing to confirm.
+
+        Best-effort like fetch_sbs_customer_details/fetch_shipment_details:
+        ANY failure (the update-status call itself, or the post-confirm
+        re-fetch) is logged and the ORIGINAL row is returned unchanged, so
+        a confirm failure never blocks the order from syncing - it just
+        syncs with whatever data the still-pending row already had
+        (sync_engine's existing fetch_sbs_customer_details fallback and
+        synthetic-name fallback still apply on top of this).
+        """
+        status_text = (row.get("status") or {}).get("text")
+        if row.get("isCancelled") or status_text != "pending":
+            return row
+
+        shipment_id = row.get("shipmentId")
+        if shipment_id is None:
+            return row
+
+        new_status = row.get("nextStatus") or "processing"
+        verification_code = _to_int_or_none(row.get("verificationCode"))
+
+        try:
+            self._update_status(shipment_id, new_status, verification_code)
+        except Exception:
+            log.exception(
+                "digikala: failed to auto-confirm pending shipment %s (new_status=%s) - "
+                "syncing with the pending row's own data instead",
+                shipment_id, new_status,
+            )
+            return row
+
+        try:
+            refreshed = self._fetch_shipment_row(shipment_id)
+        except Exception:
+            log.exception(
+                "digikala: confirmed shipment %s but failed to re-fetch its detail - "
+                "syncing with the pre-confirmation row",
+                shipment_id,
+            )
+            return row
+
+        if not refreshed:
+            log.warning(
+                "digikala: confirmed shipment %s but re-fetch returned no data - "
+                "syncing with the pre-confirmation row",
+                shipment_id,
+            )
+            return row
+
+        log.info(
+            "digikala: auto-confirmed pending shipment %s -> %s (customer data present=%s)",
+            shipment_id, new_status, bool(refreshed.get("customer_name")),
+        )
+        return refreshed
 
     def fetch_sbs_customer_details(self, shipment_id: str) -> dict:
         """Fetch customer details for a Digikala Ship-by-Seller (SBS) order.

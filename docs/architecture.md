@@ -95,9 +95,11 @@ that was fixed).
 
 ### Digikala (`marketplaces/digikala.py`)
 
-- Auth: OAuth-style. `GET /open-api/v1/orders/history` for the list
-  (item-level rows - a 3-item order produces 3 rows sharing the same
-  `order_id`; the adapter groups them).
+- Auth: OAuth-style. `GET /open-api/v1/ship-by-seller-orders` for the
+  list (2026-09 migration off `/orders/history` - see the adapter's own
+  module docstring for the full history/rationale). One row = one
+  shipment = one Didar Deal; a persistent `shipmentId` watermark
+  (`uses_id_based_watermark = True`) defines "new", not a date window.
 - **Token lifecycle** (confirmed via a real token exchange):
   - `access_token`: ~24 hours.
   - `refresh_token`: ~1 year (matches the ~360-day figure shown in the
@@ -114,9 +116,22 @@ that was fixed).
     private key should never be on the server - it's only needed for
     this yearly bootstrap, done from a laptop, with the resulting
     tokens copied into `.env` / the token cache file.
-- Customer contact details are intentionally not requested for this
-  source (client decision - not a technical limitation) - orders use a
-  synthetic `CustomerCode` (`digikala-{order_id}`).
+- Customer name/mobile/address ARE requested and populated for this
+  source directly from every `/ship-by-seller-orders` row - the old
+  "intentionally not requested" note above is stale.
+- **Auto-confirm of pending orders** (2026-09, client request): a
+  brand-new shipment (`status.text == "pending"`, "سفارش جدید" in the
+  panel) has null customer fields until the seller confirms it - the
+  panel only reveals full customer/item detail once the shipment moves
+  to `"processing"` ("در حال پردازش"). Since this service has no human
+  to click "confirm" in the panel, `fetch_new_orders()`/
+  `fetch_order_detail()` do that automatically for every pending row via
+  `PUT /open-api/v1/ship-by-seller-orders/update-status` (using the
+  row's own `nextStatus`/`verificationCode`), then re-fetch the shipment
+  before normalizing. See `_confirm_if_pending()` in the adapter for the
+  full behavior and failure fallback (a confirm failure never blocks the
+  sync - it just proceeds with whatever data the pending row already
+  had, same as the existing SBS-customer-endpoint fallback below).
 
 ### Basalam (`marketplaces/basalam.py`)
 

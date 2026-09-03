@@ -1,3 +1,4 @@
+import json
 from datetime import datetime, timezone
 from decimal import Decimal
 
@@ -338,6 +339,219 @@ def test_fetch_order_detail_raises_when_shipment_not_found(repo):
     adapter = DigikalaAdapter(config=_CFG, repository=repo)
     with pytest.raises(ValueError, match="999"):
         adapter.fetch_order_detail("999")
+
+
+# --- auto-confirm pending orders (client request, 2026-09) ---------------
+# A "pending" row (سفارش جدید) has no customer data in the real panel until
+# the seller confirms it (-> "processing", در حال پردازش). These tests
+# cover _confirm_if_pending() and its two call sites.
+
+_UPDATE_STATUS_URL = f"{_SBS_URL}/update-status"
+
+
+def _pending_row(shipment_id, next_status="processing", verification_code="4242", **overrides):
+    row = _sbs_row(
+        shipment_id=shipment_id,
+        status={"text": "pending"},
+        nextStatus=next_status,
+        verificationCode=verification_code,
+        customer_name=None,
+        customer_address=None,
+        customer_postal_code=None,
+        customer_phone_number=None,
+    )
+    row.update(overrides)
+    return row
+
+
+@respx.mock
+def test_fetch_new_orders_confirms_pending_row_before_normalizing(repo):
+    """A pending row must be confirmed via PUT update-status (using its
+    own nextStatus/verificationCode) and re-fetched BEFORE normalization,
+    so the resulting NormalizedOrder carries the post-confirm status and
+    customer data - not the pending row's null fields."""
+    repo.set_last_shipment_id("digikala", 0)
+    respx.get(_SBS_URL).mock(
+        return_value=_sbs_list_response([_pending_row(shipment_id=1)])
+    )
+    update_route = respx.put(_UPDATE_STATUS_URL).mock(
+        return_value=httpx.Response(200, json={"status": "ok"})
+    )
+    respx.get(f"{_SBS_URL}/1").mock(
+        return_value=httpx.Response(
+            200, json={"status": "ok", "data": _sbs_row(shipment_id=1)}  # status=processing, full customer data
+        )
+    )
+
+    adapter = DigikalaAdapter(config=_CFG, repository=repo)
+    orders = adapter.fetch_new_orders(since=None)
+
+    assert len(orders) == 1
+    order = orders[0]
+    assert order.status == "processing"
+    assert order.customer_full_name == "علی علیایی"
+    assert order.customer_mobile == "09121212121"
+    assert order.customer_address == "تهران، تهران، ونک، خدامی"
+
+    assert str(update_route.calls[0].request.url) == _UPDATE_STATUS_URL
+    sent_body = json.loads(update_route.calls[0].request.content)
+    assert sent_body == {
+        "order_shipment_id": 1,
+        "new_status": "processing",
+        "verification_code": 4242,
+    }
+
+
+@respx.mock
+def test_fetch_new_orders_skips_confirm_for_non_pending_rows(repo):
+    """processing/processed/edited/rejected/cancelled rows must never
+    trigger an update-status call - there's nothing to confirm."""
+    repo.set_last_shipment_id("digikala", 0)
+    respx.get(_SBS_URL).mock(
+        return_value=_sbs_list_response([_sbs_row(shipment_id=1, status={"text": "processing"})])
+    )
+    update_route = respx.put(_UPDATE_STATUS_URL).mock(
+        return_value=httpx.Response(200, json={"status": "ok"})
+    )
+
+    adapter = DigikalaAdapter(config=_CFG, repository=repo)
+    orders = adapter.fetch_new_orders(since=None)
+
+    assert len(orders) == 1
+    assert update_route.call_count == 0
+
+
+@respx.mock
+def test_confirm_uses_next_status_and_falls_back_to_processing(repo):
+    """`new_status` must come from the row's own `nextStatus` field when
+    present, since that's Digikala's documented "what can this shipment
+    become next" value - not a hardcoded "processing"."""
+    repo.set_last_shipment_id("digikala", 0)
+    respx.get(_SBS_URL).mock(
+        return_value=_sbs_list_response([_pending_row(shipment_id=1, next_status="edited")])
+    )
+    update_route = respx.put(_UPDATE_STATUS_URL).mock(
+        return_value=httpx.Response(200, json={"status": "ok"})
+    )
+    respx.get(f"{_SBS_URL}/1").mock(
+        return_value=httpx.Response(200, json={"status": "ok", "data": _sbs_row(shipment_id=1)})
+    )
+
+    adapter = DigikalaAdapter(config=_CFG, repository=repo)
+    adapter.fetch_new_orders(since=None)
+
+    body = json.loads(update_route.calls[0].request.content)
+    assert body["new_status"] == "edited"
+
+
+@respx.mock
+def test_confirm_omits_verification_code_when_row_has_none(repo):
+    repo.set_last_shipment_id("digikala", 0)
+    respx.get(_SBS_URL).mock(
+        return_value=_sbs_list_response([_pending_row(shipment_id=1, verification_code=None)])
+    )
+    update_route = respx.put(_UPDATE_STATUS_URL).mock(
+        return_value=httpx.Response(200, json={"status": "ok"})
+    )
+    respx.get(f"{_SBS_URL}/1").mock(
+        return_value=httpx.Response(200, json={"status": "ok", "data": _sbs_row(shipment_id=1)})
+    )
+
+    adapter = DigikalaAdapter(config=_CFG, repository=repo)
+    adapter.fetch_new_orders(since=None)
+
+    body = json.loads(update_route.calls[0].request.content)
+    assert "verification_code" not in body
+
+
+@respx.mock
+def test_confirm_failure_falls_back_to_original_pending_row(repo):
+    """If update-status itself fails (4xx/5xx/network), the order must
+    still sync - with whatever data the pending row already had - rather
+    than being lost or raising out of fetch_new_orders."""
+    repo.set_last_shipment_id("digikala", 0)
+    respx.get(_SBS_URL).mock(
+        return_value=_sbs_list_response([_pending_row(shipment_id=1)])
+    )
+    respx.put(_UPDATE_STATUS_URL).mock(
+        return_value=httpx.Response(400, json={"status": "error"})
+    )
+    refetch_route = respx.get(f"{_SBS_URL}/1")
+
+    adapter = DigikalaAdapter(config=_CFG, repository=repo)
+    orders = adapter.fetch_new_orders(since=None)
+
+    assert len(orders) == 1
+    assert orders[0].status == "pending"
+    assert orders[0].customer_full_name is None
+    assert not refetch_route.called, "must not attempt re-fetch when confirm itself failed"
+
+
+@respx.mock
+def test_confirm_success_but_refetch_failure_falls_back_to_pending_row(repo):
+    """If update-status succeeds but the follow-up re-fetch fails, the
+    pre-confirmation row must still be used rather than blowing up the
+    whole poll."""
+    repo.set_last_shipment_id("digikala", 0)
+    respx.get(_SBS_URL).mock(
+        return_value=_sbs_list_response([_pending_row(shipment_id=1)])
+    )
+    respx.put(_UPDATE_STATUS_URL).mock(
+        return_value=httpx.Response(200, json={"status": "ok"})
+    )
+    respx.get(f"{_SBS_URL}/1").mock(return_value=httpx.Response(500, json={"status": "error"}))
+
+    adapter = DigikalaAdapter(config=_CFG, repository=repo)
+    orders = adapter.fetch_new_orders(since=None)
+
+    assert len(orders) == 1
+    assert orders[0].status == "pending"
+
+
+@respx.mock
+def test_fetch_order_detail_also_confirms_pending_row(repo):
+    """fetch_order_detail (used by the retry path) must apply the same
+    auto-confirm as fetch_new_orders, since a shipment can still be
+    pending the first time it's fetched through this path."""
+    respx.get(f"{_SBS_URL}/1").mock(
+        side_effect=[
+            httpx.Response(200, json={"status": "ok", "data": _pending_row(shipment_id=1)}),
+            httpx.Response(200, json={"status": "ok", "data": _sbs_row(shipment_id=1)}),
+        ]
+    )
+    update_route = respx.put(_UPDATE_STATUS_URL).mock(
+        return_value=httpx.Response(200, json={"status": "ok"})
+    )
+
+    adapter = DigikalaAdapter(config=_CFG, repository=repo)
+    order = adapter.fetch_order_detail("1")
+
+    assert order.status == "processing"
+    assert order.customer_full_name == "علی علیایی"
+    assert update_route.call_count == 1
+
+
+@respx.mock
+def test_confirm_skips_cancelled_pending_row(repo):
+    """isCancelled=True must win over a "pending" status.text, same
+    precedence as _normalize_sbs_row's own status mapping (Decision 3) -
+    a cancelled order is never confirmed."""
+    repo.set_last_shipment_id("digikala", 0)
+    respx.get(_SBS_URL).mock(
+        return_value=_sbs_list_response(
+            [_pending_row(shipment_id=1, isCancelled=True)]
+        )
+    )
+    update_route = respx.put(_UPDATE_STATUS_URL).mock(
+        return_value=httpx.Response(200, json={"status": "ok"})
+    )
+
+    adapter = DigikalaAdapter(config=_CFG, repository=repo)
+    orders = adapter.fetch_new_orders(since=None)
+
+    assert len(orders) == 1
+    assert orders[0].status == "cancelled"
+    assert update_route.call_count == 0
 
 
 # --- auth / token lifecycle (unaffected by the SBS migration) -----------
