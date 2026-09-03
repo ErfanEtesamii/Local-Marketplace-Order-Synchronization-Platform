@@ -97,7 +97,15 @@ class SyncEngine:
         # Build a unique platform-specific ID for each order.
         # Format: "{platform}-{source_order_id}" (e.g. "digikala-112736712").
         #
-        # Two layers of dedup, working together:
+        # Three layers of dedup, working together:
+        #  0. Permanent skip-list (ignored_orders table): any id this
+        #     source has EVER had window-dropped before is filtered out
+        #     immediately, before any other check. Added 2026-09 because
+        #     some sources (pre-watermark Digikala being the motivating
+        #     case - see digikala_shipment_watermark's docstring in
+        #     repository.py) keep re-serving the exact same old orders on
+        #     every single poll, so without this the window-drop below
+        #     would re-evaluate (and re-log) the same ids forever.
         #  1. Sliding FETCH_WINDOW_HOURS window: passed as `since` to every
         #     adapter. Adapters that respect it (most do) use it to
         #     constrain their API call.
@@ -108,7 +116,9 @@ class SyncEngine:
         #     for any adapter bug that returns old orders. Without it,
         #     a fresh DB with no synced_orders yet would let the entire
         #     account history through to Didar (the exact bug that synced
-        #     43 two-month-old Digikala orders on 2026-08-31).
+        #     43 two-month-old Digikala orders on 2026-08-31). Anything
+        #     dropped here is fed into the skip-list above so it's never
+        #     evaluated again.
         #  3. ID-based dedup via synced_orders table: the persistent
         #     "already pushed" guard that survives restarts.
         platform = adapter.name
@@ -120,6 +130,12 @@ class SyncEngine:
         except Exception:
             log.exception("sync_engine: failed to fetch new orders from %s", adapter.name)
             return
+
+        # Layer 0: drop anything already on the permanent skip-list before
+        # it reaches the window check (or any log line) below.
+        ignored_ids = self._repo.get_ignored_ids(platform)
+        if ignored_ids:
+            orders = [order for order in orders if order.source_order_id not in ignored_ids]
 
         # Client-side window enforcement. Compare against the same `since`
         # we just passed to the adapter - any order outside the window
@@ -145,15 +161,26 @@ class SyncEngine:
         else:
             window_kept = []
             window_dropped = 0
+            newly_ignored_ids: list[str] = []
             for order in orders:
                 if order.created_at is not None and order.created_at < since:
                     window_dropped += 1
+                    newly_ignored_ids.append(order.source_order_id)
                     log.info(
                         "sync_engine: dropping %s order %s - created_at %s is outside the %dh window",
                         platform, order.source_order_id, order.created_at, FETCH_WINDOW_HOURS,
                     )
                     continue
                 window_kept.append(order)
+
+            # Feed this pass's drops into the permanent skip-list so the
+            # next poll never re-fetches/re-evaluates/re-logs them again.
+            if newly_ignored_ids:
+                self._repo.add_ignored_ids(platform, newly_ignored_ids, reason="outside_window")
+                log.info(
+                    "sync_engine: permanently ignoring %d out-of-window %s order(s) going forward",
+                    len(newly_ignored_ids), platform,
+                )
 
         for order in window_kept:
             # Build the unique ID used for dedup in the repository.
@@ -172,6 +199,19 @@ class SyncEngine:
             self._save_order_id_to_file(platform, order.source_order_id, unique_id)
 
             self._sync_one_order(adapter, order, unique_id)
+
+        # Record that this poll cycle completed successfully, regardless
+        # of whether any orders were found - this is what src/reporting.py
+        # (check_health / the daily report) reads via get_last_sync_time()
+        # to decide whether a source looks stuck. This used to be the
+        # dedup watermark itself, but sync_engine.py moved to the
+        # ID-based dedup above (_synced_ids / synced_orders) some time
+        # ago and NOTHING has called set_last_sync_time() since - so
+        # every source has looked permanently "stale" in the health check
+        # ever since that migration, even while syncing correctly. This
+        # table is now used PURELY as a "last completed poll" timestamp
+        # for reporting, decoupled from dedup.
+        self._repo.set_last_sync_time(platform, datetime.now(timezone.utc))
 
         log.info(
             "sync_engine: completed poll of %s (kept=%d, dropped-out-of-window=%d, total=%d)",
@@ -478,7 +518,35 @@ class SyncEngine:
         return products_amount, shipping_amount, total_amount
 
     def retry_pending_failures(self, max_attempts: int = 5) -> None:
+        # Per-platform cache of the permanent skip-list, so a batch of
+        # failures for the same platform doesn't re-query it once per row.
+        ignored_ids_by_platform: dict[str, set[str]] = {}
+
         for failure in self._repo.get_pending_failures(max_attempts=max_attempts):
+            # Skip (and permanently drop) anything that's SINCE been added
+            # to the ignored_orders skip-list. This closes the same gap
+            # _sync_source()'s Layer-0 check exists for, but on the retry
+            # path: get_pending_failures() reads sync_failures directly and
+            # was never cross-checked against ignored_orders, so an order
+            # already sitting in sync_failures before it got backfilled
+            # into ignored_orders (e.g. via scripts/seed_ignored_orders.py)
+            # would keep getting retried - hitting the source's API and
+            # failing - forever, even though it's explicitly on the
+            # "never sync this" list. Confirmed in production (2026-09):
+            # every single Digikala row in sync_failures at the time was
+            # already on the ignore-list.
+            ignored_ids = ignored_ids_by_platform.setdefault(
+                failure.platform, self._repo.get_ignored_ids(failure.platform)
+            )
+            if failure.source_order_id in ignored_ids:
+                self._repo.clear_failure(failure.platform, failure.source_order_id)
+                log.info(
+                    "sync_engine: retry_pending_failures: dropping now-ignored %s "
+                    "order %s instead of retrying (on permanent skip-list)",
+                    failure.platform, failure.source_order_id,
+                )
+                continue
+
             adapter = self._adapters.get(failure.platform)
             if adapter is None:
                 log.warning(

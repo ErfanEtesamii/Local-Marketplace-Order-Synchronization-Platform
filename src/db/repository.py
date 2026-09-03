@@ -29,6 +29,18 @@ Five responsibilities:
      entered by hand in Didar or created by this program itself - is
      never sent to Telegram twice; deal_poll_state is the single-row
      sliding watermark DidarDealPoller advances every poll cycle.
+  7. Permanent skip-list (ignored_orders table, 2026-09): any
+     (platform, source_order_id) that sync_engine.py's window-drop
+     logic has ever rejected as out-of-window is recorded here once and
+     then filtered out of every future fetch_new_orders() result BEFORE
+     any other check runs. Without this, a source that keeps re-serving
+     the same old orders every poll (as Digikala's list endpoint did
+     before the shipment-ID watermark existed - see
+     digikala_shipment_watermark above) pays the same "drop" evaluation,
+     and logs the same line, forever. This table is deliberately
+     separate from sync_failures: a sync_failure is a retry candidate
+     (it should eventually succeed), an ignored_order is a permanent
+     "never look at this again" - the two must never be conflated.
 
 Kept deliberately simple - one file, no ORM - matching the scale of a
 single-server background service.
@@ -87,6 +99,14 @@ CREATE TABLE IF NOT EXISTS notified_deals (
 CREATE TABLE IF NOT EXISTS deal_poll_state (
     id              INTEGER PRIMARY KEY CHECK (id = 1),
     last_poll_time  TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS ignored_orders (
+    platform        TEXT NOT NULL,
+    source_order_id TEXT NOT NULL,
+    reason          TEXT,
+    ignored_at      TEXT NOT NULL,
+    PRIMARY KEY (platform, source_order_id)
 );
 """
 
@@ -217,6 +237,55 @@ class Repository:
                 (max_attempts,),
             ).fetchall()
         return [SyncFailure(*row) for row in rows]
+
+    def clear_failure(self, platform: str, source_order_id: str) -> None:
+        """Remove a row from sync_failures WITHOUT a successful sync ever
+        happening. Distinct from mark_synced()'s cleanup of the same
+        table: this is for the case where a pending failure's order has
+        SINCE been added to the permanent ignore-list (ignored_orders -
+        e.g. via scripts/seed_ignored_orders.py, run after the order
+        already had a sync_failures row from an earlier poll). Without
+        this, retry_pending_failures() would keep retrying an order we've
+        explicitly decided to never sync, forever - see its call site in
+        sync_engine.py for the full story (2026-09 production bug: 100%
+        of the digikala rows in sync_failures at the time turned out to
+        already be on the ignore-list, yet kept getting retried and
+        re-failing every single poll cycle)."""
+        with self._connect() as conn:
+            conn.execute(
+                "DELETE FROM sync_failures WHERE platform = ? AND source_order_id = ?",
+                (platform, source_order_id),
+            )
+
+    # --- permanent skip-list (out-of-window / never-again orders) ---------
+
+    def get_ignored_ids(self, platform: str) -> set[str]:
+        """All source_order_ids permanently skipped for this platform.
+        Called once per _sync_source() pass and used as an in-memory set
+        filter - see ignored_orders in the schema docstring above."""
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT source_order_id FROM ignored_orders WHERE platform = ?",
+                (platform,),
+            ).fetchall()
+        return {row[0] for row in rows}
+
+    def add_ignored_ids(self, platform: str, source_order_ids: list[str], reason: str) -> None:
+        """Permanently mark these ids as ignored for this platform. Uses
+        INSERT OR IGNORE so re-adding an id already in the table (e.g. a
+        race between two poll cycles) is a harmless no-op rather than an
+        error."""
+        if not source_order_ids:
+            return
+        now = datetime.now(timezone.utc).isoformat()
+        with self._connect() as conn:
+            conn.executemany(
+                """
+                INSERT OR IGNORE INTO ignored_orders (platform, source_order_id, reason, ignored_at)
+                VALUES (?, ?, ?, ?)
+                """,
+                [(platform, source_order_id, reason, now) for source_order_id in source_order_ids],
+            )
 
     # --- per-source sync watermark ------------------------------------
 
