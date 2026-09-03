@@ -8,7 +8,7 @@ import httpx
 
 from src.config import DigikalaConfig
 from src.db.repository import Repository
-from src.marketplaces.digikala import DigikalaAdapter
+from src.marketplaces.digikala import DigikalaAdapter, _IRAN_TZ
 
 _CFG = DigikalaConfig(base_url="https://seller.digikala.com", access_token="test-token")
 
@@ -283,10 +283,18 @@ def test_normalize_sbs_row_parses_jalali_order_date(repo):
     adapter = DigikalaAdapter(config=_CFG, repository=repo)
     order = adapter._normalize_sbs_row(_sbs_row(shipment_id=1, orderDate="1403/11/07"))
 
-    # 1403/11/07 is 2025-01-26 on the Gregorian calendar.
-    assert order.created_at.year == 2025
-    assert order.created_at.month == 1
-    assert order.created_at.day == 26
+    # 1403/11/07 is Iran-local midnight on 2025-01-26. _parse_jalali_date
+    # converts that instant to UTC (see its docstring / _IRAN_TZ =
+    # UTC+3:30), which rolls it back to 2025-01-25 20:30 UTC - checking
+    # against the local Iran calendar date here would misreport a
+    # correct conversion as broken. Assert against the actual UTC
+    # instant, and independently confirm it's still Iran-midnight on the
+    # 26th when read back in that timezone.
+    assert order.created_at == datetime(2025, 1, 25, 20, 30, tzinfo=timezone.utc)
+
+    iran_local = order.created_at.astimezone(_IRAN_TZ)
+    assert (iran_local.year, iran_local.month, iran_local.day) == (2025, 1, 26)
+    assert (iran_local.hour, iran_local.minute) == (0, 0)
 
 
 def test_normalize_sbs_row_missing_order_date_falls_back_to_now(repo):
