@@ -723,20 +723,51 @@ def _parse_jalali_date(value: str | None) -> datetime:
     """
     /ship-by-seller-orders' `orderDate` is a Jalali calendar DATE-ONLY
     string ("1403/11/07" - no time component, unlike /orders/history's
-    ISO order_created_at used before this migration). Interpreted as Iran-
-    local midnight on that date and converted to UTC - same convention
-    (and _IRAN_TZ constant/rationale) as src/telegram.py's
-    _iran_midnight_utc(). Date-only precision is a known limitation, not
-    yet flagged as a decision in digikala-sbs-migration-prompt.md - worth
-    revisiting if sub-day created_at precision ever matters for this
-    source. Falls back to "now" if missing/malformed, matching the old
-    _parse_date()'s convention in this file.
+    ISO order_created_at used before this migration).
+
+    BUGFIX (client feedback, 2026-09 - "زمان سفارش دیجی‌کالا اشتباه ثبت
+    شده"): this used to always resolve to Iran-local MIDNIGHT on that
+    date, no matter what time the order actually came in - because
+    orderDate carries no time-of-day at all. That midnight then flowed
+    straight into two client-visible places: the "زمان" line in the
+    Telegram new-order message (src/telegram.py's _format_new_order_message,
+    via order.created_at) and, worse, src/didar/scheduling.py's پیامک ۱
+    due date (order_registered_at + 5 hours) - which meant EVERY single
+    Digikala order's پیامک ۱ got scheduled for 05:00 Iran time, regardless
+    of whether the order actually came in at 05:00 or at 21:00.
+
+    Fix: when orderDate's calendar date is TODAY (Iran-local) - which is
+    the overwhelmingly common case, since fetch_new_orders() runs on a
+    tight poll loop (2 minutes, per main.py) and every row it sees is
+    brand new by construction (shipmentId watermark, not a date filter -
+    see this module's docstring) - anchor to the actual moment this row
+    was fetched/normalized instead of midnight. That's a real timestamp,
+    not a guess: it's when our own polling loop first observed the order,
+    which for a 2-minute poll interval is a close proxy for when it was
+    actually placed - a world better than a constant 00:00 for every
+    order regardless of source.
+    For any non-today date (e.g. a stale/backdated row hit via the retry
+    path days later, or a genuinely malformed value) this deliberately
+    falls back to the old Iran-local-midnight behavior rather than
+    inventing a time-of-day for a day that isn't "now" - same
+    _IRAN_TZ-based convention as src/telegram.py's _iran_midnight_utc().
+    Falls back to "now" outright if the value is missing/unparseable,
+    matching the old _parse_date()'s convention in this file.
+
+    Root cause is still Digikala's API, not this code: orderDate simply
+    has no time-of-day field to read a real value from (confirmed absent
+    from every observed /ship-by-seller-orders row - see this module's
+    docstring and tests/test_digikala.py's fixtures). If Digikala ever
+    exposes a real per-order timestamp, prefer that over this heuristic.
     """
     if not value:
         return datetime.now(timezone.utc)
     try:
         year, month, day = (int(part) for part in value.split("/"))
         gregorian_date = jdatetime.date(year, month, day).togregorian()
+        now_iran = datetime.now(_IRAN_TZ)
+        if gregorian_date == now_iran.date():
+            return now_iran.astimezone(timezone.utc)
         local_midnight = datetime.combine(gregorian_date, datetime.min.time(), tzinfo=_IRAN_TZ)
         return local_midnight.astimezone(timezone.utc)
     except (ValueError, TypeError):

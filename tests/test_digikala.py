@@ -2,6 +2,7 @@ import json
 from datetime import datetime, timezone
 from decimal import Decimal
 
+import jdatetime
 import pytest
 import respx
 import httpx
@@ -295,6 +296,29 @@ def test_normalize_sbs_row_parses_jalali_order_date(repo):
     iran_local = order.created_at.astimezone(_IRAN_TZ)
     assert (iran_local.year, iran_local.month, iran_local.day) == (2025, 1, 26)
     assert (iran_local.hour, iran_local.minute) == (0, 0)
+
+
+def test_normalize_sbs_row_same_day_order_date_anchors_to_now_not_midnight(repo):
+    """BUGFIX regression test: when orderDate's Jalali calendar date is
+    TODAY (Iran-local) - the normal case, since fetch_new_orders() polls
+    every 2 minutes and every row it sees is brand new - created_at must
+    anchor to the actual fetch moment, NOT Iran-local midnight. Before
+    this fix, every same-day Digikala order got created_at pinned to
+    00:00 Iran time regardless of when it actually came in, which in turn
+    pinned every order's پیامک 1 (order_registered_at + 5h, see
+    src/didar/scheduling.py) to 05:00 Iran time for every single order."""
+    _TZ = _IRAN_TZ
+    today_jalali = jdatetime.date.fromgregorian(date=datetime.now(_TZ).date())
+    order_date_str = f"{today_jalali.year}/{today_jalali.month:02d}/{today_jalali.day:02d}"
+
+    adapter = DigikalaAdapter(config=_CFG, repository=repo)
+    before = datetime.now(timezone.utc)
+    order = adapter._normalize_sbs_row(_sbs_row(shipment_id=1, orderDate=order_date_str))
+    after = datetime.now(timezone.utc)
+
+    assert before <= order.created_at <= after
+    iran_local = order.created_at.astimezone(_TZ)
+    assert (iran_local.hour, iran_local.minute) != (0, 0)
 
 
 def test_normalize_sbs_row_missing_order_date_falls_back_to_now(repo):
