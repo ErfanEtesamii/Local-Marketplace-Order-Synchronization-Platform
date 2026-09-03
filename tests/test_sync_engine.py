@@ -158,7 +158,12 @@ def test_retried_order_marks_its_deal_notified(repo, synced_ids_file):
         synced_ids_file_path=str(synced_ids_file),
     )
 
-    engine.run_once()  # first attempt fails and is recorded
+    # NOTE: deliberately call _sync_source() here, not run_once() - the
+    # latter already includes a retry_pending_failures() pass at the end
+    # (see SyncEngine.run_once()'s docstring: "every source, then a retry
+    # pass"), which would immediately retry and succeed within this same
+    # call, defeating the point of testing the two phases separately.
+    engine._sync_source(adapter)  # first attempt fails and is recorded
 
     assert repo.is_deal_notified("deal-1") is False
 
