@@ -23,6 +23,12 @@ Five responsibilities:
      would make the semantics ambiguous for whoever reads this file next.
      See src/marketplaces/digikala.py for why a time-based window can't
      work for this source at all.
+  6. The Didar "any deal" Telegram poller (notified_deals +
+     deal_poll_state tables, 2026-09 - see src/didar/deal_poller.py):
+     notified_deals is the Id-based dedup guard so a Deal - whether
+     entered by hand in Didar or created by this program itself - is
+     never sent to Telegram twice; deal_poll_state is the single-row
+     sliding watermark DidarDealPoller advances every poll cycle.
 
 Kept deliberately simple - one file, no ORM - matching the scale of a
 single-server background service.
@@ -71,6 +77,16 @@ CREATE TABLE IF NOT EXISTS report_progress (
 CREATE TABLE IF NOT EXISTS digikala_shipment_watermark (
     platform          TEXT PRIMARY KEY,
     last_shipment_id  INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS notified_deals (
+    deal_id       TEXT PRIMARY KEY,
+    notified_at   TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS deal_poll_state (
+    id              INTEGER PRIMARY KEY CHECK (id = 1),
+    last_poll_time  TEXT NOT NULL
 );
 """
 
@@ -247,6 +263,46 @@ class Repository:
                 ON CONFLICT(platform) DO UPDATE SET last_shipment_id = excluded.last_shipment_id
                 """,
                 (platform, shipment_id),
+            )
+
+    # --- Didar "any deal" Telegram poller (2026-09) --------------------
+    # See src/didar/deal_poller.py's module docstring for the full
+    # design. notified_deals is the Id-based dedup guard (once a Deal
+    # Id is in here it is never re-notified - this is what lets
+    # SyncEngine's own per-order flow and DidarDealPoller's generic
+    # sweep safely overlap without double-messaging Telegram);
+    # deal_poll_state is the single-row sliding watermark the poller
+    # advances every cycle.
+
+    def is_deal_notified(self, deal_id: str) -> bool:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT 1 FROM notified_deals WHERE deal_id = ?", (deal_id,)
+            ).fetchone()
+        return row is not None
+
+    def mark_deal_notified(self, deal_id: str) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                "INSERT OR IGNORE INTO notified_deals (deal_id, notified_at) VALUES (?, ?)",
+                (deal_id, datetime.now(timezone.utc).isoformat()),
+            )
+
+    def get_deal_poll_watermark(self) -> datetime | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT last_poll_time FROM deal_poll_state WHERE id = 1"
+            ).fetchone()
+        return datetime.fromisoformat(row[0]) if row else None
+
+    def set_deal_poll_watermark(self, when: datetime) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO deal_poll_state (id, last_poll_time) VALUES (1, ?)
+                ON CONFLICT(id) DO UPDATE SET last_poll_time = excluded.last_poll_time
+                """,
+                (when.isoformat(),),
             )
 
     # --- reporting / health check -----------------------------------

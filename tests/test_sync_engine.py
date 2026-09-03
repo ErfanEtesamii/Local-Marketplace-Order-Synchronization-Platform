@@ -128,6 +128,45 @@ def test_new_order_gets_synced_and_marked(repo, synced_ids_file):
     assert repo.is_already_synced("fake1", "1")
 
 
+def test_new_order_marks_its_deal_notified(repo, synced_ids_file):
+    """Regression test (2026-09 "any deal" Telegram poller - see
+    src/didar/deal_poller.py): a deal SyncEngine creates itself must be
+    marked notified up front, so DidarDealPoller's independent sweep of
+    Didar never sends a second Telegram message for the same deal."""
+    adapter = FakeAdapter("fake1", list_orders=[_order("fake1", "1", with_items=True)])
+    didar = FakeDidarService()
+    engine = SyncEngine(
+        adapters=[adapter], repository=repo, didar_service=didar,
+        synced_ids_file_path=str(synced_ids_file),
+    )
+
+    engine.run_once()
+
+    assert repo.is_deal_notified("deal-1") is True
+
+
+def test_retried_order_marks_its_deal_notified(repo, synced_ids_file):
+    """Same guard as above, but via the retry path (retry_pending_failures())."""
+    adapter = FakeAdapter(
+        "fake1",
+        list_orders=[_order("fake1", "1", with_items=True)],
+        details={"1": _order("fake1", "1", with_items=True)},
+    )
+    didar = FakeDidarService(fail_once_for={"fake1:1"})
+    engine = SyncEngine(
+        adapters=[adapter], repository=repo, didar_service=didar,
+        synced_ids_file_path=str(synced_ids_file),
+    )
+
+    engine.run_once()  # first attempt fails and is recorded
+
+    assert repo.is_deal_notified("deal-1") is False
+
+    engine.retry_pending_failures()
+
+    assert repo.is_deal_notified("deal-1") is True
+
+
 def test_list_without_items_triggers_detail_fetch(repo, synced_ids_file):
     adapter = FakeAdapter(
         "fake1",

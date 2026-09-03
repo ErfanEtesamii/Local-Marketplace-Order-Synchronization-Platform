@@ -254,6 +254,18 @@ class Settings:
     poll_interval_seconds: int = field(
         default_factory=lambda: int(_get("POLL_INTERVAL_SECONDS", "120"))
     )
+    # "Any deal" Telegram poller (client request, 2026-09 - see
+    # src/didar/deal_poller.py): every Deal registered in Didar, manual
+    # or automatic, gets a Telegram notification. Runs on the same
+    # POLL_INTERVAL_SECONDS cadence as the marketplace polling from
+    # main.py's single scheduled job - no separate interval setting,
+    # since there's no reason for these two polls to run at different
+    # rates. Defaults to enabled; set DIDAR_DEAL_POLL_ENABLED=false to
+    # turn it off (e.g. while DIDAR_API_KEY isn't set up yet), same
+    # explicit opt-out pattern as SnappShopConfig.enabled above.
+    didar_deal_poll_enabled: bool = field(
+        default_factory=lambda: _get("DIDAR_DEAL_POLL_ENABLED", "true").lower() == "true"
+    )
     tapsishop: TapsiShopConfig = field(default_factory=TapsiShopConfig)
     digikala: DigikalaConfig = field(default_factory=DigikalaConfig)
     snappshop: SnappShopConfig = field(default_factory=SnappShopConfig)

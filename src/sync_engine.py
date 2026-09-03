@@ -273,6 +273,15 @@ class SyncEngine:
                 shipping_amount=shipping_amount,
                 total_amount=total_amount,
             )
+            # Marked notified BEFORE the DidarDealPoller ever gets a
+            # chance to see this same Deal.Id (see
+            # src/didar/deal_poller.py's module docstring) - this deal
+            # is about to get the rich per-order Telegram message right
+            # below via notify_new_order(); without this, the generic
+            # "any deal" poller would discover the same Id a few
+            # seconds/minutes later and send a second, less detailed
+            # notification for it.
+            self._repo.mark_deal_notified(deal_id)
             # Fire and forget - notify_new_order catches and logs its own
             # errors, so a Telegram outage can never break the sync itself.
             self._telegram.notify_new_order(order, deal_id)
@@ -493,6 +502,9 @@ class SyncEngine:
                     shipping_amount=shipping_amount,
                     total_amount=total_amount,
                 )
+                # See the matching call/comment in _sync_one_order() -
+                # same reasoning applies to the retry path.
+                self._repo.mark_deal_notified(deal_id)
                 self._telegram.notify_new_order(order, deal_id)
                 log.info(
                     "sync_engine: retry succeeded for %s order %s",

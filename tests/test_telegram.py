@@ -332,6 +332,59 @@ def test_notify_new_order_actually_sends_message(monkeypatch):
     assert "parse_mode" not in kwargs
 
 
+def test_notify_new_deal_actually_sends_message(monkeypatch):
+    """New-deal notifications (client request, 2026-09 - every Deal
+    registered in Didar, manual or automatic - see
+    src/didar/deal_poller.py) go through the same send path as
+    notify_new_order() and must actually reach send_message()."""
+    from src.didar.deal_poller import NewDealInfo
+
+    notifier = TelegramNotifier()
+    notifier._bot = MagicMock()
+    notifier._chat_ids = [775753176]
+
+    deal = NewDealInfo(
+        deal_id="deal-1",
+        code=4242,
+        title="معامله علی رضایی",
+        customer_name="علی رضایی",
+        price=Decimal("250000"),
+        owner_name="نگین عابدیان",
+        stage_name="مذاکرات اولیه",
+        register_time=datetime(2026, 9, 3, 8, 0, 0, tzinfo=timezone.utc),
+    )
+
+    with patch.object(notifier, "is_configured", return_value=True), \
+         patch.object(notifier._bot, "send_message") as mock_send:
+        notifier.notify_new_deal(deal)
+
+    mock_send.assert_called_once()
+    _, kwargs = mock_send.call_args
+    assert kwargs["chat_id"] == 775753176
+    text = kwargs["text"]
+    assert "معامله جدید در دیدار" in text
+    assert "علی رضایی" in text
+    assert "250,000" in text
+    assert "نگین عابدیان" in text
+    assert "مذاکرات اولیه" in text
+    assert "4242" in text
+    assert "parse_mode" not in kwargs
+
+
+def test_notify_new_deal_noops_when_not_configured():
+    from src.didar.deal_poller import NewDealInfo
+
+    notifier = TelegramNotifier()
+    deal = NewDealInfo(
+        deal_id="deal-1", code=None, title="t", customer_name=None,
+        price=Decimal("0"), owner_name=None, stage_name=None, register_time=None,
+    )
+    with patch.object(notifier, "is_configured", return_value=False), \
+         patch.object(notifier, "_send") as mock_send:
+        notifier.notify_new_deal(deal)
+    mock_send.assert_not_called()
+
+
 def test_send_fans_out_to_every_configured_chat_id():
     """A single _send() call must reach every recipient, not just one."""
     notifier = TelegramNotifier()

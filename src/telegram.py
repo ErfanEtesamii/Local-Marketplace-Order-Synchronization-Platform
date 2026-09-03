@@ -72,7 +72,7 @@ import asyncio
 import os
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
-from typing import Optional, Union
+from typing import TYPE_CHECKING, Optional, Union
 
 import jdatetime
 from telegram import Bot
@@ -81,6 +81,12 @@ from telegram.error import TelegramError
 from src.db.repository import Repository
 from src.logger import get_logger
 from src.shipping_fees import shipping_fee_rial
+
+if TYPE_CHECKING:
+    # Only for type hints - see notify_new_deal() below. No runtime
+    # import: src/didar/deal_poller.py has no dependency on this module
+    # and shouldn't gain one just because this file references its type.
+    from src.didar.deal_poller import NewDealInfo
 
 log = get_logger(__name__)
 
@@ -455,6 +461,67 @@ class TelegramNotifier:
             "━━━━━━━━━━━━━━━━━━━━\n"
             f"🕐 {when}\n"
             "🟢 ثبت موفق در دیدار"
+        )
+
+    # ------------------------------------------------------------------
+    # "Any deal" notification - every Deal registered in Didar, manual
+    # or automatic (client requirement, 2026-09; see
+    # src/didar/deal_poller.py for how these are discovered/deduped)
+    # ------------------------------------------------------------------
+    def notify_new_deal(self, deal: "NewDealInfo") -> None:
+        """Send the Persian RTL "new deal" message for a Deal detected
+        by DidarDealPoller - i.e. ANY deal that showed up in Didar,
+        regardless of whether a human typed it in by hand or this
+        program's own SyncEngine created it from a marketplace order.
+
+        Deals SyncEngine itself creates are marked notified up front
+        (see Repository.mark_deal_notified(), called from
+        sync_engine.py right before notify_new_order()) so they reach
+        Telegram exactly once - via notify_new_order() above, with the
+        full order/money breakdown - never a second time through this
+        generic path. Safe to call with unconfigured credentials -
+        silently no-ops, same as every other public method here.
+        """
+        if not self.is_configured():
+            return
+        try:
+            message = self._format_new_deal_message(deal)
+            self._send(message)
+            log.info("telegram: sent new-deal notification for deal %s", deal.deal_id)
+        except TelegramError as exc:
+            log.error(
+                "telegram: failed to send new-deal notification for deal %s: %s",
+                deal.deal_id, exc,
+            )
+        except Exception:
+            log.exception(
+                "telegram: unexpected error sending new-deal notification for deal %s",
+                deal.deal_id,
+            )
+
+    def _format_new_deal_message(self, deal: "NewDealInfo") -> str:
+        """Field set matches what's actually confirmed available from
+        POST /deal/getdealdetail (Title, Person/Company.DisplayName,
+        Price, Owner.DisplayName, PipelineStageId -> stage Title via
+        DidarDealPoller.pipeline_stage_title()) - no field is guessed
+        beyond that response shape."""
+        when = self._format_jalali_datetime(deal.register_time)
+        reference = f"#{deal.code}" if deal.code else deal.deal_id
+        return (
+            "🔔 معامله جدید در دیدار\n"
+            "📌 عنوان:\n"
+            f"{deal.title}\n"
+            "👤 مشتری:\n"
+            f"{deal.customer_name or 'نامشخص'}\n"
+            "💰 مبلغ:\n"
+            f"{_format_rial(deal.price)} ریال\n"
+            "🧑\u200d💼 مسئول:\n"
+            f"{deal.owner_name or 'نامشخص'}\n"
+            "🚦 مرحله:\n"
+            f"{deal.stage_name or 'نامشخص'}\n"
+            "━━━━━━━━━━━━━━━━━━━━\n"
+            f"🕐 {when}\n"
+            f"شناسه معامله: {reference}"
         )
 
     def _format_jalali_datetime(self, dt: Optional[datetime]) -> str:

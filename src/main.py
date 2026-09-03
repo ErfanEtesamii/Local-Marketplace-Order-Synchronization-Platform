@@ -11,6 +11,7 @@ from apscheduler.schedulers.blocking import BlockingScheduler
 
 from src.config import settings
 from src.db.repository import Repository
+from src.didar.deal_poller import DidarDealPoller
 from src.didar.service import DidarSyncService
 from src.logger import get_logger
 from src.marketplaces.basalam import BasalamAdapter
@@ -51,7 +52,12 @@ def build_engine() -> tuple[SyncEngine, Repository]:
     return engine, repository
 
 
-def _poll_cycle(engine: SyncEngine, repository: Repository, telegram: TelegramNotifier) -> None:
+def _poll_cycle(
+    engine: SyncEngine,
+    repository: Repository,
+    telegram: TelegramNotifier,
+    deal_poller: DidarDealPoller | None,
+) -> None:
     engine.run_once()
     # Cheap SQLite lookups - safe to run every cycle rather than on a
     # separate schedule. Logs a WARNING for anything that looks stuck;
@@ -63,6 +69,27 @@ def _poll_cycle(engine: SyncEngine, repository: Repository, telegram: TelegramNo
     # boundaries). Best-effort - logs and swallows its own errors, so a
     # Telegram outage can never break the poll cycle itself.
     telegram.check_and_send_reports(repository, engine.adapter_names)
+    # "Any deal" Telegram notification (client request, 2026-09): every
+    # Deal registered in Didar, manual or automatic, not just the ones
+    # this program itself creates from a marketplace order - see
+    # src/didar/deal_poller.py's module docstring. None when
+    # DIDAR_DEAL_POLL_ENABLED=false.
+    if deal_poller is not None:
+        _poll_new_deals(deal_poller, repository, telegram)
+
+
+def _poll_new_deals(
+    deal_poller: DidarDealPoller, repository: Repository, telegram: TelegramNotifier
+) -> None:
+    """One step of the "any deal" poller, isolated in its own try/except
+    (same "each source isolated" philosophy as _sync_source() in
+    sync_engine.py) so a Didar outage here can never break the
+    marketplace poll cycle it's called from."""
+    try:
+        for deal in deal_poller.poll_new_deals(repository):
+            telegram.notify_new_deal(deal)
+    except Exception:
+        log.exception("didar: deal poller cycle failed - will retry next cycle")
 
 
 def run_forever() -> None:
@@ -70,11 +97,20 @@ def run_forever() -> None:
     scheduler = BlockingScheduler(timezone="UTC")
     telegram = TelegramNotifier()
 
+    deal_poller: DidarDealPoller | None = None
+    if settings.didar_deal_poll_enabled:
+        deal_poller = DidarDealPoller()
+    else:
+        log.info(
+            "didar deal poller: disabled (DIDAR_DEAL_POLL_ENABLED is not 'true') "
+            "- only this program's own marketplace-driven deals will notify Telegram"
+        )
+
     scheduler.add_job(
         _poll_cycle,
         "interval",
         seconds=settings.poll_interval_seconds,
-        args=[engine, repository, telegram],
+        args=[engine, repository, telegram, deal_poller],
         # NOTE: do NOT pass next_run_time=None here - in APScheduler that
         # means "add this job paused", not "run immediately". It was
         # silently preventing the interval job from ever firing after the
@@ -98,7 +134,7 @@ def run_forever() -> None:
 
     # Run once immediately on startup rather than waiting a full interval.
     try:
-        _poll_cycle(engine, repository, telegram)
+        _poll_cycle(engine, repository, telegram, deal_poller)
     except Exception:
         log.exception("sync_engine: initial run_once failed - will retry on schedule")
 

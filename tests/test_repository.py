@@ -49,6 +49,32 @@ def test_shipment_watermark_roundtrip(repo):
     repo.set_last_shipment_id("digikala", 42)
     assert repo.get_last_shipment_id("digikala") == 42
 
+
+def test_notified_deals_dedup_roundtrip(repo):
+    """See src/didar/deal_poller.py - this is the guard that stops a
+    Deal from ever being sent to Telegram twice."""
+    assert repo.is_deal_notified("deal-1") is False
+    repo.mark_deal_notified("deal-1")
+    assert repo.is_deal_notified("deal-1") is True
+
+
+def test_marking_a_deal_notified_twice_does_not_raise(repo):
+    repo.mark_deal_notified("deal-1")
+    repo.mark_deal_notified("deal-1")  # INSERT OR IGNORE - must not raise
+    assert repo.is_deal_notified("deal-1") is True
+
+
+def test_deal_poll_watermark_roundtrip(repo):
+    assert repo.get_deal_poll_watermark() is None
+
+    now = datetime.now(timezone.utc)
+    repo.set_deal_poll_watermark(now)
+    assert repo.get_deal_poll_watermark() == now
+
+    later = now + timedelta(minutes=2)
+    repo.set_deal_poll_watermark(later)
+    assert repo.get_deal_poll_watermark() == later
+
     repo.set_last_shipment_id("digikala", 99)
     assert repo.get_last_shipment_id("digikala") == 99
 
