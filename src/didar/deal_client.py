@@ -355,17 +355,6 @@ class DidarDealClient:
     # list_deal_labels()/get_status_breakdown_for_label() below - but
     # the underlying per-status numbers are still fetched here in one
     # shot in case a future report wants them again).
-    #
-    # Deliberately a SEPARATE call from get_won_stats() above rather than
-    # a shared helper: this one omits Criteria.Status entirely (asks for
-    # every status in one shot) because Didar's own search_v2 response
-    # already returns the All/Pending/Won/Lost counts and sums broken
-    # down for the FULL matched set in a single call - AllDealsCount,
-    # PendingDealsCount, WonDealsCount, LostDealsCount (and their
-    # matching *TotalPrice siblings), confirmed straight from Didar's
-    # documented search_v2 response example. No need to issue three
-    # separate Status-filtered requests (Pending/Won/Lost) and sum them
-    # by hand - Didar already did that server-side.
     def get_status_breakdown(
         self, source: str, since: datetime, until: datetime
     ) -> "DealStatusBreakdown":
@@ -437,15 +426,69 @@ class DidarDealClient:
     def _status_breakdown_for_label(
         self, label_id: str, since: datetime, until: datetime
     ) -> "DealStatusBreakdown":
-        """Shared POST /deal/search_v2 (Criteria.Status left unset, so
-        Didar returns the All/Pending/Won/Lost counts+sums for the full
-        matched set in one shot - see get_status_breakdown()'s original
-        docstring) for one already-resolved Label Id. Used by both
+        """One already-resolved Label Id's All/Pending/Won/Lost
+        counts+sums in [since, until). Used by both
         get_status_breakdown() (source -> label lookup first) and
         get_status_breakdown_for_label() (label id already known, e.g.
-        from list_deal_labels()). Returns an all-zero
-        DealStatusBreakdown - never raises - on any failure."""
-        zero = DealStatusBreakdown()
+        from list_deal_labels()).
+
+        Issues THREE separate POST /deal/search_v2 calls - one per
+        Criteria.Status ("Pending"/"Won"/"Lost") - and sums their own
+        TotalCount/TotalPrice, rather than one Status-unset call read
+        from the response's AllDealsCount/AllDealsTotalPrice fields.
+
+        This was originally a single unset-Status call (per Didar's own
+        documented search_v2 response example, which shows
+        AllDealsCount/PendingDealsCount/WonDealsCount/LostDealsCount
+        all returned together for the full matched set in one shot).
+        Confirmed broken in production (2026-09 follow-up 4, live vs.
+        the client's own Didar export for one day): for some labels
+        (اسنپ, تپسی) the unset-Status AllDealsCount correctly matched
+        SearchFromTime/SearchToTime, but for others (فرازهنر,
+        دیجی‌کالا, تلفنی) it silently included older deals from outside
+        the requested window - Didar's date filter isn't reliably
+        applied to that aggregate when Status is left unset. The
+        explicit-Status shape used here is exactly what
+        get_won_stats() above already does (Status="Won" only) and
+        that one has never shown this leak, so per-status queries are
+        the only call shape confirmed to respect the date range for
+        every label - three calls instead of one, but correct instead
+        of occasionally over-counting.
+
+        Returns an all-zero DealStatusBreakdown - never raises - on any
+        failure (a failed status call contributes zero for that status
+        rather than aborting the other two)."""
+        totals: dict[str, tuple[int, Decimal]] = {}
+        for status in ("Pending", "Won", "Lost"):
+            totals[status] = self._status_count_and_total(label_id, status, since, until)
+
+        pending_count, pending_total = totals["Pending"]
+        won_count, won_total = totals["Won"]
+        lost_count, lost_total = totals["Lost"]
+        return DealStatusBreakdown(
+            all_count=pending_count + won_count + lost_count,
+            all_total=pending_total + won_total + lost_total,
+            pending_count=pending_count,
+            pending_total=pending_total,
+            won_count=won_count,
+            won_total=won_total,
+            lost_count=lost_count,
+            lost_total=lost_total,
+        )
+
+    def _status_count_and_total(
+        self, label_id: str, status: str, since: datetime, until: datetime
+    ) -> tuple[int, Decimal]:
+        """One Status-filtered POST /deal/search_v2 call for a single
+        already-resolved Label Id, reading TotalCount/TotalPrice - the
+        same field pair and explicit-Status call shape as
+        get_won_stats() above (the one call shape confirmed to respect
+        SearchFromTime/SearchToTime for every label - see
+        _status_breakdown_for_label()'s docstring). Returns
+        (0, Decimal("0")) - never raises - on any request/parsing
+        failure, so one bad status call can't blank out the other two
+        statuses for this label."""
+        zero = (0, Decimal("0"))
         try:
             payload = self._post(
                 "/deal/search_v2",
@@ -453,6 +496,7 @@ class DidarDealClient:
                     "Criteria": {
                         "SearchFromTime": _iso(since),
                         "SearchToTime": _iso(until),
+                        "Status": status,
                         "LabelIds": [label_id],
                     },
                     "From": 0,
@@ -462,8 +506,8 @@ class DidarDealClient:
         except Exception:
             log.exception(
                 "didar: status breakdown search_v2 request failed for "
-                "label_id=%r - reporting all-zero",
-                label_id,
+                "label_id=%r status=%r - reporting 0 for this status",
+                label_id, status,
             )
             return zero
 
@@ -471,32 +515,22 @@ class DidarDealClient:
         if not isinstance(response, dict):
             log.warning(
                 "didar: status breakdown - no Response in search_v2 "
-                "payload for label_id=%r: %r", label_id, payload,
+                "payload for label_id=%r status=%r: %r",
+                label_id, status, payload,
             )
             return zero
 
-        def _int(key: str) -> int:
-            try:
-                return int(round(float(response.get(key, 0))))
-            except (TypeError, ValueError):
-                return 0
+        try:
+            count = int(round(float(response.get("TotalCount", 0))))
+        except (TypeError, ValueError):
+            count = 0
 
-        def _dec(key: str) -> Decimal:
-            try:
-                return Decimal(str(response.get(key, 0)))
-            except (InvalidOperation, TypeError, ValueError):
-                return Decimal("0")
+        try:
+            total = Decimal(str(response.get("TotalPrice", 0)))
+        except (InvalidOperation, TypeError, ValueError):
+            total = Decimal("0")
 
-        return DealStatusBreakdown(
-            all_count=_int("AllDealsCount"),
-            all_total=_dec("AllDealsTotalPrice"),
-            pending_count=_int("PendingDealsCount"),
-            pending_total=_dec("PendingDealsTotalPrice"),
-            won_count=_int("WonDealsCount"),
-            won_total=_dec("WonDealsTotalPrice"),
-            lost_count=_int("LostDealsCount"),
-            lost_total=_dec("LostDealsTotalPrice"),
-        )
+        return count, total
 
     def find_existing_deal_id(self, order: NormalizedOrder) -> str | None:
         """
