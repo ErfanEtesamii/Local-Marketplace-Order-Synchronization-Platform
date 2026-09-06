@@ -527,6 +527,29 @@ class TelegramNotifier:
 
         return True
 
+    def _has_credentials(self) -> bool:
+        """True iff TELEGRAM_BOT_TOKEN + at least one chat id are set,
+        WITHOUT making any network call (unlike is_configured(), which
+        also calls getMe()). Used by notify_new_order()/notify_new_deal()
+        to tell apart two very different reasons is_configured() can
+        return False:
+
+          1. Telegram genuinely isn't set up (no token/chat id) - this
+             is a deliberate no-op, queuing would just accumulate rows
+             that can never succeed until someone configures .env.
+          2. Credentials ARE present but the getMe() reachability check
+             itself failed (e.g. a transient network timeout - see the
+             2026-09 production incident where a tapsishop order's
+             deal was created fine in Didar but its Telegram
+             notification was silently dropped because is_configured()
+             failed before _deliver() ever ran, so nothing was queued
+             for retry_pending_notifications() to pick up later).
+
+        Only case 2 should queue a notification_failures row - see
+        notify_new_order()/notify_new_deal() below."""
+        token = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
+        return bool(token and self._collect_raw_chat_ids())
+
     @staticmethod
     def _collect_raw_chat_ids() -> list[str]:
         """Merge TELEGRAM_CHAT_ID (legacy, single) with
@@ -623,8 +646,31 @@ class TelegramNotifier:
         being silently lost forever - see this module's docstring for
         why that used to happen: by the time this is ever called,
         `Repository.mark_synced()`/`mark_deal_notified()` have already
-        run, so nothing else in the system would ever retry it."""
+        run, so nothing else in the system would ever retry it.
+
+        CONFIRMED PRODUCTION GAP (2026-09): is_configured() failing
+        (e.g. a transient timeout on its own getMe() reachability
+        check, not missing credentials) used to make this method
+        return here, before _deliver() - and therefore
+        record_notification_failure() - ever ran, so the message was
+        lost with nothing for retry_pending_notifications() to pick up
+        later, even though the order's Didar deal was created fine.
+        Now queued directly via _has_credentials() below whenever
+        credentials are actually present, so the next poll cycle's
+        retry_pending_notifications() (which re-checks is_configured()
+        itself) delivers it as soon as Telegram is reachable again."""
         if not self.is_configured():
+            if self._has_credentials():
+                message = self._format_new_order_message(order)
+                ref_id = f"order:{order.source}:{order.source_order_id}"
+                log.error(
+                    "telegram: not reachable right now - queuing per-order "
+                    "notification for %s order %s (deal %s) for retry",
+                    order.source, order.source_order_id, deal_id,
+                )
+                repository.record_notification_failure(
+                    ref_id, message, "telegram unreachable (is_configured() failed)"
+                )
             return
         message = self._format_new_order_message(order)
         ref_id = f"order:{order.source}:{order.source_order_id}"
@@ -721,8 +767,25 @@ class TelegramNotifier:
         specifically has NO other safety net at all if the send fails,
         since DidarDealPoller already marked the deal notified before
         handing it to this method (see main.py's _poll_new_deals).
+
+        Same is_configured()-vs-_has_credentials() distinction as
+        notify_new_order() above (2026-09 fix): a transient getMe()
+        timeout here must still queue for retry, not silently drop the
+        message - see that method's docstring for the confirmed
+        production incident this addresses.
         """
         if not self.is_configured():
+            if self._has_credentials():
+                message = self._format_new_deal_message(deal)
+                ref_id = f"deal:{deal.deal_id}"
+                log.error(
+                    "telegram: not reachable right now - queuing new-deal "
+                    "notification for deal %s for retry",
+                    deal.deal_id,
+                )
+                repository.record_notification_failure(
+                    ref_id, message, "telegram unreachable (is_configured() failed)"
+                )
             return
         message = self._format_new_deal_message(deal)
         ref_id = f"deal:{deal.deal_id}"

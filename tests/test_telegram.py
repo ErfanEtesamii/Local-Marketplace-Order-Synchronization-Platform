@@ -368,6 +368,46 @@ def test_notify_new_order_actually_sends_message(monkeypatch, repo):
 
 
 @respx.mock
+def test_notify_new_order_queues_for_retry_when_getme_unreachable(monkeypatch, repo):
+    """Regression test for a confirmed 2026-09 production incident: a
+    tapsishop order's Didar deal was created successfully, but its
+    Telegram notification was silently lost because is_configured()'s
+    own getMe() reachability check timed out - notify_new_order()
+    returned before _deliver() (and therefore
+    record_notification_failure()) ever ran, so nothing was left for
+    retry_pending_notifications() to pick up on a later poll cycle.
+
+    Credentials ARE valid here (token + chat id both set) - only the
+    getMe() call itself fails - so this must be queued, unlike the
+    "Telegram isn't configured at all" case covered by
+    test_notify_new_deal_noops_when_not_configured."""
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", _TOKEN)
+    monkeypatch.setenv("TELEGRAM_CHAT_ID", "775753176")
+    respx.post(f"{_API}/getMe").mock(side_effect=httpx.TimeoutException("timed out"))
+
+    notifier = TelegramNotifier()
+    order = _order_with_items("tapsishop", "12345", "250000")
+    notifier.notify_new_order(order, "deal-12345", repo)
+
+    pending = repo.get_pending_notification_failures()
+    assert len(pending) == 1
+    assert pending[0].ref_id == "order:tapsishop:12345"
+    assert "سفارش جدید ثبت شد" in pending[0].message_text
+
+
+def test_notify_new_order_noops_when_credentials_missing(repo):
+    """The OTHER reason is_configured() can be False - no
+    TELEGRAM_BOT_TOKEN/CHAT_ID at all (Telegram deliberately unused) -
+    must still be a silent no-op, not queue anything: there's no
+    reachability problem to retry here, just a feature that isn't
+    turned on."""
+    notifier = TelegramNotifier()  # no TELEGRAM_* env vars set (see conftest)
+    order = _order_with_items("tapsishop", "12345", "250000")
+    notifier.notify_new_order(order, "deal-12345", repo)
+    assert repo.get_pending_notification_failures() == []
+
+
+@respx.mock
 def test_notify_new_deal_actually_sends_message(monkeypatch, repo):
     """New-deal notifications (client request, 2026-09 - every Deal
     registered in Didar, manual or automatic - see
