@@ -2,29 +2,53 @@
 Tests for the Telegram notification feature (src/telegram.py).
 
 Covers: per-order message formatting (Requirement 1), report-message
-formatting and money aggregation (Requirements 2-4), and the day/week/
-month rollover detection that drives when reports fire.
+formatting and money aggregation (Requirements 2-4), the day/week/
+month rollover detection that drives when reports fire, and the
+plain-synchronous-HTTP send path + retry queue introduced in the
+2026-09 rewrite (see src/telegram.py's module docstring for the
+"orders sync to Didar but Telegram never fires" incident this
+replaces the old asyncio/python-telegram-bot implementation for).
 """
 from __future__ import annotations
 
+import json
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import patch
 
+import httpx
 import jdatetime
 import pytest
-from telegram.error import TelegramError
+import respx
 
 from src.db.repository import Repository
 from src.marketplaces.base import NormalizedOrder, OrderItem
 from src.telegram import (
     IRAN_TZ,
+    TelegramError,
     TelegramNotifier,
     _emoji_number,
     _format_rial,
     _iranian_weekday,
     _jalali_key,
 )
+
+# Same fake token used across every test below - real-looking shape
+# (Telegram bot tokens are "<numeric id>:<35-char secret>") but never a
+# real credential. Tests build the exact URL TelegramNotifier itself
+# builds (`https://api.telegram.org/bot<token>/<method>`) and mock it
+# with respx, the same way every other httpx-based client in this
+# project is tested (see tests/test_didar_activity.py etc.) - nothing
+# python-telegram-bot-specific is mocked anymore since src/telegram.py
+# no longer depends on that package at all.
+_TOKEN = "123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11"
+_API = f"https://api.telegram.org/bot{_TOKEN}"
+
+
+def _ok_get_me():
+    return respx.post(f"{_API}/getMe").mock(
+        return_value=httpx.Response(200, json={"ok": True, "result": {"id": 1, "is_bot": True}})
+    )
 
 
 def _order_with_items(
@@ -67,57 +91,57 @@ def repo(tmp_path):
 # is_configured()
 # ---------------------------------------------------------------------
 
+@respx.mock
 def test_is_configured_true_with_numeric_chat_id(monkeypatch):
-    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11")
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", _TOKEN)
     monkeypatch.setenv("TELEGRAM_CHAT_ID", "775753176")
+    route = _ok_get_me()
 
     notifier = TelegramNotifier()
-    with patch("telegram.Bot.get_me") as mock_get_me:
-        mock_get_me.return_value = MagicMock()
-        assert notifier.is_configured() is True
-        mock_get_me.assert_called_once()
+    assert notifier.is_configured() is True
+    assert route.called
 
 
+@respx.mock
 def test_is_configured_true_with_channel_username(monkeypatch):
     """TELEGRAM_CHAT_ID as "@channel_username" must work, not just a
     numeric id - this was the exact bug flagged in review."""
-    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11")
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", _TOKEN)
     monkeypatch.setenv("TELEGRAM_CHAT_ID", "@my_channel")
+    _ok_get_me()
 
     notifier = TelegramNotifier()
-    with patch("telegram.Bot.get_me") as mock_get_me:
-        mock_get_me.return_value = MagicMock()
-        assert notifier.is_configured() is True
+    assert notifier.is_configured() is True
     assert notifier._chat_ids == ["@my_channel"]
 
 
+@respx.mock
 def test_is_configured_true_with_multiple_numbered_chat_ids(monkeypatch):
     """TELEGRAM_CHAT_ID_1..TELEGRAM_CHAT_ID_10 (plus the legacy single
     TELEGRAM_CHAT_ID) all merge into one recipient list."""
-    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11")
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", _TOKEN)
     monkeypatch.delenv("TELEGRAM_CHAT_ID", raising=False)
     monkeypatch.setenv("TELEGRAM_CHAT_ID_1", "111")
     monkeypatch.setenv("TELEGRAM_CHAT_ID_2", "@second_channel")
     monkeypatch.setenv("TELEGRAM_CHAT_ID_3", "333")
+    _ok_get_me()
 
     notifier = TelegramNotifier()
-    with patch("telegram.Bot.get_me") as mock_get_me:
-        mock_get_me.return_value = MagicMock()
-        assert notifier.is_configured() is True
+    assert notifier.is_configured() is True
     assert notifier._chat_ids == [111, "@second_channel", 333]
 
 
+@respx.mock
 def test_is_configured_skips_invalid_recipient_but_keeps_valid_ones(monkeypatch):
     """One bad id among several must not disable the whole feature."""
-    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11")
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", _TOKEN)
     monkeypatch.delenv("TELEGRAM_CHAT_ID", raising=False)
     monkeypatch.setenv("TELEGRAM_CHAT_ID_1", "111")
     monkeypatch.setenv("TELEGRAM_CHAT_ID_2", "not_a_number")
+    _ok_get_me()
 
     notifier = TelegramNotifier()
-    with patch("telegram.Bot.get_me") as mock_get_me:
-        mock_get_me.return_value = MagicMock()
-        assert notifier.is_configured() is True
+    assert notifier.is_configured() is True
     assert notifier._chat_ids == [111]
 
 
@@ -128,27 +152,32 @@ def test_is_configured_false_when_missing_token(monkeypatch):
 
 
 def test_is_configured_false_when_missing_chat_id(monkeypatch):
-    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11")
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", _TOKEN)
     monkeypatch.delenv("TELEGRAM_CHAT_ID", raising=False)
     assert TelegramNotifier().is_configured() is False
 
 
 def test_is_configured_false_when_chat_id_invalid(monkeypatch):
     """Neither numeric nor "@..." -> config error, not a crash."""
-    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11")
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", _TOKEN)
     monkeypatch.setenv("TELEGRAM_CHAT_ID", "not_a_number")
     assert TelegramNotifier().is_configured() is False
 
 
+@respx.mock
 def test_is_configured_false_when_bot_unreachable(monkeypatch):
-    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11")
+    """A non-2xx/`ok:false` response from getMe (bad token, revoked
+    credentials, etc.) must disable the feature, not crash it. Uses a
+    401 (non-retryable per http_utils.is_retryable_http_error) so this
+    fails immediately instead of sitting through default_retry's real
+    exponential-backoff sleeps."""
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", _TOKEN)
     monkeypatch.setenv("TELEGRAM_CHAT_ID", "775753176")
+    respx.post(f"{_API}/getMe").mock(
+        return_value=httpx.Response(401, json={"ok": False, "description": "Unauthorized"})
+    )
 
-    notifier = TelegramNotifier()
-    with patch("telegram.Bot.get_me") as mock_get_me:
-        from telegram.error import TelegramError
-        mock_get_me.side_effect = TelegramError("Bot unreachable")
-        assert notifier.is_configured() is False
+    assert TelegramNotifier().is_configured() is False
 
 
 # ---------------------------------------------------------------------
@@ -309,40 +338,49 @@ def test_format_rial_uses_ascii_digits_and_comma():
     assert _format_rial(Decimal("12500000")) == "12,500,000"
 
 
-def test_notify_new_order_actually_sends_message(monkeypatch):
-    """Regression test for the coroutine-never-awaited bug: before the fix,
-    self._bot.send_message(...) built a coroutine and immediately discarded
-    it without ever calling Telegram's API."""
+@respx.mock
+def test_notify_new_order_actually_sends_message(monkeypatch, repo):
+    """End-to-end regression test for the whole 2026-09 send path:
+    the sendMessage HTTP call must actually go out with the right
+    chat_id/text, and nothing should be queued for retry when it
+    succeeds."""
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", _TOKEN)
+    monkeypatch.setenv("TELEGRAM_CHAT_ID", "775753176")
+    _ok_get_me()
+    send_route = respx.post(f"{_API}/sendMessage").mock(
+        return_value=httpx.Response(200, json={"ok": True, "result": {}})
+    )
+
     notifier = TelegramNotifier()
-    notifier._bot = MagicMock()
-    notifier._chat_ids = [775753176]
-
     order = _order_with_items("digikala", "12345", "250000")
+    notifier.notify_new_order(order, "deal-12345", repo)
 
-    with patch.object(notifier, "is_configured", return_value=True), \
-         patch.object(notifier._bot, "send_message") as mock_send:
-        notifier.notify_new_order(order, "deal-12345")
-
-    mock_send.assert_called_once()
-    _, kwargs = mock_send.call_args
-    assert kwargs["chat_id"] == 775753176
-    assert "سفارش جدید ثبت شد" in kwargs["text"]
-    # No parse_mode - messages are sent as literal plain text so the
+    assert send_route.called
+    body = json.loads(send_route.calls[0].request.content)
+    assert body["chat_id"] == 775753176
+    assert "سفارش جدید ثبت شد" in body["text"]
+    # No parse_mode key - messages are sent as literal plain text so the
     # exact template can't be corrupted by Markdown escaping.
-    assert "parse_mode" not in kwargs
+    assert "parse_mode" not in body
+    assert repo.get_pending_notification_failures() == []
 
 
-def test_notify_new_deal_actually_sends_message(monkeypatch):
+@respx.mock
+def test_notify_new_deal_actually_sends_message(monkeypatch, repo):
     """New-deal notifications (client request, 2026-09 - every Deal
     registered in Didar, manual or automatic - see
     src/didar/deal_poller.py) go through the same send path as
-    notify_new_order() and must actually reach send_message()."""
+    notify_new_order() and must actually reach the Telegram API."""
     from src.didar.deal_poller import NewDealInfo
 
-    notifier = TelegramNotifier()
-    notifier._bot = MagicMock()
-    notifier._chat_ids = [775753176]
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", _TOKEN)
+    monkeypatch.setenv("TELEGRAM_CHAT_ID", "775753176")
+    _ok_get_me()
+    send_route = respx.post(f"{_API}/sendMessage").mock(
+        return_value=httpx.Response(200, json={"ok": True, "result": {}})
+    )
 
+    notifier = TelegramNotifier()
     deal = NewDealInfo(
         deal_id="deal-1",
         code=4242,
@@ -353,25 +391,22 @@ def test_notify_new_deal_actually_sends_message(monkeypatch):
         stage_name="مذاکرات اولیه",
         register_time=datetime(2026, 9, 3, 8, 0, 0, tzinfo=timezone.utc),
     )
+    notifier.notify_new_deal(deal, repo)
 
-    with patch.object(notifier, "is_configured", return_value=True), \
-         patch.object(notifier._bot, "send_message") as mock_send:
-        notifier.notify_new_deal(deal)
-
-    mock_send.assert_called_once()
-    _, kwargs = mock_send.call_args
-    assert kwargs["chat_id"] == 775753176
-    text = kwargs["text"]
+    assert send_route.called
+    body = json.loads(send_route.calls[0].request.content)
+    assert body["chat_id"] == 775753176
+    text = body["text"]
     assert "معامله جدید در دیدار" in text
     assert "علی رضایی" in text
     assert "250,000" in text
     assert "نگین عابدیان" in text
     assert "مذاکرات اولیه" in text
     assert "4242" in text
-    assert "parse_mode" not in kwargs
+    assert "parse_mode" not in body
 
 
-def test_notify_new_deal_noops_when_not_configured():
+def test_notify_new_deal_noops_when_not_configured(repo):
     from src.didar.deal_poller import NewDealInfo
 
     notifier = TelegramNotifier()
@@ -381,48 +416,61 @@ def test_notify_new_deal_noops_when_not_configured():
     )
     with patch.object(notifier, "is_configured", return_value=False), \
          patch.object(notifier, "_send") as mock_send:
-        notifier.notify_new_deal(deal)
+        notifier.notify_new_deal(deal, repo)
     mock_send.assert_not_called()
 
 
+@respx.mock
 def test_send_fans_out_to_every_configured_chat_id():
     """A single _send() call must reach every recipient, not just one."""
     notifier = TelegramNotifier()
-    notifier._bot = MagicMock()
-    notifier._bot.send_message = AsyncMock()
+    notifier._client = httpx.Client(base_url=_API)
     notifier._chat_ids = [111, "@second_channel", 333]
+    route = respx.post(f"{_API}/sendMessage").mock(
+        return_value=httpx.Response(200, json={"ok": True, "result": {}})
+    )
 
     notifier._send("hello")
 
-    assert notifier._bot.send_message.call_count == 3
-    sent_to = {call.kwargs["chat_id"] for call in notifier._bot.send_message.call_args_list}
+    assert route.call_count == 3
+    sent_to = {json.loads(call.request.content)["chat_id"] for call in route.calls}
     assert sent_to == {111, "@second_channel", 333}
 
 
+@respx.mock
 def test_send_one_bad_recipient_does_not_block_the_others():
     """A blocked/kicked bot on one chat must not stop delivery to the
-    rest of the recipients."""
+    rest of the recipients. Uses a 400 (non-retryable per
+    http_utils.is_retryable_http_error) for the bad chat so this
+    doesn't sit through default_retry's real exponential-backoff
+    sleeps."""
     notifier = TelegramNotifier()
-    notifier._bot = MagicMock()
-
-    async def fake_send_message(chat_id, text):
-        if chat_id == 222:
-            raise TelegramError("bot was blocked by the user")
-        return MagicMock()
-
-    notifier._bot.send_message = AsyncMock(side_effect=fake_send_message)
+    notifier._client = httpx.Client(base_url=_API)
     notifier._chat_ids = [111, 222, 333]
+
+    def _responder(request):
+        body = json.loads(request.content)
+        if body["chat_id"] == 222:
+            return httpx.Response(
+                400, json={"ok": False, "description": "bot was blocked by the user"}
+            )
+        return httpx.Response(200, json={"ok": True, "result": {}})
+
+    route = respx.post(f"{_API}/sendMessage").mock(side_effect=_responder)
 
     notifier._send("hello")  # must not raise - 111 and 333 still succeeded
 
-    assert notifier._bot.send_message.call_count == 3
+    assert route.call_count == 3
 
 
+@respx.mock
 def test_send_raises_only_when_every_recipient_fails():
     notifier = TelegramNotifier()
-    notifier._bot = MagicMock()
-    notifier._bot.send_message = AsyncMock(side_effect=TelegramError("boom"))
+    notifier._client = httpx.Client(base_url=_API)
     notifier._chat_ids = [111, 222]
+    respx.post(f"{_API}/sendMessage").mock(
+        return_value=httpx.Response(400, json={"ok": False, "description": "boom"})
+    )
 
     with pytest.raises(TelegramError):
         notifier._send("hello")
@@ -597,42 +645,103 @@ def test_send_yearly_report_noops_when_not_configured(repo, monkeypatch):
 
 
 # ---------------------------------------------------------------------
-# Event loop reuse (regression test for the intermittent
-# "RuntimeError('Event loop is closed')" production failures)
+# Retry queue for failed sends (2026-09 regression tests for the
+# "orders sync to Didar but Telegram never fires" production incident -
+# see src/telegram.py's module docstring). Before this, a send that
+# failed after mark_synced()/mark_deal_notified() had already run was
+# just logged and lost forever - nothing in the system ever retried it.
 # ---------------------------------------------------------------------
 
-def test_send_reuses_one_persistent_event_loop_across_calls():
-    """Before the fix, _send() wrapped every call in its own
-    asyncio.run(), which opens a new event loop and closes it again as
-    soon as the call returns. python-telegram-bot's Bot keeps its httpx
-    connection pool alive *across* calls, so the next asyncio.run() call
-    could end up reusing a pooled connection that was still bound to the
-    loop just closed - raising "Event loop is closed" on some sends but
-    not others (exactly the production symptom: one send for an order
-    failed, and the very next retry of that same order succeeded).
-    Keeping one persistent loop for the notifier's lifetime removes the
-    mismatch."""
+@respx.mock
+def test_deliver_queues_notification_on_failure(repo):
+    """_deliver() must persist a failed send to the repository instead
+    of only logging it, so it isn't gone the moment this process moves
+    on to the next order."""
     notifier = TelegramNotifier()
-    notifier._bot = MagicMock()
-    notifier._bot.send_message = AsyncMock()
+    notifier._client = httpx.Client(base_url=_API)
     notifier._chat_ids = [775753176]
+    respx.post(f"{_API}/sendMessage").mock(
+        return_value=httpx.Response(400, json={"ok": False, "description": "boom"})
+    )
 
-    notifier._send("first message")
-    loop_after_first = notifier._loop
-    assert loop_after_first is not None
-    assert not loop_after_first.is_closed()
+    notifier._deliver("order:digikala:12345", "test message", repo, "test notification")
 
-    notifier._send("second message")
-    loop_after_second = notifier._loop
+    pending = repo.get_pending_notification_failures()
+    assert len(pending) == 1
+    assert pending[0].ref_id == "order:digikala:12345"
+    assert pending[0].message_text == "test message"
 
-    # Same loop object, never closed in between calls - i.e. not a
-    # fresh asyncio.run() (and therefore a fresh loop) every time.
-    assert loop_after_second is loop_after_first
-    assert not loop_after_second.is_closed()
-    assert notifier._bot.send_message.call_count == 2
 
-    notifier.close()
-    assert notifier._loop is None
+@respx.mock
+def test_deliver_queues_nothing_on_success(repo):
+    notifier = TelegramNotifier()
+    notifier._client = httpx.Client(base_url=_API)
+    notifier._chat_ids = [775753176]
+    respx.post(f"{_API}/sendMessage").mock(
+        return_value=httpx.Response(200, json={"ok": True, "result": {}})
+    )
+
+    notifier._deliver("order:digikala:12345", "test message", repo, "test notification")
+
+    assert repo.get_pending_notification_failures() == []
+
+
+@respx.mock
+def test_retry_pending_notifications_resends_and_clears_queue(monkeypatch, repo):
+    """The exact scenario from the incident: a send fails once (queued),
+    then a later poll cycle's retry succeeds and the queue is cleared -
+    instead of the message being gone forever."""
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", _TOKEN)
+    monkeypatch.setenv("TELEGRAM_CHAT_ID", "775753176")
+    _ok_get_me()
+    repo.record_notification_failure("order:digikala:12345", "queued message", "boom")
+
+    notifier = TelegramNotifier()
+    send_route = respx.post(f"{_API}/sendMessage").mock(
+        return_value=httpx.Response(200, json={"ok": True, "result": {}})
+    )
+
+    notifier.retry_pending_notifications(repo)
+
+    assert send_route.called
+    body = json.loads(send_route.calls[0].request.content)
+    assert body["text"] == "queued message"
+    assert repo.get_pending_notification_failures() == []
+
+
+@respx.mock
+def test_retry_pending_notifications_requeues_on_repeated_failure(monkeypatch, repo):
+    """A retry that fails again must stay queued (with an incremented
+    attempt count) rather than being dropped or retried forever with no
+    limit."""
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", _TOKEN)
+    monkeypatch.setenv("TELEGRAM_CHAT_ID", "775753176")
+    _ok_get_me()
+    repo.record_notification_failure("order:digikala:12345", "queued message", "boom")
+
+    notifier = TelegramNotifier()
+    respx.post(f"{_API}/sendMessage").mock(
+        return_value=httpx.Response(400, json={"ok": False, "description": "still failing"})
+    )
+
+    notifier.retry_pending_notifications(repo)
+
+    pending = repo.get_pending_notification_failures()
+    assert len(pending) == 1
+    assert pending[0].attempt_count == 2
+
+
+def test_retry_pending_notifications_noops_when_not_configured(repo, monkeypatch):
+    monkeypatch.delenv("TELEGRAM_BOT_TOKEN", raising=False)
+    monkeypatch.delenv("TELEGRAM_CHAT_ID", raising=False)
+    repo.record_notification_failure("order:digikala:12345", "queued message", "boom")
+
+    notifier = TelegramNotifier()
+    with patch.object(notifier, "_send") as mock_send:
+        notifier.retry_pending_notifications(repo)
+
+    mock_send.assert_not_called()
+    assert len(repo.get_pending_notification_failures()) == 1
 
 
 def test_send_daily_report_noops_when_not_configured(repo, monkeypatch):

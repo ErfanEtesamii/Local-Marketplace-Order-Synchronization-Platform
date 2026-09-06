@@ -69,6 +69,11 @@ def _poll_cycle(
     # boundaries). Best-effort - logs and swallows its own errors, so a
     # Telegram outage can never break the poll cycle itself.
     telegram.check_and_send_reports(repository, engine.adapter_names)
+    # Retry any Telegram notification that failed to send on a previous
+    # cycle (2026-09 - see telegram.py's module docstring for the
+    # "orders sync but Telegram never fires" incident this closes).
+    # Best-effort like every other telegram.* call here.
+    telegram.retry_pending_notifications(repository)
     # "Any deal" Telegram notification (client request, 2026-09): every
     # Deal registered in Didar, manual or automatic, not just the ones
     # this program itself creates from a marketplace order - see
@@ -87,7 +92,7 @@ def _poll_new_deals(
     marketplace poll cycle it's called from."""
     try:
         for deal in deal_poller.poll_new_deals(repository):
-            telegram.notify_new_deal(deal)
+            telegram.notify_new_deal(deal, repository)
     except Exception:
         log.exception("didar: deal poller cycle failed - will retry next cycle")
 

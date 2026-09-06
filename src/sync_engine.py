@@ -323,8 +323,11 @@ class SyncEngine:
             # notification for it.
             self._repo.mark_deal_notified(deal_id)
             # Fire and forget - notify_new_order catches and logs its own
-            # errors, so a Telegram outage can never break the sync itself.
-            self._telegram.notify_new_order(order, deal_id)
+            # errors (queuing a failed send for retry via `self._repo`
+            # rather than losing it - see telegram.py's module
+            # docstring), so a Telegram outage can never break the sync
+            # itself.
+            self._telegram.notify_new_order(order, deal_id, self._repo)
         except Exception as exc:
             log.exception(
                 "sync_engine: failed to sync %s order %s", order.source, order.source_order_id
@@ -573,7 +576,7 @@ class SyncEngine:
                 # See the matching call/comment in _sync_one_order() -
                 # same reasoning applies to the retry path.
                 self._repo.mark_deal_notified(deal_id)
-                self._telegram.notify_new_order(order, deal_id)
+                self._telegram.notify_new_order(order, deal_id, self._repo)
                 log.info(
                     "sync_engine: retry succeeded for %s order %s",
                     failure.platform, failure.source_order_id,

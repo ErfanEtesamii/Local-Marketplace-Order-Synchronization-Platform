@@ -54,31 +54,57 @@ DESIGN CHOICES:
   for the yearly report: a Jalali year doesn't start on Gregorian
   Jan 1 either, so a Gregorian cron would drift there too.
 
-- Every coroutine (get_me(), send_message()) runs on ONE event loop
-  that this notifier creates lazily and keeps open for its entire
-  lifetime (see _get_loop()/_run()), instead of a fresh asyncio.run()
-  per call. asyncio.run() closes its loop when it returns; PTB's Bot
-  keeps its httpx connection pool alive across calls, so a second
-  asyncio.run() reusing that pool while it's still bound to the
-  now-closed first loop is what caused the intermittent
-  "RuntimeError('Event loop is closed')" failures seen in production
-  (e.g. "failed to send per-order notification for digikala order
-  360137826" immediately followed by "retry succeeded" - the retry
-  happened to get a fresh connection instead of the poisoned one).
+- PLAIN SYNCHRONOUS HTTP, NO asyncio (2026-09 rewrite - root cause of
+  the "orders sync to Didar but Telegram never fires" incident): this
+  used to go through python-telegram-bot's async `Bot`, run via a
+  single "persistent" event loop this notifier kept open for its whole
+  lifetime (see git history for `_get_loop()`/`_run()`). That was
+  itself a fix for an earlier bug (a fresh `asyncio.run()` per call
+  closing its loop while PTB's pooled httpx connection stayed bound to
+  it), but it didn't actually solve things: main.py's scheduler
+  (`BlockingScheduler`) runs every poll-cycle job through APScheduler's
+  default `ThreadPoolExecutor`, so different poll cycles can - and in
+  production did - execute on different OS threads while the *first*
+  manual `_poll_cycle()` call in `run_forever()` happens on the main
+  thread. Reusing one asyncio loop/httpx connection pool across
+  threads like that is exactly what kept producing intermittent
+  `RuntimeError('Event loop is closed')` (confirmed in production logs
+  throughout 2026-09-01, well after the "persistent loop" fix had
+  already been deployed - e.g. "failed to send per-order notification
+  for digikala order 361691017" right after that same order's Didar
+  deal was created successfully). Since `notify_new_order()`/
+  `notify_new_deal()` catch and only log every error (by design - a
+  Telegram outage must never break order syncing) and
+  `Repository.mark_synced()`/`mark_deal_notified()` already ran before
+  the send, a failure at that point used to mean the message was gone
+  forever - nothing ever retried it.
+
+  The fix has two parts:
+    1. Talk to the Telegram Bot API directly over plain synchronous
+       HTTP (`httpx.Client`, not `httpx.AsyncClient`) - see
+       `_post_message()`. No event loop, no thread affinity, nothing
+       to go stale across a thread-pool hand-off.
+    2. A failed send is no longer just logged and dropped: `_deliver()`
+       persists it to `Repository`'s `notification_failures` table,
+       and `retry_pending_notifications()` (called every poll cycle
+       from main.py, same pattern as `SyncEngine.
+       retry_pending_failures()`) retries it on a later cycle instead
+       of it being silently lost - this is the piece that was missing
+       even when the send itself worked reliably: a real transient
+       Telegram/network hiccup had no retry path of its own.
 """
 from __future__ import annotations
 
-import asyncio
 import os
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from typing import TYPE_CHECKING, Optional, Union
 
+import httpx
 import jdatetime
-from telegram import Bot
-from telegram.error import TelegramError
 
 from src.db.repository import Repository
+from src.http_utils import default_retry, raise_for_status_with_body
 from src.logger import get_logger
 from src.shipping_fees import shipping_fee_rial
 
@@ -89,6 +115,17 @@ if TYPE_CHECKING:
     from src.didar.deal_poller import NewDealInfo
 
 log = get_logger(__name__)
+
+_TELEGRAM_API_BASE = "https://api.telegram.org"
+
+
+class TelegramError(Exception):
+    """Raised for a Telegram Bot API error response (`ok: false`) or a
+    network/transport failure while talking to it. Our own lightweight
+    stand-in for python-telegram-bot's exception of the same name, kept
+    so the switch to a plain synchronous HTTP client (see module
+    docstring) didn't have to touch every `except TelegramError` clause
+    below."""
 
 # Iran has not observed daylight saving time since 2022, so a fixed
 # UTC+03:30 offset is correct year-round and avoids depending on the
@@ -217,55 +254,22 @@ class TelegramNotifier:
     get_me() the first time it's called."""
 
     def __init__(self) -> None:
-        self._bot: Optional[Bot] = None
+        self._client: Optional[httpx.Client] = None
         self._chat_ids: list[Union[int, str]] = []
         self._configured: bool = False
-        self._loop: Optional[asyncio.AbstractEventLoop] = None
-
-    # ------------------------------------------------------------------
-    # Event loop (root cause of the intermittent "Event loop is closed"
-    # failures - see below)
-    # ------------------------------------------------------------------
-    def _get_loop(self) -> asyncio.AbstractEventLoop:
-        """One event loop, created lazily and reused for every coroutine
-        this notifier ever runs, instead of a fresh `asyncio.run()` per
-        call.
-
-        Why: python-telegram-bot's `Bot` wraps an `httpx.AsyncClient`
-        whose connection pool binds itself to whichever event loop is
-        running the first time a request goes out, and then keeps
-        reusing that pooled/keep-alive connection on later calls.
-        `asyncio.run()` creates a brand-new loop *and closes it again*
-        when the call returns. The next `asyncio.run()` call opens yet
-        another new loop, but the Bot's already-open pooled connection
-        is still tied to the loop that was just closed - so any send
-        that reuses that pooled connection blows up with
-        `RuntimeError('Event loop is closed')`. A send that happens to
-        open a fresh connection instead doesn't, which is exactly why
-        only some sends failed instead of all of them ("failed for
-        order 360137826" followed immediately by "retry succeeded").
-        Keeping every coroutine on the same, never-closed loop for the
-        notifier's whole lifetime removes the mismatch entirely."""
-        if self._loop is None or self._loop.is_closed():
-            self._loop = asyncio.new_event_loop()
-        return self._loop
-
-    def _run(self, coro):
-        """Run `coro` to completion on this notifier's persistent loop."""
-        return self._get_loop().run_until_complete(coro)
 
     def close(self) -> None:
-        """Release the bot's HTTP client and close the persistent loop.
-        Optional - the process exiting does this anyway - but useful for
-        clean shutdown/tests that create many TelegramNotifier instances."""
-        if self._loop is not None and not self._loop.is_closed():
-            if self._bot is not None:
-                try:
-                    self._loop.run_until_complete(self._bot.shutdown())
-                except Exception:
-                    pass
-            self._loop.close()
-        self._loop = None
+        """Release the underlying HTTP connection pool. Optional - the
+        process exiting does this anyway - but useful for clean
+        shutdown/tests that create many TelegramNotifier instances.
+        Plain `httpx.Client.close()` - no event loop to manage anymore,
+        see module docstring."""
+        if self._client is not None:
+            try:
+                self._client.close()
+            except Exception:
+                pass
+        self._client = None
 
     # ------------------------------------------------------------------
     # Helper methods (delegates to module-level functions - exposed on
@@ -322,29 +326,24 @@ class TelegramNotifier:
             )
             return False
 
+        client = httpx.Client(base_url=f"{_TELEGRAM_API_BASE}/bot{token}", timeout=15.0)
         try:
-            bot = Bot(token=token)
-            # get_me() validates the token and is the cheapest call to
+            # getMe validates the token and is the cheapest call to
             # confirm we can talk to the Telegram API. Catches both
-            # network errors and "token revoked" responses.
-            #
-            # python-telegram-bot v20+ made every Bot method a coroutine,
-            # so this must be run through self._run() (or awaited) -
-            # calling bot.get_me() directly would just build a coroutine
-            # object and immediately discard it without ever hitting
-            # Telegram's API. Uses this notifier's persistent loop (see
-            # _get_loop()) rather than a one-off asyncio.run(), so the
-            # loop that validates the bot here is the same one every
-            # later send reuses.
-            self._run(bot.get_me())
+            # network errors and "token revoked" responses. Plain sync
+            # HTTP - see module docstring for why this is no longer an
+            # async python-telegram-bot call run through an event loop.
+            self._request(client, "getMe")
         except TelegramError as exc:
             log.warning("telegram: get_me() failed (%s) - notifications disabled", exc)
+            client.close()
             return False
         except Exception:  # pragma: no cover - defensive against httpx errors
             log.exception("telegram: unexpected error during get_me()")
+            client.close()
             return False
 
-        self._bot = bot
+        self._client = client
         self._chat_ids = chat_ids
         self._configured = True
         log.info("telegram: bot configured (%d recipient(s): %r)", len(chat_ids), chat_ids)
@@ -376,31 +375,28 @@ class TelegramNotifier:
     # ------------------------------------------------------------------
     # Per-order notification (Requirement 1)
     # ------------------------------------------------------------------
-    def notify_new_order(self, order, deal_id: str) -> None:
+    def notify_new_order(self, order, deal_id: str, repository: Repository) -> None:
         """Send the Persian RTL "new order" message. `order` is a
         NormalizedOrder; `deal_id` is the Didar Deal Id returned by
         didar.sync_order() - used only for logging here, since the
         message format itself doesn't reference the Didar deal id. Safe
-        to call with unconfigured credentials - silently no-ops."""
+        to call with unconfigured credentials - silently no-ops.
+
+        `repository` is required (unlike before this rewrite) so a send
+        failure can be queued for retry via `_deliver()` instead of
+        being silently lost forever - see this module's docstring for
+        why that used to happen: by the time this is ever called,
+        `Repository.mark_synced()`/`mark_deal_notified()` have already
+        run, so nothing else in the system would ever retry it."""
         if not self.is_configured():
             return
-        try:
-            message = self._format_new_order_message(order)
-            self._send(message)
-            log.info(
-                "telegram: sent per-order notification for %s order %s (deal %s)",
-                order.source, order.source_order_id, deal_id,
-            )
-        except TelegramError as exc:
-            log.error(
-                "telegram: failed to send per-order notification for %s order %s: %s",
-                order.source, order.source_order_id, exc,
-            )
-        except Exception:
-            log.exception(
-                "telegram: unexpected error sending per-order notification for %s order %s",
-                order.source, order.source_order_id,
-            )
+        message = self._format_new_order_message(order)
+        ref_id = f"order:{order.source}:{order.source_order_id}"
+        description = (
+            f"per-order notification for {order.source} order "
+            f"{order.source_order_id} (deal {deal_id})"
+        )
+        self._deliver(ref_id, message, repository, description)
 
     def _format_new_order_message(self, order) -> str:
         """Build the exact message body specified for Requirement 1."""
@@ -468,7 +464,7 @@ class TelegramNotifier:
     # or automatic (client requirement, 2026-09; see
     # src/didar/deal_poller.py for how these are discovered/deduped)
     # ------------------------------------------------------------------
-    def notify_new_deal(self, deal: "NewDealInfo") -> None:
+    def notify_new_deal(self, deal: "NewDealInfo", repository: Repository) -> None:
         """Send the Persian RTL "new deal" message for a Deal detected
         by DidarDealPoller - i.e. ANY deal that showed up in Didar,
         regardless of whether a human typed it in by hand or this
@@ -481,23 +477,19 @@ class TelegramNotifier:
         full order/money breakdown - never a second time through this
         generic path. Safe to call with unconfigured credentials -
         silently no-ops, same as every other public method here.
+
+        `repository` - see notify_new_order()'s docstring: a failed
+        send here is queued for retry rather than lost, and this path
+        specifically has NO other safety net at all if the send fails,
+        since DidarDealPoller already marked the deal notified before
+        handing it to this method (see main.py's _poll_new_deals).
         """
         if not self.is_configured():
             return
-        try:
-            message = self._format_new_deal_message(deal)
-            self._send(message)
-            log.info("telegram: sent new-deal notification for deal %s", deal.deal_id)
-        except TelegramError as exc:
-            log.error(
-                "telegram: failed to send new-deal notification for deal %s: %s",
-                deal.deal_id, exc,
-            )
-        except Exception:
-            log.exception(
-                "telegram: unexpected error sending new-deal notification for deal %s",
-                deal.deal_id,
-            )
+        message = self._format_new_deal_message(deal)
+        ref_id = f"deal:{deal.deal_id}"
+        description = f"new-deal notification for deal {deal.deal_id}"
+        self._deliver(ref_id, message, repository, description)
 
     def _format_new_deal_message(self, deal: "NewDealInfo") -> str:
         """Field set matches what's actually confirmed available from
@@ -738,6 +730,67 @@ class TelegramNotifier:
             log.exception("telegram: unexpected error sending yearly report")
 
     # ------------------------------------------------------------------
+    # Retry queue for failed sends (2026-09 - see module docstring)
+    # ------------------------------------------------------------------
+    def _deliver(self, ref_id: str, text: str, repository: Repository, description: str) -> None:
+        """Attempt to send `text` right now; on ANY failure, persist it
+        to Repository's notification_failures table under `ref_id` so
+        retry_pending_notifications() picks it up on a later poll cycle
+        instead of the message being silently gone forever. `ref_id`
+        must be stable and unique per logical notification (e.g.
+        "order:<platform>:<source_order_id>" or "deal:<deal_id>") so a
+        retry replaces the same queued row rather than piling up
+        duplicates."""
+        try:
+            self._send(text)
+            log.info("telegram: sent %s", description)
+        except TelegramError as exc:
+            log.error("telegram: failed to send %s: %s - queued for retry", description, exc)
+            repository.record_notification_failure(ref_id, text, str(exc))
+        except Exception as exc:  # pragma: no cover - defensive
+            log.exception("telegram: unexpected error sending %s - queued for retry", description)
+            repository.record_notification_failure(ref_id, text, str(exc))
+
+    def retry_pending_notifications(self, repository: Repository, max_attempts: int = 5) -> None:
+        """Re-attempt every notification that failed to send on a
+        previous poll cycle (see _deliver()). Called once per poll
+        cycle from main.py's _poll_cycle - the matching retry path for
+        the Telegram-send step specifically, mirroring SyncEngine.
+        retry_pending_failures() for the Didar-sync step. Unlike a
+        Didar-sync failure, a Telegram-send failure was never retried
+        by anything else: mark_synced()/mark_deal_notified() already
+        ran before the send was even attempted (see notify_new_order()/
+        notify_new_deal()), so without this queue a failed send had no
+        path back to the user at all. Gives up (leaves the row in
+        place, logged, but stops retrying) after `max_attempts`, same
+        cutoff convention as get_pending_failures()."""
+        if not self.is_configured():
+            return
+        for failure in repository.get_pending_notification_failures(max_attempts=max_attempts):
+            try:
+                self._send(failure.message_text)
+                repository.clear_notification_failure(failure.ref_id)
+                log.info(
+                    "telegram: retry succeeded for queued notification %s", failure.ref_id
+                )
+            except TelegramError as exc:
+                log.error(
+                    "telegram: retry failed for queued notification %s: %s",
+                    failure.ref_id, exc,
+                )
+                repository.record_notification_failure(
+                    failure.ref_id, failure.message_text, str(exc)
+                )
+            except Exception as exc:  # pragma: no cover - defensive
+                log.exception(
+                    "telegram: unexpected error retrying queued notification %s",
+                    failure.ref_id,
+                )
+                repository.record_notification_failure(
+                    failure.ref_id, failure.message_text, str(exc)
+                )
+
+    # ------------------------------------------------------------------
     # Low-level sender
     # ------------------------------------------------------------------
     def _send(self, text: str) -> None:
@@ -755,14 +808,11 @@ class TelegramNotifier:
         order/report context - see notify_new_order() etc.) exactly like
         before there was more than one recipient.
 
-        Every self._bot.send_message(...) call is run through
-        self._run() (this notifier's single persistent event loop, see
-        _get_loop()) because Bot.send_message is a coroutine (PTB v20+) -
-        calling it directly with no await would build the coroutine and
-        immediately drop it without ever hitting Telegram's API. Do NOT
-        swap this back to a per-call `asyncio.run()`: that was the cause
-        of the intermittent "RuntimeError('Event loop is closed')"
-        failures - see _get_loop()'s docstring.
+        Every chunk goes out via _post_message() - a plain synchronous
+        HTTPS POST (see module docstring). No event loop involved, so
+        there is nothing here that can go stale across a thread-pool
+        hand-off the way the old async-client-on-a-persistent-loop
+        approach did.
         """
         # Telegram caps a single text message at 4096 chars; the reports
         # are well under that, but split defensively if anything ever
@@ -786,7 +836,7 @@ class TelegramNotifier:
         for chat_id in self._chat_ids:
             try:
                 for chunk in chunks:
-                    self._run(self._bot.send_message(chat_id=chat_id, text=chunk))
+                    self._post_message(chat_id, chunk)
                 any_success = True
             except TelegramError as exc:
                 last_exc = exc
@@ -797,3 +847,43 @@ class TelegramNotifier:
 
         if not any_success and last_exc is not None:
             raise last_exc
+
+    @default_retry()
+    def _post(self, client: httpx.Client, method: str, **json_body) -> dict:
+        """The actual HTTPS POST, decorated with the same
+        exponential-backoff retry every other external API client in
+        this project uses (src/http_utils.default_retry) for transient
+        5xx/network errors - a 4xx (bad token, blocked chat, etc.) is
+        never retried, matching is_retryable_http_error()'s policy.
+        Deliberately left raising httpx's own exceptions (not
+        TelegramError) so @default_retry()'s predicate - which checks
+        for httpx.HTTPStatusError/TransportError specifically - can see
+        them; _request() below converts whatever survives all retries
+        into TelegramError for the rest of this module."""
+        resp = client.post(f"/{method}", json=json_body or None)
+        raise_for_status_with_body(resp)
+        return resp.json()
+
+    def _request(self, client: httpx.Client, method: str, **json_body) -> dict:
+        """One call to `https://api.telegram.org/bot<token>/<method>` -
+        no asyncio, no event loop, so nothing here can ever raise
+        `RuntimeError('Event loop is closed')` regardless of which OS
+        thread APScheduler's ThreadPoolExecutor happens to run this
+        poll cycle on (see module docstring for why that was the real
+        root cause)."""
+        try:
+            payload = self._post(client, method, **json_body)
+        except httpx.HTTPStatusError as exc:
+            raise TelegramError(str(exc)) from exc
+        except httpx.TransportError as exc:
+            raise TelegramError(f"network error calling {method}: {exc}") from exc
+        except ValueError as exc:
+            raise TelegramError(f"{method}: non-JSON response") from exc
+        if not payload.get("ok", False):
+            raise TelegramError(f"{method} failed: {payload!r}")
+        return payload
+
+    def _post_message(self, chat_id: Union[int, str], text: str) -> None:
+        """sendMessage for one chat_id/chunk - see _request()."""
+        assert self._client is not None  # only called after is_configured()
+        self._request(self._client, "sendMessage", chat_id=chat_id, text=text)

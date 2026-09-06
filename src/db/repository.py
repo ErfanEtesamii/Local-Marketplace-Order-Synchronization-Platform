@@ -41,6 +41,17 @@ Five responsibilities:
      separate from sync_failures: a sync_failure is a retry candidate
      (it should eventually succeed), an ignored_order is a permanent
      "never look at this again" - the two must never be conflated.
+  8. Telegram notification retry queue (notification_failures table,
+     2026-09 - see src/telegram.py's module docstring for the incident
+     this fixes): a Telegram send happens strictly AFTER
+     mark_synced()/mark_deal_notified() have already run, so unlike a
+     Didar-sync failure (sync_failures above), nothing else in the
+     system used to ever retry a failed send - it was just logged and
+     lost. This table is that missing retry candidate list,
+     specifically for the send step, keyed by a stable `ref_id`
+     ("order:<platform>:<source_order_id>" or "deal:<deal_id>") so a
+     re-queue replaces the same row instead of piling up duplicates for
+     the same logical notification.
 
 Kept deliberately simple - one file, no ORM - matching the scale of a
 single-server background service.
@@ -108,6 +119,14 @@ CREATE TABLE IF NOT EXISTS ignored_orders (
     ignored_at      TEXT NOT NULL,
     PRIMARY KEY (platform, source_order_id)
 );
+
+CREATE TABLE IF NOT EXISTS notification_failures (
+    ref_id          TEXT NOT NULL PRIMARY KEY,
+    message_text    TEXT NOT NULL,
+    error_message   TEXT,
+    attempt_count   INTEGER NOT NULL DEFAULT 1,
+    last_attempt_at TEXT NOT NULL
+);
 """
 
 
@@ -115,6 +134,15 @@ CREATE TABLE IF NOT EXISTS ignored_orders (
 class SyncFailure:
     platform: str
     source_order_id: str
+    error_message: str
+    attempt_count: int
+    last_attempt_at: str
+
+
+@dataclass(frozen=True)
+class NotificationFailure:
+    ref_id: str
+    message_text: str
     error_message: str
     attempt_count: int
     last_attempt_at: str
@@ -256,6 +284,43 @@ class Repository:
                 "DELETE FROM sync_failures WHERE platform = ? AND source_order_id = ?",
                 (platform, source_order_id),
             )
+
+    # --- Telegram notification retry queue (2026-09) ----------------------
+    # See notification_failures in the schema docstring above - this is the
+    # send-step counterpart to sync_failures/get_pending_failures above,
+    # for the one failure mode that had no retry path at all before: a
+    # Telegram send failing AFTER the order was already synced+marked
+    # notified. Same shape (INSERT ... ON CONFLICT DO UPDATE bumping
+    # attempt_count) deliberately mirrored from record_failure() above.
+
+    def record_notification_failure(self, ref_id: str, message_text: str, error_message: str) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO notification_failures
+                    (ref_id, message_text, error_message, attempt_count, last_attempt_at)
+                VALUES (?, ?, ?, 1, ?)
+                ON CONFLICT(ref_id) DO UPDATE SET
+                    message_text    = excluded.message_text,
+                    error_message   = excluded.error_message,
+                    attempt_count   = attempt_count + 1,
+                    last_attempt_at = excluded.last_attempt_at
+                """,
+                (ref_id, message_text, error_message, datetime.now(timezone.utc).isoformat()),
+            )
+
+    def get_pending_notification_failures(self, max_attempts: int = 5) -> list[NotificationFailure]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT ref_id, message_text, error_message, attempt_count, last_attempt_at "
+                "FROM notification_failures WHERE attempt_count < ?",
+                (max_attempts,),
+            ).fetchall()
+        return [NotificationFailure(*row) for row in rows]
+
+    def clear_notification_failure(self, ref_id: str) -> None:
+        with self._connect() as conn:
+            conn.execute("DELETE FROM notification_failures WHERE ref_id = ?", (ref_id,))
 
     # --- permanent skip-list (out-of-window / never-again orders) ---------
 
