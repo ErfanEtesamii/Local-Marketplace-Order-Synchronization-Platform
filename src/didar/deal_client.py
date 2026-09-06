@@ -346,10 +346,15 @@ class DidarDealClient:
         return count, total
 
     # ------------------------------------------------------------------
-    # Full status breakdown (all/pending/won/lost) for the /report
-    # custom-range picker's "کل سفارشات / سفارشات جاری / سفارشات موفق /
-    # سفارشات ناموفق" display (client request, 2026-09 follow-up) - see
-    # _send_custom_range_report in src/telegram.py.
+    # Full status breakdown (all/pending/won/lost counts+sums) per Deal
+    # Label, for the /report custom-range picker (client request,
+    # 2026-09 follow-up; report display itself later changed, 2026-09
+    # follow-up 2, to show only the "all" figures broken down per
+    # LABEL instead of per STATUS - see
+    # src/telegram.py's _format_live_range_report_message() and
+    # list_deal_labels()/get_status_breakdown_for_label() below - but
+    # the underlying per-status numbers are still fetched here in one
+    # shot in case a future report wants them again).
     #
     # Deliberately a SEPARATE call from get_won_stats() above rather than
     # a shared helper: this one omits Criteria.Status entirely (asks for
@@ -369,7 +374,6 @@ class DidarDealClient:
         Label (see _label_id_for_source()) same as get_won_stats().
         Returns an all-zero DealStatusBreakdown - never raises - on any
         failure, same fire-and-forget philosophy as get_won_stats()."""
-        zero = DealStatusBreakdown()
         label_id = self._label_id_for_source(source)
         if not label_id:
             log.warning(
@@ -378,8 +382,70 @@ class DidarDealClient:
                 "counting every deal account-wide",
                 source,
             )
-            return zero
+            return DealStatusBreakdown()
+        return self._status_breakdown_for_label(label_id, since, until)
 
+    def list_deal_labels(self) -> list[tuple[str, str]]:
+        """Every Deal-type Label configured in this Didar account, as
+        (Title, Id) pairs, in whatever order GET /Label/GetDealLabels
+        itself returns them.
+
+        Deliberately NOT filtered down to only the marketplaces this
+        local deployment has an adapter/credentials for (client
+        request, 2026-09 follow-up: "کل لیبل هارو از گزارش خود دیدار
+        بگیره" - the custom-range /report picker should show every
+        label Didar itself knows about, not just the sources listed in
+        this project's own config/.env). This matters concretely for a
+        label like اسنپ (SnappShop): SNAPPSHOP_ENABLED can be false
+        locally (no credentials yet - see main.py) while the Label
+        still exists in the Didar account (e.g. from earlier manual
+        use), and it should still show up in the report - Didar's own
+        label list is the source of truth here, not this project's
+        enabled-adapter list. See get_status_breakdown_for_label() for
+        querying stats per label returned here.
+
+        Returns [] - never raises - on any failure, same fire-and-forget
+        philosophy as _label_id_for_source()."""
+        try:
+            payload = self._get(self._config.get_deal_labels_path)
+        except Exception:
+            log.exception(
+                "didar: failed to fetch Deal Labels via %s for /report "
+                "label listing - reporting no labels",
+                self._config.get_deal_labels_path,
+            )
+            return []
+        return [
+            (str(item["Title"]), str(item["Id"]))
+            for item in payload.get("Response", [])
+            if isinstance(item, dict)
+            and item.get("Id")
+            and item.get("Title")
+            and item.get("Type") == "Deal"
+        ]
+
+    def get_status_breakdown_for_label(
+        self, label_id: str, since: datetime, until: datetime
+    ) -> "DealStatusBreakdown":
+        """Same query as get_status_breakdown() but keyed directly by a
+        Didar Label Id rather than one of this project's configured
+        marketplace sources - for callers driven by list_deal_labels()
+        (the /report custom-range picker) that want every label Didar
+        has, independent of this project's own source config."""
+        return self._status_breakdown_for_label(label_id, since, until)
+
+    def _status_breakdown_for_label(
+        self, label_id: str, since: datetime, until: datetime
+    ) -> "DealStatusBreakdown":
+        """Shared POST /deal/search_v2 (Criteria.Status left unset, so
+        Didar returns the All/Pending/Won/Lost counts+sums for the full
+        matched set in one shot - see get_status_breakdown()'s original
+        docstring) for one already-resolved Label Id. Used by both
+        get_status_breakdown() (source -> label lookup first) and
+        get_status_breakdown_for_label() (label id already known, e.g.
+        from list_deal_labels()). Returns an all-zero
+        DealStatusBreakdown - never raises - on any failure."""
+        zero = DealStatusBreakdown()
         try:
             payload = self._post(
                 "/deal/search_v2",
@@ -395,17 +461,17 @@ class DidarDealClient:
             )
         except Exception:
             log.exception(
-                "didar: get_status_breakdown(%r) search_v2 request failed "
-                "- reporting all-zero for this source",
-                source,
+                "didar: status breakdown search_v2 request failed for "
+                "label_id=%r - reporting all-zero",
+                label_id,
             )
             return zero
 
         response = payload.get("Response") if isinstance(payload, dict) else None
         if not isinstance(response, dict):
             log.warning(
-                "didar: get_status_breakdown(%r) - no Response in "
-                "search_v2 payload: %r", source, payload,
+                "didar: status breakdown - no Response in search_v2 "
+                "payload for label_id=%r: %r", label_id, payload,
             )
             return zero
 

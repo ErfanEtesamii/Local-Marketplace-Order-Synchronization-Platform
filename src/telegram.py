@@ -364,6 +364,40 @@ def _boxed_title(label: str) -> str:
     )
 
 
+# The only platforms the custom-range /report picker's per-label
+# breakdown shows (client request, 2026-09 follow-up 3: drop the
+# شخصیت*/سازمانی/تلفنی labels Didar also returns via
+# list_deal_labels() and show just these 5, in this fixed order) - see
+# _select_range_report_platforms() and
+# TelegramNotifier._format_live_range_report_message().
+_RANGE_REPORT_PLATFORM_KEYWORDS = ["اسنپ", "تپسی", "فرازهنر", "دیجی", "سلام"]
+
+
+def _select_range_report_platforms(
+    per_label: list[tuple[str, "DealStatusBreakdown"]]
+) -> list[tuple[str, "DealStatusBreakdown"]]:
+    """Filters+reorders the live per-label breakdown from
+    DidarDealClient.list_deal_labels() down to just the 5 marketplaces
+    in _RANGE_REPORT_PLATFORM_KEYWORDS, in that fixed order - everything
+    else Didar returns (شخصیت i/C/D/S, سازمانی, تلفنی, ...) is dropped.
+
+    Matches by substring against the live Didar label Title rather
+    than an exact string, since the confirmed real titles vary
+    slightly from the plain platform name (e.g. "سایت فرازهنر" for
+    فرازهنر, "با سلام" with a space for باسلام) - the first per_label
+    entry whose Title contains the keyword wins. A keyword with no
+    matching label in this Didar account is simply skipped rather than
+    shown as a fabricated zero row, so this never invents a platform
+    Didar didn't actually return."""
+    selected: list[tuple[str, "DealStatusBreakdown"]] = []
+    for keyword in _RANGE_REPORT_PLATFORM_KEYWORDS:
+        for title, breakdown in per_label:
+            if keyword in title:
+                selected.append((title, breakdown))
+                break
+    return selected
+
+
 class TelegramNotifier:
     """Send Telegram notifications and reports.
 
@@ -839,25 +873,37 @@ class TelegramNotifier:
         return count, total
 
     def _aggregate_live_breakdown(
-        self, source_names: list[str], since: datetime, until: datetime
-    ) -> DealStatusBreakdown:
-        """All/Pending/Won/Lost breakdown across every configured source,
-        for the /report custom-range picker's "کل سفارشات / سفارشات
-        جاری / سفارشات موفق / سفارشات ناموفق" display (client request,
-        2026-09 follow-up) - see DidarDealClient.get_status_breakdown().
-        Same degrade-to-zero behaviour as _aggregate_live above if no
-        Didar client could be constructed."""
+        self, since: datetime, until: datetime
+    ) -> tuple[DealStatusBreakdown, list[tuple[str, DealStatusBreakdown]]]:
+        """Overall total AND a breakdown per Didar Deal Label - EVERY
+        label configured in the Didar account itself
+        (DidarDealClient.list_deal_labels()), not just the marketplaces
+        this local deployment happens to have an adapter/credentials
+        for (client request, 2026-09 follow-up: "کل لیبل هارو از
+        گزارش خود دیدار بگیره" - a label like اسنپ must still show up
+        even when SNAPPSHOP_ENABLED is false locally, since Didar's own
+        label list is the actual source of truth here, not this
+        project's .env/source_names). Order matches whatever
+        list_deal_labels() itself returns from Didar. Returns (zero
+        total, []) if no Didar client could be constructed or the label
+        list itself couldn't be fetched - degrade-to-empty rather than
+        raising into the caller, same as _aggregate_live above."""
         didar_client = self._get_didar_client()
         total = DealStatusBreakdown()
+        per_label: list[tuple[str, DealStatusBreakdown]] = []
         if didar_client is None:
             log.error(
                 "telegram: no Didar client available for custom-range "
                 "report - reporting all-zero breakdown"
             )
-            return total
-        for source in source_names:
-            total = total + didar_client.get_status_breakdown(source, since, until)
-        return total
+            return total, per_label
+        for title, label_id in didar_client.list_deal_labels():
+            label_breakdown = didar_client.get_status_breakdown_for_label(
+                label_id, since, until
+            )
+            per_label.append((title, label_breakdown))
+            total = total + label_breakdown
+        return total, per_label
 
     def _aggregate(self, repository, source_names, since, until=None):
         products = shipping = total = count = 0
@@ -1168,7 +1214,7 @@ class TelegramNotifier:
                 self._send_custom_range_report(
                     chat_id, message_id, start_key,
                     jdatetime.date(year, month, day),
-                    repository, source_names,
+                    repository,
                 )
             else:
                 log.warning("telegram: unknown report-picker callback data %r", data)
@@ -1200,35 +1246,70 @@ class TelegramNotifier:
         return self._didar_client
 
     def _format_live_range_report_message(
-        self, period_line: str, breakdown: DealStatusBreakdown
+        self,
+        period_line: str,
+        total: DealStatusBreakdown,
+        per_label: list[tuple[str, DealStatusBreakdown]],
     ) -> str:
         """Custom-range /report format - LIVE from Didar (see
-        _send_custom_range_report), showing the full All/Pending/Won/
-        Lost breakdown (کل سفارشات / سفارشات جاری / سفارشات موفق /
-        سفارشات ناموفق - client request, 2026-09 follow-up), same four
-        categories as the client's own Excel-style report. Deliberately
-        without the products/shipping split every other (non-live)
-        report shows: Didar has no way to return a saved shipping
-        figure (see DidarDealClient.get_won_stats()'s docstring), so
-        each category here only ever shows count + total sale amount,
-        both read directly from Didar itself."""
-        return (
-            "📊 گزارش بازه دلخواه\n"
-            f"{_boxed_title('📊 گزارش بازه‌ای (زنده از دیدار)')}\n"
-            f"{period_line}\n"
-            "📦 کل سفارشات\n"
-            f"└─ {breakdown.all_count} سفارش - {_format_rial(breakdown.all_total)} ریال\n"
-            "🔄 سفارشات جاری\n"
-            f"└─ {breakdown.pending_count} سفارش - {_format_rial(breakdown.pending_total)} ریال\n"
-            "🟢 سفارشات موفق\n"
-            f"└─ {breakdown.won_count} سفارش - {_format_rial(breakdown.won_total)} ریال\n"
-            "🔴 سفارشات ناموفق\n"
-            f"└─ {breakdown.lost_count} سفارش - {_format_rial(breakdown.lost_total)} ریال\n"
-            "━━━━━━━━━━━━━━━━━━━━\n"
-            "🟢 برگرفته از معامله‌های ثبت‌شده در دیدار\n"
-            "(بدون احتساب هزینه ارسال).\n"
-            "#گزارش"
-        )
+        _send_custom_range_report). Shows the overall total (کل
+        سفارشات, still summed across every Didar label - unaffected by
+        the platform filter below) followed by one line per SELECTED
+        platform - only the 5 marketplaces in
+        _RANGE_REPORT_PLATFORM_KEYWORDS (client request, 2026-09
+        follow-up 3: "نیازی به شخصیت‌ها نیست" - drop the شخصیت*/
+        سازمانی/تلفنی labels Didar also returns and show just
+        اسنپ/تپسی/فرازهنر/دیجی‌کالا/باسلام, in that fixed order), with
+        that label's own count + total sale amount (all_count/
+        all_total - every status, not just Won, matching what "کل
+        سفارشات" always meant here). See
+        _select_range_report_platforms() for the matching/ordering
+        logic.
+
+        Replaced the earlier Pending/Won/Lost status split (client
+        request, 2026-09 follow-up: drop سفارشات جاری/موفق/ناموفق, show
+        each platform instead), then changed again (2026-09 follow-up
+        2: "کل لیبل هارو از گزارش خود دیدار بگیره") from a per-source
+        breakdown keyed by this project's own configured marketplaces
+        to a per-LABEL breakdown read straight from Didar, so a label
+        with no locally-enabled adapter (e.g. اسنپ while
+        SNAPPSHOP_ENABLED=false) still appears - and then narrowed
+        again (this follow-up 3) to just the 5 platforms above. Same as
+        before, deliberately without the products/shipping split: Didar
+        has no way to return a saved shipping figure (see
+        DidarDealClient.get_won_stats()'s docstring), so each line here
+        only ever shows count + total sale amount.
+
+        A blank line separates every platform block (client request,
+        2026-09 follow-up 3: "بین هر مودوم هم یه اینتر بزن که قابل
+        تشخیص باشن") so they're visually distinguishable in the
+        Telegram message. A selected platform with zero matching deals
+        in this window still shows a "0 سفارش" line rather than being
+        hidden, same as before - it's only labels OUTSIDE the 5-
+        platform list that are dropped now, not zero-count ones within
+        it."""
+        lines = [
+            "📊 گزارش بازه دلخواه",
+            _boxed_title("📊 گزارش بازه‌ای (زنده از دیدار)"),
+            period_line,
+            "📦 کل سفارشات",
+            f"└─ {total.all_count} سفارش - {_format_rial(total.all_total)} ریال",
+        ]
+        for title, label_breakdown in _select_range_report_platforms(per_label):
+            lines.append("")
+            lines.append(f"🛍 {title}")
+            lines.append(
+                f"└─ {label_breakdown.all_count} سفارش - "
+                f"{_format_rial(label_breakdown.all_total)} ریال"
+            )
+        lines.extend([
+            "",
+            "━━━━━━━━━━━━━━━━━━━━",
+            "🟢 برگرفته از معامله‌های ثبت‌شده در دیدار",
+            "(بدون احتساب هزینه ارسال).",
+            "#گزارش",
+        ])
+        return "\n".join(lines)
 
     def _send_custom_range_report(
         self,
@@ -1237,12 +1318,18 @@ class TelegramNotifier:
         start_key: str,
         end_date: "jdatetime.date",
         repository: Repository,
-        source_names: list[str],
     ) -> None:
         """Same live-from-Didar aggregation as the daily/weekly/monthly/
         yearly reports (see _aggregate_live), just for whatever custom
         range the operator picked via the /report picker (client
-        request, 2026-09) instead of a fixed calendar period."""
+        request, 2026-09) instead of a fixed calendar period.
+
+        No longer takes source_names (client request, 2026-09 follow-up
+        2: "کل لیبل هارو از گزارش خود دیدار بگیره") - the per-label
+        breakdown now comes straight from DidarDealClient.
+        list_deal_labels() via _aggregate_live_breakdown(), independent
+        of which marketplaces this local deployment has adapters/
+        credentials for."""
         start_date = _jalali_from_key(start_key)
         if end_date < start_date:
             self._edit_message(
@@ -1254,16 +1341,15 @@ class TelegramNotifier:
         since = _iran_midnight_utc(start_date)
         until = _iran_midnight_utc(end_date + timedelta(days=1))
 
-        breakdown = self._aggregate_live_breakdown(source_names, since, until)
+        total, per_label = self._aggregate_live_breakdown(since, until)
 
         period_line = f"📅 از {_jalali_date_str(start_date)} تا {_jalali_date_str(end_date)}"
-        message = self._format_live_range_report_message(period_line, breakdown)
+        message = self._format_live_range_report_message(period_line, total, per_label)
         self._edit_message(chat_id, message_id, message)
         log.info(
             "telegram: sent live custom-range report %s..%s (source: Didar CRM, "
-            "%d total / %d pending / %d won / %d lost)",
-            start_key, _jalali_key(end_date), breakdown.all_count,
-            breakdown.pending_count, breakdown.won_count, breakdown.lost_count,
+            "%d total across %d label(s))",
+            start_key, _jalali_key(end_date), total.all_count, len(per_label),
         )
         # Let every other admin know who just pulled this report -
         # client request 2026-09 (see _broadcast_report_notice()).
