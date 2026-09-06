@@ -759,4 +759,4 @@ def test_send_daily_report_noops_when_not_configured(repo, monkeypatch):
 
 
 if __name__ == "__main__":
-    pytest.main([__file__, "-v"])
+    pytest.main([__file__, "-v"])   
