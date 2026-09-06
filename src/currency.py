@@ -15,10 +15,11 @@ PER-SOURCE UNIT, AND HOW CONFIDENT EACH ONE IS (2026-08-29):
     own docs directly, but describing Digikala's API specifically) as
     Rial-based. Not from a Didar-side live test, so treat as
     reasonably-but-not-100%-confirmed.
-  - Basalam: TOMAN - the official Basalam SDK's own quick-start example
-    prints a product's price with "تومان" next to it. Indirect (a docs
-    example, not a confirmed live order payload), so this is a
-    best-guess default, not a verified fact.
+  - Basalam: RIAL - CONFIRMED (2026-09, client checked real order data).
+    The earlier "toman" default here was only inferred indirectly from
+    the official Basalam SDK's quick-start example printing a price
+    with "تومان" next to it - never a confirmed live order payload, and
+    it turned out to be wrong.
   - SnappShop, Tapsi Shop: UNCONFIRMED - neither vendor's available
     documentation states a currency unit anywhere. Defaulted to "rial"
     (no conversion applied) purely to avoid silently guessing on money;

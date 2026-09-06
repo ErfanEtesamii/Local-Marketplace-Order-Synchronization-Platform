@@ -35,9 +35,13 @@ def test_digikala_price_unit_defaults_to_rial(monkeypatch):
     assert DigikalaConfig().price_unit == "rial"
 
 
-def test_basalam_price_unit_defaults_to_toman(monkeypatch):
+def test_basalam_price_unit_defaults_to_rial(monkeypatch):
+    # CONFIRMED rial (2026-09, client checked real order data) - the
+    # earlier "toman" default was only inferred indirectly from the
+    # official Basalam SDK's quick-start example and turned out wrong.
+    # See src/currency.py's module docstring.
     monkeypatch.delenv("BASALAM_PRICE_UNIT", raising=False)
-    assert BasalamConfig().price_unit == "toman"
+    assert BasalamConfig().price_unit == "rial"
 
 
 def test_tapsishop_and_snappshop_price_unit_default_to_rial_when_unconfirmed(monkeypatch):

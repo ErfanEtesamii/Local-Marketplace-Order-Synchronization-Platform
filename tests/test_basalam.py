@@ -6,7 +6,18 @@ import httpx
 from src.config import BasalamConfig
 from src.marketplaces.basalam import BasalamAdapter, BasalamAuthError
 
-_CFG = BasalamConfig(base_url="https://order-processing.basalam.com", access_token="test-pat")
+_CFG = BasalamConfig(
+    base_url="https://order-processing.basalam.com",
+    access_token="test-pat",
+    # Explicit, not left to the BasalamConfig default: src/config.py calls
+    # load_dotenv() at import time, so leaving this unset means every test
+    # here silently inherits whatever BASALAM_PRICE_UNIT happens to be set
+    # to in the real, local .env (currently "rial" for this account) -
+    # not the code's own "toman" default these tests are meant to exercise.
+    # Pinning it here makes the suite pass/fail on the code, not on
+    # whatever value someone's local .env happens to have.
+    price_unit="toman",
+)
 
 
 @respx.mock
@@ -39,7 +50,7 @@ def test_fetch_new_orders_paginates_via_cursor():
     assert o.source == "basalam"
     assert o.source_order_id == "555"      # parcel id
     assert o.order_number == "9001"        # underlying platform order id
-    assert o.total_price == 4800000  # 480000 تومان × ۱۰ (BasalamConfig defaults to price_unit="toman")
+    assert o.total_price == 4800000  # 480000 تومان × ۱۰ (this test's _CFG explicitly pins price_unit="toman" now - see its comment; BasalamConfig's own default is "rial", confirmed 2026-09)
     assert o.status == "جدید"
     assert o.items == []  # list endpoint - detail call needed for line items
     assert o.ship_time == datetime(2026, 8, 12, 18, 0, tzinfo=timezone.utc)
