@@ -42,7 +42,9 @@ request example in the current Didar API documentation.
 """
 from __future__ import annotations
 
-from decimal import Decimal
+from dataclasses import dataclass
+from datetime import datetime, timezone
+from decimal import Decimal, InvalidOperation
 
 import httpx
 
@@ -56,6 +58,37 @@ from src.marketplaces.base import NormalizedOrder
 from src.shipping_fees import format_toman, shipping_fee_toman
 
 log = get_logger(__name__)
+
+
+@dataclass(frozen=True)
+class DealStatusBreakdown:
+    """All/Pending/Won/Lost counts+totals for one source+window, as
+    returned in one shot by /deal/search_v2 when Criteria.Status is
+    left unset - see DidarDealClient.get_status_breakdown(). All zero
+    by default so a failed/label-less source contributes nothing when
+    summed (see telegram.py's _aggregate_live_breakdown)."""
+
+    all_count: int = 0
+    all_total: Decimal = Decimal("0")
+    pending_count: int = 0
+    pending_total: Decimal = Decimal("0")
+    won_count: int = 0
+    won_total: Decimal = Decimal("0")
+    lost_count: int = 0
+    lost_total: Decimal = Decimal("0")
+
+    def __add__(self, other: "DealStatusBreakdown") -> "DealStatusBreakdown":
+        return DealStatusBreakdown(
+            all_count=self.all_count + other.all_count,
+            all_total=self.all_total + other.all_total,
+            pending_count=self.pending_count + other.pending_count,
+            pending_total=self.pending_total + other.pending_total,
+            won_count=self.won_count + other.won_count,
+            won_total=self.won_total + other.won_total,
+            lost_count=self.lost_count + other.lost_count,
+            lost_total=self.lost_total + other.lost_total,
+        )
+
 
 _SOURCE_DISPLAY_NAMES = {
     "tapsishop": "تپسی‌شاپ",
@@ -111,6 +144,15 @@ def _build_description(order: NormalizedOrder) -> str:
     if link:
         lines.append(f"مشاهده سفارش: {link}")
     return "\n".join(lines)
+
+
+def _iso(dt: datetime) -> str:
+    """UTC timestamp in the exact format Didar's own docs use for
+    SearchFromTime/SearchToTime (e.g. "2026-09-03T08:00:00.000Z").
+    Matches src/didar/deal_poller.py's own `_iso()` - kept as a separate
+    copy rather than a cross-module import, same tradeoff as this
+    file's own `_format_rial()` below."""
+    return dt.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
 
 
 class DidarDealClient:
@@ -200,6 +242,195 @@ class DidarDealClient:
                 title, self._config.get_deal_labels_path, source,
             )
         return label_id
+
+    # ------------------------------------------------------------------
+    # Live aggregate stats for src/telegram.py's custom-range /report
+    # picker (client request, 2026-09: "هر تاریخی رو زدم بره از crm
+    # بگیره برام بیاره" - the custom-range report should reflect Didar
+    # itself, the account's actual source of truth, rather than only
+    # this program's own local sync cache).
+    #
+    # DELIBERATELY NO PRODUCTS/SHIPPING SPLIT: Didar's Deal.Price is the
+    # deal's total amount (see module docstring - "Amount ->
+    # DealItems[].UnitPrice"), which already matches this project's own
+    # "products total" concept (shipping is never added into Price -
+    # see _build_item_description() below, it's text-only). But that
+    # shipping text lives on DealItems[].Description, and
+    # POST /deal/getdealdetail - the only documented way to read a Deal
+    # back - does NOT return DealItems at all (confirmed against
+    # Didar's own API reference: DealItems only appears in the
+    # save_v2/update_v2 request-body docs, never in any response body).
+    # So a shipping figure, once saved, is NOT retrievable from Didar by
+    # any client, this one included - there is no endpoint this method
+    # could call to get it back. Per client decision (2026-09), the
+    # live /report therefore reports count + total sale amount only, no
+    # shipping line at all, rather than showing a fabricated/guessed
+    # number. (Full products+shipping breakdown is still available from
+    # Repository.get_amount_stats_since() for the daily/weekly/monthly/
+    # yearly reports, which read this project's OWN sync-time record of
+    # both figures - see src/telegram.py - that data was never lost,
+    # it's just never round-tripped through Didar itself.)
+    def get_won_stats(
+        self, source: str, since: datetime, until: datetime
+    ) -> tuple[int, Decimal]:
+        """Count and total Price of Won deals for one marketplace
+        `source` in [since, until), read directly from Didar via
+        POST /deal/search_v2 - isolated to that source's own Deal Label
+        (see _label_id_for_source()) so a manually-entered deal, or one
+        from a different source, is never counted here. Filtering
+        Criteria.Status="Won" server-side means the response's own
+        TotalCount/TotalPrice (computed by Didar across the FULL
+        matched result set, not just the one page requested - hence
+        Limit=1: the List rows themselves are never used) already ARE
+        the Won-only count/sum for this source and window - no local
+        pagination or client-side summing needed.
+
+        Returns (0, Decimal("0")) - never raises - if this source has
+        no resolvable Deal Label, or on any request/parsing failure:
+        matches _label_id_for_source()'s own fire-and-forget philosophy,
+        since a single bad platform must never blank out (or crash) the
+        whole /report response for every other platform."""
+        label_id = self._label_id_for_source(source)
+        if not label_id:
+            log.warning(
+                "didar: get_won_stats(%r) has no resolvable Deal Label - "
+                "reporting 0 for this source rather than counting every "
+                "Won deal account-wide (which would silently mix in "
+                "other sources/manual deals)",
+                source,
+            )
+            return 0, Decimal("0")
+
+        try:
+            payload = self._post(
+                "/deal/search_v2",
+                json={
+                    "Criteria": {
+                        "SearchFromTime": _iso(since),
+                        "SearchToTime": _iso(until),
+                        "Status": "Won",
+                        "LabelIds": [label_id],
+                    },
+                    "From": 0,
+                    "Limit": 1,
+                },
+            )
+        except Exception:
+            log.exception(
+                "didar: get_won_stats(%r) search_v2 request failed - "
+                "reporting 0 for this source",
+                source,
+            )
+            return 0, Decimal("0")
+
+        response = payload.get("Response") if isinstance(payload, dict) else None
+        if not isinstance(response, dict):
+            log.warning(
+                "didar: get_won_stats(%r) - no Response in search_v2 "
+                "payload: %r", source, payload,
+            )
+            return 0, Decimal("0")
+
+        count_raw = response.get("TotalCount", 0)
+        try:
+            count = int(round(float(count_raw)))
+        except (TypeError, ValueError):
+            count = 0
+
+        price_raw = response.get("TotalPrice", 0)
+        try:
+            total = Decimal(str(price_raw))
+        except (InvalidOperation, TypeError, ValueError):
+            total = Decimal("0")
+
+        return count, total
+
+    # ------------------------------------------------------------------
+    # Full status breakdown (all/pending/won/lost) for the /report
+    # custom-range picker's "کل سفارشات / سفارشات جاری / سفارشات موفق /
+    # سفارشات ناموفق" display (client request, 2026-09 follow-up) - see
+    # _send_custom_range_report in src/telegram.py.
+    #
+    # Deliberately a SEPARATE call from get_won_stats() above rather than
+    # a shared helper: this one omits Criteria.Status entirely (asks for
+    # every status in one shot) because Didar's own search_v2 response
+    # already returns the All/Pending/Won/Lost counts and sums broken
+    # down for the FULL matched set in a single call - AllDealsCount,
+    # PendingDealsCount, WonDealsCount, LostDealsCount (and their
+    # matching *TotalPrice siblings), confirmed straight from Didar's
+    # documented search_v2 response example. No need to issue three
+    # separate Status-filtered requests (Pending/Won/Lost) and sum them
+    # by hand - Didar already did that server-side.
+    def get_status_breakdown(
+        self, source: str, since: datetime, until: datetime
+    ) -> "DealStatusBreakdown":
+        """All/Pending/Won/Lost counts+totals for one marketplace
+        `source` in [since, until), isolated to that source's own Deal
+        Label (see _label_id_for_source()) same as get_won_stats().
+        Returns an all-zero DealStatusBreakdown - never raises - on any
+        failure, same fire-and-forget philosophy as get_won_stats()."""
+        zero = DealStatusBreakdown()
+        label_id = self._label_id_for_source(source)
+        if not label_id:
+            log.warning(
+                "didar: get_status_breakdown(%r) has no resolvable Deal "
+                "Label - reporting all-zero for this source rather than "
+                "counting every deal account-wide",
+                source,
+            )
+            return zero
+
+        try:
+            payload = self._post(
+                "/deal/search_v2",
+                json={
+                    "Criteria": {
+                        "SearchFromTime": _iso(since),
+                        "SearchToTime": _iso(until),
+                        "LabelIds": [label_id],
+                    },
+                    "From": 0,
+                    "Limit": 1,
+                },
+            )
+        except Exception:
+            log.exception(
+                "didar: get_status_breakdown(%r) search_v2 request failed "
+                "- reporting all-zero for this source",
+                source,
+            )
+            return zero
+
+        response = payload.get("Response") if isinstance(payload, dict) else None
+        if not isinstance(response, dict):
+            log.warning(
+                "didar: get_status_breakdown(%r) - no Response in "
+                "search_v2 payload: %r", source, payload,
+            )
+            return zero
+
+        def _int(key: str) -> int:
+            try:
+                return int(round(float(response.get(key, 0))))
+            except (TypeError, ValueError):
+                return 0
+
+        def _dec(key: str) -> Decimal:
+            try:
+                return Decimal(str(response.get(key, 0)))
+            except (InvalidOperation, TypeError, ValueError):
+                return Decimal("0")
+
+        return DealStatusBreakdown(
+            all_count=_int("AllDealsCount"),
+            all_total=_dec("AllDealsTotalPrice"),
+            pending_count=_int("PendingDealsCount"),
+            pending_total=_dec("PendingDealsTotalPrice"),
+            won_count=_int("WonDealsCount"),
+            won_total=_dec("WonDealsTotalPrice"),
+            lost_count=_int("LostDealsCount"),
+            lost_total=_dec("LostDealsTotalPrice"),
+        )
 
     def find_existing_deal_id(self, order: NormalizedOrder) -> str | None:
         """

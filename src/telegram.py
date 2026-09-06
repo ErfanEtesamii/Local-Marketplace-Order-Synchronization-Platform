@@ -32,13 +32,23 @@ DESIGN CHOICES:
   than disabling the whole feature, and a send failure to one recipient
   never blocks sends to the others (see _send()).
 
-- Reports are built directly from Repository.get_amount_stats_since()
-  (see src/db/repository.py) rather than reusing src/reporting.py's
-  generate_daily_report(): that file is a separate, deliberately
-  English/ops-facing "is everything still polling?" health file
-  (Stage 6 of the original proposal), not the Persian, money-breakdown
-  report this feature asks for. Reusing it would tie two genuinely
-  different audiences/formats to the same code path.
+- All reports - the daily/weekly/monthly/yearly ones AND the
+  custom-range /report picker - are built LIVE from Didar itself via
+  DidarDealClient.get_won_stats() (POST /deal/search_v2, Won deals,
+  isolated to each source's own Deal Label), not from this project's
+  own local sync cache (Repository.get_amount_stats_since()/
+  synced_orders). Changed 2026-09 (client request: "باید ... با
+  اندپوینت مستقیم از خود دیدار بگیره نه اینکه سفارش هایی که روی
+  سیستم ثبت شدن رو بررسی کنه") after the local cache was found to
+  silently undercount whenever a poll cycle was missed for longer
+  than the sync engine's own fetch window - Didar is the account's
+  actual source of truth and never has that gap. One consequence:
+  every report now shows count + total sale amount only, no
+  products/shipping breakdown - see get_won_stats()'s docstring for
+  why that split isn't retrievable from Didar at all once a deal is
+  saved. (Repository.get_amount_stats_since() and _format_report_message
+  still exist, unused by any report now, purely so historical local
+  figures remain queryable if ever needed.)
 
 - Report scheduling is a per-poll-cycle rollover check
   (check_and_send_reports(), called from main.py's _poll_cycle), not a
@@ -106,6 +116,7 @@ import httpx
 import jdatetime
 
 from src.db.repository import Repository
+from src.didar.deal_client import DealStatusBreakdown, DidarDealClient
 from src.http_utils import default_retry, raise_for_status_with_body
 from src.logger import get_logger
 from src.shipping_fees import shipping_fee_rial
@@ -365,7 +376,15 @@ class TelegramNotifier:
     def __init__(self) -> None:
         self._client: Optional[httpx.Client] = None
         self._chat_ids: list[Union[int, str]] = []
+        self._chat_names: dict[str, str] = {}
         self._configured: bool = False
+        # Lazily constructed - only the custom-range /report picker
+        # needs to talk to Didar directly (see _send_custom_range_report
+        # / _get_didar_client below); every other report stays on
+        # Repository's local sync cache, so most TelegramNotifier
+        # instances (e.g. ones only ever used for per-order
+        # notifications) never need this at all.
+        self._didar_client: Optional["DidarDealClient"] = None
 
     def close(self) -> None:
         """Release the underlying HTTP connection pool. Optional - the
@@ -454,6 +473,7 @@ class TelegramNotifier:
 
         self._client = client
         self._chat_ids = chat_ids
+        self._chat_names = self._collect_raw_chat_names()
         self._configured = True
         log.info("telegram: bot configured (%d recipient(s): %r)", len(chat_ids), chat_ids)
 
@@ -495,6 +515,64 @@ class TelegramNotifier:
                 seen.add(raw)
                 unique.append(raw)
         return unique
+
+    @staticmethod
+    def _collect_raw_chat_names() -> dict[str, str]:
+        """Optional display names for chat ids, read from
+        TELEGRAM_CHAT_NAME_1..10 (paired with TELEGRAM_CHAT_ID_1..10 by
+        index) plus TELEGRAM_CHAT_NAME for the legacy single
+        TELEGRAM_CHAT_ID. Purely cosmetic - used only to say *who*
+        pulled a /report in the broadcast notice added below (client
+        request 2026-09); a chat id with no configured name just falls
+        back to showing the raw id (see _display_name()). Keyed by the
+        raw (unparsed) chat id string so lookups work whether the id
+        ended up numeric or "@channel_username"."""
+        names: dict[str, str] = {}
+        legacy_id = os.getenv("TELEGRAM_CHAT_ID", "").strip()
+        legacy_name = os.getenv("TELEGRAM_CHAT_NAME", "").strip()
+        if legacy_id and legacy_name:
+            names[legacy_id] = legacy_name
+        for i in range(1, 11):
+            chat_id_raw = os.getenv(f"TELEGRAM_CHAT_ID_{i}", "").strip()
+            name = os.getenv(f"TELEGRAM_CHAT_NAME_{i}", "").strip()
+            if chat_id_raw and name:
+                names[chat_id_raw] = name
+        return names
+
+    def _display_name(self, chat_id: Union[int, str]) -> str:
+        """Human-readable label for a chat id, for the /report broadcast
+        notice - the configured TELEGRAM_CHAT_NAME_N if there is one,
+        otherwise the raw chat id itself."""
+        return self._chat_names.get(str(chat_id), str(chat_id))
+
+    def _broadcast_report_notice(
+        self, requester_chat_id: Union[int, str], requester_name: str, period_line: str
+    ) -> None:
+        """Tells every OTHER configured recipient that `requester_name`
+        just pulled a custom /report for `period_line` (client request
+        2026-09 - "بنویسه فلانی ریپورت گرفته"). Deliberately its own
+        small fan-out (not _send(), which targets every chat id
+        including the requester) since the requester already has the
+        report itself via _edit_message() and doesn't need this notice
+        too. Same per-recipient isolation as _send(): one failed
+        broadcast must never block the others, and must never affect
+        the report the requester already received."""
+        text = f"🔔 {requester_name} گزارش زیر را دریافت کرد:\n{period_line}"
+        for chat_id in self._chat_ids:
+            if chat_id == requester_chat_id:
+                continue
+            try:
+                self._post_message(chat_id, text)
+            except TelegramError as exc:
+                log.error(
+                    "telegram: failed to broadcast report notice to chat_id=%r: %s",
+                    chat_id, exc,
+                )
+            except Exception:  # pragma: no cover - defensive
+                log.exception(
+                    "telegram: unexpected error broadcasting report notice to chat_id=%r",
+                    chat_id,
+                )
 
     # ------------------------------------------------------------------
     # Per-order notification (Requirement 1)
@@ -731,6 +809,56 @@ class TelegramNotifier:
         self._send_yearly_report(repository, source_names, ended_year_first_day)
         repository.set_report_marker("year", key)
 
+    def _aggregate_live(self, source_names: list[str], since: datetime, until: datetime) -> tuple[int, Decimal]:
+        """Live Won-deal count/total straight from Didar via
+        DidarDealClient.get_won_stats() - client request 2026-09: every
+        report (daily/weekly/monthly/yearly, same as the custom-range
+        /report picker) must reflect Didar itself, the account's real
+        source of truth, rather than only the orders this program's own
+        sync engine happened to see locally (which can undercount if a
+        poll cycle was ever missed - see _sync_source()'s 5-hour window).
+        Deliberately count+total only, no products/shipping split - see
+        get_won_stats()'s docstring for why that breakdown isn't
+        retrievable from Didar at all once a deal is saved. Returns
+        (0, Decimal('0')) if no Didar client could be constructed,
+        mirroring _send_custom_range_report's own degrade-to-zero
+        behaviour rather than raising into the caller."""
+        didar_client = self._get_didar_client()
+        count = 0
+        total = Decimal("0")
+        if didar_client is None:
+            log.error(
+                "telegram: no Didar client available for periodic report - "
+                "reporting zero results"
+            )
+            return count, total
+        for source in source_names:
+            source_count, source_total = didar_client.get_won_stats(source, since, until)
+            count += source_count
+            total += source_total
+        return count, total
+
+    def _aggregate_live_breakdown(
+        self, source_names: list[str], since: datetime, until: datetime
+    ) -> DealStatusBreakdown:
+        """All/Pending/Won/Lost breakdown across every configured source,
+        for the /report custom-range picker's "کل سفارشات / سفارشات
+        جاری / سفارشات موفق / سفارشات ناموفق" display (client request,
+        2026-09 follow-up) - see DidarDealClient.get_status_breakdown().
+        Same degrade-to-zero behaviour as _aggregate_live above if no
+        Didar client could be constructed."""
+        didar_client = self._get_didar_client()
+        total = DealStatusBreakdown()
+        if didar_client is None:
+            log.error(
+                "telegram: no Didar client available for custom-range "
+                "report - reporting all-zero breakdown"
+            )
+            return total
+        for source in source_names:
+            total = total + didar_client.get_status_breakdown(source, since, until)
+        return total
+
     def _aggregate(self, repository, source_names, since, until=None):
         products = shipping = total = count = 0
         for source in source_names:
@@ -765,17 +893,39 @@ class TelegramNotifier:
             "#گزارش"
         )
 
+    def _format_live_report_message(
+        self, title_line: str, box_label: str, period_line: str, count: int, total,
+    ) -> str:
+        """Used by the periodic live-from-Didar reports - daily/weekly/
+        monthly/yearly (see _aggregate_live above). NOT used by the
+        custom-range /report picker any more - that one shows a fuller
+        All/Pending/Won/Lost breakdown instead, see
+        _format_live_range_report_message below. No products/shipping
+        split here - see _aggregate_live()'s docstring."""
+        return (
+            f"{title_line}\n"
+            f"{_boxed_title(box_label)}\n"
+            f"{period_line}\n"
+            "🛒 تعداد سفارش‌های موفق\n"
+            f"└─ {count} سفارش\n"
+            "💰 مبلغ فروش\n"
+            f"└─ {_format_rial(total)} ریال\n"
+            "━━━━━━━━━━━━━━━━━━━━\n"
+            "🟢 برگرفته از معامله‌های موفق ثبت‌شده در دیدار\n"
+            "(بدون احتساب هزینه ارسال).\n"
+            "#گزارش"
+        )
+
     def _send_daily_report(self, repository, source_names, day) -> None:
         if not self.is_configured():
             return
         try:
             since = _iran_midnight_utc(day)
             until = _iran_midnight_utc(day + timedelta(days=1))
-            products, shipping, total, count = self._aggregate(repository, source_names, since, until)
+            count, total = self._aggregate_live(source_names, since, until)
             period_line = f"📅 {_WEEKDAY_FA[_iranian_weekday(day)]} {_jalali_date_str(day)}"
-            message = self._format_report_message(
-                "📊 گزارش پایان روز", "📊 گزارش روزانه", period_line,
-                products, shipping, total, count,
+            message = self._format_live_report_message(
+                "📊 گزارش پایان روز", "📊 گزارش روزانه", period_line, count, total,
             )
             self._send(message)
             log.info("telegram: sent daily report for %s", _jalali_key(day))
@@ -791,11 +941,10 @@ class TelegramNotifier:
             week_end = week_start + timedelta(days=6)  # Friday
             since = _iran_midnight_utc(week_start)
             until = _iran_midnight_utc(week_end + timedelta(days=1))
-            products, shipping, total, count = self._aggregate(repository, source_names, since, until)
+            count, total = self._aggregate_live(source_names, since, until)
             period_line = f"📅 {_jalali_date_str(week_start)} تا {_jalali_date_str(week_end)}"
-            message = self._format_report_message(
-                "📊 گزارش پایان هفته", "📊 گزارش هفتگی", period_line,
-                products, shipping, total, count,
+            message = self._format_live_report_message(
+                "📊 گزارش پایان هفته", "📊 گزارش هفتگی", period_line, count, total,
             )
             self._send(message)
             log.info(
@@ -817,15 +966,14 @@ class TelegramNotifier:
                 next_month_first = jdatetime.date(month_first_day.year, month_first_day.month + 1, 1)
             since = _iran_midnight_utc(month_first_day)
             until = _iran_midnight_utc(next_month_first)
-            products, shipping, total, count = self._aggregate(repository, source_names, since, until)
+            count, total = self._aggregate_live(source_names, since, until)
             month_label = (
                 f"{_MONTH_NAMES_FA[month_first_day.month]} "
                 f"{_to_persian_digits(str(month_first_day.year))}"
             )
             period_line = f"📅 {month_label}"
-            message = self._format_report_message(
-                "📊 گزارش پایان ماه", "📊 گزارش ماهانه", period_line,
-                products, shipping, total, count,
+            message = self._format_live_report_message(
+                "📊 گزارش پایان ماه", "📊 گزارش ماهانه", period_line, count, total,
             )
             self._send(message)
             log.info("telegram: sent monthly report for %04d-%02d",
@@ -842,11 +990,10 @@ class TelegramNotifier:
             next_year_first = jdatetime.date(year_first_day.year + 1, 1, 1)
             since = _iran_midnight_utc(year_first_day)
             until = _iran_midnight_utc(next_year_first)
-            products, shipping, total, count = self._aggregate(repository, source_names, since, until)
+            count, total = self._aggregate_live(source_names, since, until)
             period_line = f"📅 سال {_to_persian_digits(str(year_first_day.year))}"
-            message = self._format_report_message(
-                "📊 گزارش پایان سال", "📊 گزارش سالانه", period_line,
-                products, shipping, total, count,
+            message = self._format_live_report_message(
+                "📊 گزارش پایان سال", "📊 گزارش سالانه", period_line, count, total,
             )
             self._send(message)
             log.info("telegram: sent yearly report for %04d", year_first_day.year)
@@ -1034,6 +1181,55 @@ class TelegramNotifier:
         finally:
             self._answer_callback_query(query_id)
 
+    def _get_didar_client(self) -> Optional["DidarDealClient"]:
+        """Lazily constructs (and caches) the DidarDealClient used only
+        by the custom-range /report picker (see
+        _send_custom_range_report below) to query Didar live -
+        deliberately separate from whatever DidarDealClient the
+        SyncEngine itself uses, since TelegramNotifier has no other
+        reason to depend on the sync pipeline's own instance. Returns
+        None - never raises - if construction fails (e.g. Didar config
+        missing), so a /report press degrades to "zero results" instead
+        of crashing poll_updates()."""
+        if self._didar_client is None:
+            try:
+                self._didar_client = DidarDealClient()
+            except Exception:
+                log.exception("telegram: failed to construct DidarDealClient for /report")
+                return None
+        return self._didar_client
+
+    def _format_live_range_report_message(
+        self, period_line: str, breakdown: DealStatusBreakdown
+    ) -> str:
+        """Custom-range /report format - LIVE from Didar (see
+        _send_custom_range_report), showing the full All/Pending/Won/
+        Lost breakdown (کل سفارشات / سفارشات جاری / سفارشات موفق /
+        سفارشات ناموفق - client request, 2026-09 follow-up), same four
+        categories as the client's own Excel-style report. Deliberately
+        without the products/shipping split every other (non-live)
+        report shows: Didar has no way to return a saved shipping
+        figure (see DidarDealClient.get_won_stats()'s docstring), so
+        each category here only ever shows count + total sale amount,
+        both read directly from Didar itself."""
+        return (
+            "📊 گزارش بازه دلخواه\n"
+            f"{_boxed_title('📊 گزارش بازه‌ای (زنده از دیدار)')}\n"
+            f"{period_line}\n"
+            "📦 کل سفارشات\n"
+            f"└─ {breakdown.all_count} سفارش - {_format_rial(breakdown.all_total)} ریال\n"
+            "🔄 سفارشات جاری\n"
+            f"└─ {breakdown.pending_count} سفارش - {_format_rial(breakdown.pending_total)} ریال\n"
+            "🟢 سفارشات موفق\n"
+            f"└─ {breakdown.won_count} سفارش - {_format_rial(breakdown.won_total)} ریال\n"
+            "🔴 سفارشات ناموفق\n"
+            f"└─ {breakdown.lost_count} سفارش - {_format_rial(breakdown.lost_total)} ریال\n"
+            "━━━━━━━━━━━━━━━━━━━━\n"
+            "🟢 برگرفته از معامله‌های ثبت‌شده در دیدار\n"
+            "(بدون احتساب هزینه ارسال).\n"
+            "#گزارش"
+        )
+
     def _send_custom_range_report(
         self,
         chat_id,
@@ -1043,6 +1239,10 @@ class TelegramNotifier:
         repository: Repository,
         source_names: list[str],
     ) -> None:
+        """Same live-from-Didar aggregation as the daily/weekly/monthly/
+        yearly reports (see _aggregate_live), just for whatever custom
+        range the operator picked via the /report picker (client
+        request, 2026-09) instead of a fixed calendar period."""
         start_date = _jalali_from_key(start_key)
         if end_date < start_date:
             self._edit_message(
@@ -1053,16 +1253,21 @@ class TelegramNotifier:
             return
         since = _iran_midnight_utc(start_date)
         until = _iran_midnight_utc(end_date + timedelta(days=1))
-        products, shipping, total, count = self._aggregate(repository, source_names, since, until)
+
+        breakdown = self._aggregate_live_breakdown(source_names, since, until)
+
         period_line = f"📅 از {_jalali_date_str(start_date)} تا {_jalali_date_str(end_date)}"
-        message = self._format_report_message(
-            "📊 گزارش بازه دلخواه", "📊 گزارش بازه‌ای", period_line,
-            products, shipping, total, count,
-        )
+        message = self._format_live_range_report_message(period_line, breakdown)
         self._edit_message(chat_id, message_id, message)
         log.info(
-            "telegram: sent custom-range report %s..%s", start_key, _jalali_key(end_date)
+            "telegram: sent live custom-range report %s..%s (source: Didar CRM, "
+            "%d total / %d pending / %d won / %d lost)",
+            start_key, _jalali_key(end_date), breakdown.all_count,
+            breakdown.pending_count, breakdown.won_count, breakdown.lost_count,
         )
+        # Let every other admin know who just pulled this report -
+        # client request 2026-09 (see _broadcast_report_notice()).
+        self._broadcast_report_notice(chat_id, self._display_name(chat_id), period_line)
 
     def _send_message_with_keyboard(
         self, chat_id: Union[int, str], text: str, reply_markup: dict

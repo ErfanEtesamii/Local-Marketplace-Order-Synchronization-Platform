@@ -11,6 +11,7 @@ the first-run backlog fast-forward).
 from __future__ import annotations
 
 from datetime import timedelta
+from decimal import Decimal
 from unittest.mock import patch
 
 import httpx
@@ -19,6 +20,7 @@ import pytest
 import respx
 
 from src.db.repository import Repository
+from src.didar.deal_client import DealStatusBreakdown
 from src.telegram import (
     TelegramNotifier,
     _current_jalali_year,
@@ -147,9 +149,26 @@ def test_full_range_pick_sends_report_with_correct_period(repo):
     notifier._chat_ids = [775753176]
     source_names = ["digikala", "basalam"]
 
+    # The custom-range /report queries Didar live (see
+    # DidarDealClient.get_status_breakdown()) rather than Repository's
+    # local cache - fake out the Didar client entirely so this test
+    # never makes a real HTTP call. Two sources, 4 deals each (1 won,
+    # 2 pending, 1 lost) -> 8 total / 4 pending / 2 won / 2 lost,
+    # matching the assertions below.
+    fake_breakdown = DealStatusBreakdown(
+        all_count=4, all_total=Decimal("525000"),
+        pending_count=2, pending_total=Decimal("200000"),
+        won_count=1, won_total=Decimal("225000"),
+        lost_count=1, lost_total=Decimal("100000"),
+    )
+    fake_didar = type(
+        "FakeDidarClient", (),
+        {"get_status_breakdown": lambda self, source, since, until: fake_breakdown},
+    )()
+
     with patch.object(notifier, "_edit_message") as mock_edit, \
          patch.object(notifier, "_answer_callback_query"), \
-         patch.object(notifier, "_aggregate", return_value=(1000000, 50000, 1050000, 4)):
+         patch.object(notifier, "_get_didar_client", return_value=fake_didar):
 
         def fire(data):
             notifier._handle_report_callback(
@@ -171,7 +190,10 @@ def test_full_range_pick_sends_report_with_correct_period(repo):
     assert final_message_id == 42
     assert "از" in final_text and "تا" in final_text
     assert "1405" not in final_text  # dates are rendered in Persian digits
+    # Two sources summed: 4+4=8 total, 2+2=4 pending, 1+1=2 won, 1+1=2 lost.
+    assert "└─ 8 سفارش" in final_text
     assert "└─ 4 سفارش" in final_text
+    assert "└─ 2 سفارش" in final_text
 
 
 def test_end_before_start_shows_error_instead_of_report(repo):
@@ -180,14 +202,15 @@ def test_end_before_start_shows_error_instead_of_report(repo):
 
     with patch.object(notifier, "_edit_message") as mock_edit, \
          patch.object(notifier, "_answer_callback_query"), \
-         patch.object(notifier, "_aggregate") as mock_aggregate:
+         patch.object(notifier, "_get_didar_client") as mock_get_client:
         notifier._send_custom_range_report(
             775753176, 42, _jalali_key(jdatetime.date(1405, 9, 6)),
             jdatetime.date(1405, 4, 3),  # end before start
             repo, ["digikala"],
         )
 
-    mock_aggregate.assert_not_called()
+    # The end-before-start guard returns before ever touching Didar.
+    mock_get_client.assert_not_called()
     text = mock_edit.call_args[0][2]
     assert "نمی‌تواند قبل از تاریخ شروع" in text
 
