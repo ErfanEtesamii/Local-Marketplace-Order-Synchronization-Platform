@@ -440,7 +440,8 @@ class TelegramNotifier:
 
         return (
             "🟢 سفارش جدید ثبت شد\n"
-            f"🛍 پلتفرم: {emoji} {platform_name}\n"
+            f"🛍 پلتفرم:\n"
+            f"{emoji} {platform_name}\n"
             "👤 مشتری:\n"
             f"{customer}\n"
             "📦 محصولات:\n"
@@ -456,7 +457,8 @@ class TelegramNotifier:
             f"{_format_rial(grand_total)} ریال\n"
             "━━━━━━━━━━━━━━━━━━━━\n"
             f"🕐 {when}\n"
-            "🟢 ثبت موفق در دیدار"
+            "🟢 ثبت موفق در دیدار\n"
+            f"#{platform_name}"
         )
 
     # ------------------------------------------------------------------
@@ -513,7 +515,8 @@ class TelegramNotifier:
             f"{deal.stage_name or 'نامشخص'}\n"
             "━━━━━━━━━━━━━━━━━━━━\n"
             f"🕐 {when}\n"
-            f"شناسه معامله: {reference}"
+            f"شناسه معامله: {reference}\n"
+            f"#{deal.title}"
         )
 
     def _format_jalali_datetime(self, dt: Optional[datetime]) -> str:
@@ -636,7 +639,8 @@ class TelegramNotifier:
             f"└─ {_format_rial(average)} ریال\n"
             "━━━━━━━━━━━━━━━━━━━━\n"
             "🟢 همه سفارش‌ها با موفقیت\n"
-            "در دیدار ثبت شده‌اند."
+            "در دیدار ثبت شده‌اند.\n"
+            "#گزارش"
         )
 
     def _send_daily_report(self, repository, source_names, day) -> None:

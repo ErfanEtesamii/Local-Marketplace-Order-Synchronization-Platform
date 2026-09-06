@@ -211,7 +211,8 @@ def test_format_new_order_message_matches_exact_template():
 
     assert message == (
         "🟢 سفارش جدید ثبت شد\n"
-        "🛍 پلتفرم: 🟣 دیجی‌کالا\n"
+        "🛍 پلتفرم:\n"
+        "🟣 دیجی‌کالا\n"
         "👤 مشتری:\n"
         "علی رضایی\n"
         "📦 محصولات:\n"
@@ -228,7 +229,8 @@ def test_format_new_order_message_matches_exact_template():
         "2,490,000 ریال\n"
         "━━━━━━━━━━━━━━━━━━━━\n"
         f"🕐 {expected_date_str} — ۱۸:۴۲\n"
-        "🟢 ثبت موفق در دیدار"
+        "🟢 ثبت موفق در دیدار\n"
+        "#دیجی‌کالا"
     )
 
 
@@ -248,7 +250,7 @@ def test_format_new_order_message_numbers_multiple_products():
     assert "   └─ 10,000 ریال × 1" in message
     assert "2️⃣ Product B" in message
     assert "   └─ 20,000 ریال × 3" in message
-    assert "🛍 پلتفرم: 🟢 باسلام" in message
+    assert "🛍 پلتفرم:\n🟢 باسلام" in message
 
 
 def test_format_new_order_message_missing_customer_name_shows_placeholder():
@@ -258,14 +260,14 @@ def test_format_new_order_message_missing_customer_name_shows_placeholder():
     message = notifier._format_new_order_message(order)
 
     assert "👤 مشتری:\nنامشخص\n" in message
-    assert "🛍 پلتفرم: 🟠 تپسی‌شاپ" in message
+    assert "🛍 پلتفرم:\n🟠 تپسی‌شاپ" in message
 
 
 def test_format_new_order_message_farazhonar_platform_emoji():
     notifier = TelegramNotifier()
     order = _order_with_items("farazhonar", "1")
     message = notifier._format_new_order_message(order)
-    assert "🛍 پلتفرم: 🔵 فرازهنر" in message
+    assert "🛍 پلتفرم:\n🔵 فرازهنر" in message
 
 
 # ---------------------------------------------------------------------
@@ -529,7 +531,7 @@ def test_format_report_message_matches_expected_shape():
     assert "└─ 50,000 ریال" in message      # shipping
     assert "└─ 1,050,000 ریال" in message   # total
     assert "└─ 262,500 ریال" in message     # average (1,050,000 / 4)
-    assert message.endswith("🟢 همه سفارش‌ها با موفقیت\nدر دیدار ثبت شده‌اند.")
+    assert message.endswith("🟢 همه سفارش‌ها با موفقیت\nدر دیدار ثبت شده‌اند.\n#گزارش")
 
 
 def test_format_report_message_handles_zero_orders():
@@ -759,4 +761,4 @@ def test_send_daily_report_noops_when_not_configured(repo, monkeypatch):
 
 
 if __name__ == "__main__":
-    pytest.main([__file__, "-v"])   
+    pytest.main([__file__, "-v"])
