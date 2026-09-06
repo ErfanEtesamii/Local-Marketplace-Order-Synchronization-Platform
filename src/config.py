@@ -86,10 +86,12 @@ class SnappShopConfig:
 class BasalamConfig:
     base_url: str = field(default_factory=lambda: _get("BASALAM_BASE_URL"))
     access_token: str = field(default_factory=lambda: _get("BASALAM_ACCESS_TOKEN"))
-    # Best-guess default, not confirmed against a live order - see
-    # src/currency.py's module docstring for the (indirect) evidence.
+    # CONFIRMED rial (2026-09, by the client checking real order data) -
+    # the earlier "toman" default was only a best-guess inferred from the
+    # official Basalam SDK's quick-start example, never a confirmed live
+    # order payload. See src/currency.py's module docstring.
     price_unit: str = field(
-        default_factory=lambda: _get_price_unit("BASALAM_PRICE_UNIT", "toman")
+        default_factory=lambda: _get_price_unit("BASALAM_PRICE_UNIT", "rial")
     )
 
 
