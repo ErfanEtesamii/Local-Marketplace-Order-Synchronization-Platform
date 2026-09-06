@@ -94,6 +94,22 @@ this service only ever needs the refresh_token for step 2. Roughly
 once a year (when refresh_token approaches its own expiry), step 1
 needs to be repeated manually and the new tokens re-seeded into .env
 (or directly into data/digikala_tokens.json).
+
+PRICE ENRICHMENT (2026-09, client request via chat, see
+_fetch_history_price_map()'s own docstring for the full detail):
+/ship-by-seller-orders' variants[] was confirmed (real payload) to
+expose only "price" + "count" per item - no unit-price/discount split
+exists on this endpoint at all. To show a genuine pre-discount "مبلغ
+واحد" / "تخفیف" / "مبلغ نهایی" breakdown in Didar (instead of always
+discount=0), _normalize_sbs_row() now makes a SECOND, best-effort call
+per shipment to the OLD /open-api/v1/orders/history endpoint - not to
+detect orders or drive the watermark (that risk doesn't apply here;
+see the 2026-09 MIGRATION section above), purely to look up that one
+order's real unit_price/unit_discount (both CONFIRMED field names, per
+a real response sample the client shared). A failed or empty lookup
+falls back to the pre-existing price*count/no-discount behavior, so
+this can never block a shipment from syncing - only degrade its price
+detail.
 """
 from __future__ import annotations
 
@@ -136,6 +152,23 @@ def _to_int_or_none(value) -> int | None:
         return int(value)
     except (TypeError, ValueError):
         return None
+
+
+def _fmt_history_date(dt: datetime) -> str:
+    """Digikala's documented /orders/history date format: Y-m-d\\TH:i:s.v\\Z
+    - same format the pre-migration adapter used for this endpoint."""
+    return dt.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.") + f"{dt.microsecond // 1000:03d}Z"
+
+
+def _parse_history_date(value: str | None) -> datetime:
+    """Parses /orders/history's order_created_at (ISO, distinct from SBS's
+    Jalali date-only orderDate - see _parse_jalali_date below)."""
+    if not value:
+        return datetime.now(timezone.utc)
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return datetime.now(timezone.utc)
 
 
 class DigikalaAdapter(MarketplaceAdapter):
@@ -293,7 +326,16 @@ class DigikalaAdapter(MarketplaceAdapter):
         # be null, and confirming replaces the row with a freshly
         # re-fetched one that has them populated.
         rows = [self._confirm_if_pending(row) for row in rows]
-        orders = [self._normalize_sbs_row(row) for row in rows]
+        # Price enrichment (see _fetch_history_price_map's docstring) -
+        # one best-effort /orders/history lookup per row, done here (the
+        # I/O-performing entry point) rather than inside
+        # _normalize_sbs_row (kept pure - see its own docstring).
+        orders = [
+            self._normalize_sbs_row(
+                row, price_map=self._fetch_history_price_map(row.get("orderId"), row.get("orderDate"))
+            )
+            for row in rows
+        ]
         log.info(
             "digikala: fetched %d new shipment(s) since watermark %d", len(orders), watermark
         )
@@ -345,7 +387,8 @@ class DigikalaAdapter(MarketplaceAdapter):
         if not data:
             raise ValueError(f"digikala: shipment {source_order_id} not found")
         data = self._confirm_if_pending(data)
-        return self._normalize_sbs_row(data)
+        price_map = self._fetch_history_price_map(data.get("orderId"), data.get("orderDate"))
+        return self._normalize_sbs_row(data, price_map=price_map)
 
     def _confirm_if_pending(self, row: dict) -> dict:
         """
@@ -608,39 +651,254 @@ class DigikalaAdapter(MarketplaceAdapter):
 
         return rows
 
-    def _normalize_sbs_row(self, row: dict) -> NormalizedOrder:
+    def _fetch_history_price_map(self, order_id, order_date: str | None) -> dict[str, dict]:
+        """
+        2026-09 PRICE ENRICHMENT (client request: "مبلغ واحد" in Didar
+        should be the pre-discount unit price, with the real discount
+        shown separately - see chat thread).
+
+        CONFIRMED (real payload, 2026-09): /ship-by-seller-orders'
+        `variants[]` exposes only "price" + "count" per item - no
+        separate unit-price/discount split exists there at all (see
+        _normalize_sbs_row below). That data genuinely doesn't exist on
+        the SBS endpoint; it has to come from somewhere else.
+
+        /open-api/v1/orders/history (the endpoint this adapter stopped
+        using for NEW-ORDER DETECTION during the Sept 2026 SBS migration
+        - see this module's docstring) is still live and, per a real
+        sample response the client shared (2026-09), returns per-item
+        rows with these confirmed price fields:
+            unit_price      -> pre-discount price for ONE unit
+            unit_discount   -> the per-unit discount amount (a currency
+                                amount, not a percentage - same "per-unit
+                                CURRENCY amount" convention Didar's own
+                                DealItems.Discount uses, see
+                                didar/deal_client.py)
+            quantity        -> this line's quantity (kept only for
+                                cross-checking against the SBS variant's
+                                own "count"; not otherwise used, since we
+                                trust SBS for quantity)
+        `total_price` also exists on this endpoint but the sample
+        response's own numbers don't reconcile with unit_price *
+        quantity by anywhere close to unit_discount's scale (a sample
+        with unit_price=120,000,000, unit_discount=100,000, quantity=5
+        would reconcile to total_price=599,500,000, not the
+        30,000,000,000 the sample actually shows) - so `total_price` is
+        NOT used here. The per-line final amount is computed directly
+        from the two confirmed per-unit fields instead: (unit_price -
+        unit_discount) * quantity. See _normalize_sbs_row below.
+
+        This method calls /orders/history PURELY to look up those
+        numbers for one already-known order - never for detecting new
+        orders or for the created_at watermark, so the confirmed
+        order_created_at_from/_to server-side filter bug (see module
+        docstring) cannot cause a missed or duplicated order here: the
+        watermark/dedup logic never touches this method's return value.
+
+        Narrowed to a +/-1 day window around `order_date` (the SBS row's
+        own Jalali orderDate) purely to keep the page count small - the
+        client-side "oldest row on this page is already older than our
+        window" early-stop (same technique the pre-migration adapter
+        used) still works regardless of whether the server-side filter
+        itself is honored, since it only depends on rows arriving
+        newest-first (sort=id, order=desc), not on the filter being
+        applied.
+
+        Returns {key: {"unit_price": Decimal, "unit_discount": Decimal}},
+        keyed the same way OrderItem.sku is derived below (sellerCode /
+        product_supplier_code, falling back to productId / product_id) -
+        so callers can look a variant up with the exact same key logic
+        used to build its "sku". Returns {} on ANY failure (bad order_id,
+        transport error, order not found in the window, unexpected
+        shape) - best-effort, same convention as
+        fetch_sbs_customer_details/fetch_shipment_details: a failed
+        lookup here must never block the shipment from syncing, it just
+        falls back to the SBS-only price*count/no-discount behavior
+        already in place before this enrichment existed.
+
+        REMAINING UNCONFIRMED ASSUMPTION: the sample response shared by
+        the client (2026-09) had several fields ("serials") documented
+        inline in an OpenAPI-schema style (type/description/example per
+        field), suggesting it may be closer to a documentation example
+        than a live captured order - unit_price/unit_discount/quantity/
+        product_supplier_code/order_id themselves look like real data
+        (internally consistent field types, at least), but this hasn't
+        been double-checked against a second, independently-fetched live
+        order. Worth confirming once against a real order you can also
+        see the numbers for in the seller panel.
+        """
+        if order_id is None:
+            return {}
+
+        try:
+            gregorian_date = None
+            if order_date:
+                year, month, day = (int(part) for part in order_date.split("/"))
+                gregorian_date = jdatetime.date(year, month, day).togregorian()
+        except (ValueError, TypeError):
+            gregorian_date = None
+
+        window_from = window_to = None
+        if gregorian_date is not None:
+            center = datetime.combine(gregorian_date, datetime.min.time(), tzinfo=_IRAN_TZ)
+            window_from = center - timedelta(days=1)
+            window_to = center + timedelta(days=2)
+
+        rows: list[dict] = []
+        page = 1
+        size = 50
+        try:
+            while True:
+                params = {"page": page, "size": size, "sort": "id", "order": "desc"}
+                if window_from is not None:
+                    params["order_created_at_from"] = _fmt_history_date(window_from)
+                if window_to is not None:
+                    params["order_created_at_to"] = _fmt_history_date(window_to)
+
+                payload = self._get("/open-api/v1/orders/history", params=params)
+                data = payload.get("data") or {}
+                items = data.get("items") or []
+                rows.extend(items)
+
+                # Client-side early stop, independent of whether the
+                # server actually honored order_created_at_from (it
+                # doesn't - see module docstring) - only relies on rows
+                # arriving newest-first, which sort=id/order=desc gives
+                # regardless.
+                if window_from is not None and items:
+                    oldest_on_page = _parse_history_date(items[-1].get("order_created_at"))
+                    if oldest_on_page < window_from:
+                        break
+
+                pager = data.get("pager", {})
+                total_pages = pager.get("total_pages", 0)
+                got_full_page = len(items) == size
+                more_by_pager = page < total_pages
+                if not items or not (got_full_page or more_by_pager):
+                    break
+                # Hard cap so a bad/missing date window (or an
+                # unexpectedly old order) can't turn this into the same
+                # full-history walk this adapter deliberately moved away
+                # from - 20 pages (~1000 rows) is already generous for a
+                # +/-1 day window.
+                if page >= 20:
+                    log.warning(
+                        "digikala: history price lookup for order %s hit the 20-page "
+                        "safety cap without finding a match - giving up",
+                        order_id,
+                    )
+                    break
+                page += 1
+        except Exception:
+            log.exception(
+                "digikala: failed to fetch /orders/history price data for order %s - "
+                "falling back to SBS price with no discount for this shipment",
+                order_id,
+            )
+            return {}
+
+        price_map: dict[str, dict] = {}
+        for r in rows:
+            if str(r.get("order_id")) != str(order_id):
+                continue
+            key = str(r.get("product_supplier_code") or r.get("product_id") or "")
+            if not key:
+                continue
+            price_map[key] = {
+                "unit_price": _to_decimal(r.get("unit_price")),
+                "unit_discount": _to_decimal(r.get("unit_discount")),
+            }
+
+        if not price_map:
+            log.warning(
+                "digikala: no matching /orders/history rows found for order %s within "
+                "the search window - syncing this shipment with SBS price, no discount",
+                order_id,
+            )
+        return price_map
+
+    def _normalize_sbs_row(self, row: dict, price_map: dict[str, dict] | None = None) -> NormalizedOrder:
         """
         Build a NormalizedOrder directly from one /ship-by-seller-orders
         row (list or single-shipment detail - both share this shape).
         No cross-row grouping: one shipment = one Deal (Decision 1).
+
+        Deliberately pure / no I/O of its own: `price_map` (see
+        _fetch_history_price_map's docstring) is looked up by the CALLER
+        (fetch_new_orders / fetch_order_detail below) and passed in here,
+        rather than this method reaching out to /orders/history itself.
+        Every existing test in this file calls _normalize_sbs_row()
+        directly with no network mocking at all, relying on it being a
+        pure row->NormalizedOrder transform - keeping the HTTP call out
+        of this method preserves that (a bare `None` here, e.g. from
+        those tests, falls back to the pre-enrichment price*count/no-
+        discount behavior, same as always).
         """
         shipment_id = row.get("shipmentId")
         order_id = row.get("orderId")
         variants = row.get("variants") or []
+        price_map = price_map or {}
 
-        items = [
-            OrderItem(
-                sku=str(v["sellerCode"]) if v.get("sellerCode") is not None else str(v.get("productId", "")),
-                title=str(v.get("title", "")),
-                quantity=int(v.get("count") or 1),
-                # ASSUMPTION, NOT yet confirmed against a real payload -
-                # see Decision 2, digikala-sbs-migration-prompt.md: the
-                # schema only ever exposes "price" + "count" per variant,
-                # with no separate unit_price/total_price split and no
-                # discount field anywhere. Treated as price=per-unit,
-                # final_price=price*count, no discount subtracted. Must be
-                # verified against at least one real shipment whose panel
-                # total is known (checking shippingCost as a possible home
-                # for any mismatch) before being trusted for real money.
-                unit_price=to_rial(_to_decimal(v.get("price")), self._config.price_unit),
-                final_price=to_rial(
-                    _to_decimal(v.get("price")) * _to_decimal(v.get("count") or 1),
-                    self._config.price_unit,
-                ),
-                product_image_url=str(v["image_url"]) if v.get("image_url") else None,
+        # CONFIRMED (real payload, 2026-09): /ship-by-seller-orders'
+        # variants[] only ever exposes "price" + "count" per item - no
+        # unit_price/total_price split and no discount field anywhere on
+        # THIS endpoint (this used to be flagged as an unconfirmed
+        # assumption; a real sample response settled it). Since that data
+        # genuinely doesn't exist here, callers pass in `price_map` -
+        # looked up from /orders/history via _fetch_history_price_map()
+        # - for the real pre-discount/discount breakdown (see that
+        # method's own docstring for exactly what it returns and why a
+        # missing/failed lookup is safe: price_map={} just falls back to
+        # the price*count/no-discount branch below, unchanged from
+        # before this enrichment existed).
+
+        items = []
+        for v in variants:
+            sku = str(v["sellerCode"]) if v.get("sellerCode") is not None else str(v.get("productId", ""))
+            quantity = int(v.get("count") or 1)
+            history_prices = price_map.get(sku)
+            if history_prices is not None:
+                # Real pre-discount unit price + per-unit discount, from
+                # /orders/history (see _fetch_history_price_map) - this
+                # is what lets Didar show "مبلغ واحد" (before discount),
+                # "تخفیف" (the real per-unit gap) and "مبلغ نهایی" (after
+                # discount) as three genuinely different numbers instead
+                # of the SBS fallback below, which always yields
+                # discount=0. final_price is computed here as (unit_price
+                # - unit_discount) * quantity rather than trusted from
+                # history's own "total_price" field - see
+                # _fetch_history_price_map's docstring for why that field
+                # isn't used. Clamped at 0 in case unit_discount ever
+                # exceeds unit_price (bad/stale data) - a negative line
+                # total would be nonsensical and would also trip
+                # didar/deal_client.py's own negative-discount guard.
+                per_unit_final = history_prices["unit_price"] - history_prices["unit_discount"]
+                if per_unit_final < 0:
+                    per_unit_final = Decimal("0")
+                unit_price = to_rial(history_prices["unit_price"], self._config.price_unit)
+                final_price = to_rial(per_unit_final * Decimal(quantity), self._config.price_unit)
+            else:
+                # Fallback: no matching /orders/history row was found for
+                # this line (lookup failed, order too old for the search
+                # window, or a genuine join-key mismatch - see
+                # _fetch_history_price_map's docstring). Same behavior as
+                # before this enrichment existed: price=per-unit,
+                # final_price=price*count, discount ends up 0 downstream
+                # in didar/deal_client.py's _build_deal_item.
+                unit_price = to_rial(_to_decimal(v.get("price")), self._config.price_unit)
+                final_price = to_rial(
+                    _to_decimal(v.get("price")) * Decimal(quantity), self._config.price_unit
+                )
+            items.append(
+                OrderItem(
+                    sku=sku,
+                    title=str(v.get("title", "")),
+                    quantity=quantity,
+                    unit_price=unit_price,
+                    final_price=final_price,
+                    product_image_url=str(v["image_url"]) if v.get("image_url") else None,
+                )
             )
-            for v in variants
-        ]
 
         # Status mapping - Decision 3, digikala-sbs-migration-prompt.md:
         # isCancelled is the primary signal (an explicit, less

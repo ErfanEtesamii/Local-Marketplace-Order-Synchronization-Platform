@@ -14,6 +14,22 @@ from src.marketplaces.digikala import DigikalaAdapter, _IRAN_TZ
 _CFG = DigikalaConfig(base_url="https://seller.digikala.com", access_token="test-token")
 
 _SBS_URL = "https://seller.digikala.com/open-api/v1/ship-by-seller-orders"
+_HISTORY_URL = "https://seller.digikala.com/open-api/v1/orders/history"
+
+
+def _empty_history_response():
+    """Default mock for the /orders/history price-enrichment lookup
+    (see DigikalaAdapter._fetch_history_price_map) - an empty result,
+    matching the pre-enrichment behavior (price*count, no discount) for
+    every test that isn't specifically exercising that enrichment."""
+    return httpx.Response(
+        200,
+        json={"status": "ok", "data": {"pager": {"page": 1, "total_pages": 0}, "items": []}},
+    )
+
+
+def _mock_empty_history():
+    return respx.get(_HISTORY_URL).mock(return_value=_empty_history_response())
 
 
 @pytest.fixture
@@ -102,6 +118,7 @@ def test_fetch_new_orders_uses_watermark_plus_one_and_advances_it(repo):
     search[min_shipment_id]=watermark+1 and, once new rows come back,
     persist the new max shipmentId as the watermark."""
     repo.set_last_shipment_id("digikala", 100)
+    _mock_empty_history()
     route = respx.get(_SBS_URL).mock(
         return_value=_sbs_list_response([_sbs_row(shipment_id=101), _sbs_row(shipment_id=105)])
     )
@@ -137,6 +154,7 @@ def test_watermark_persisted_after_every_page_not_just_at_the_end(repo):
     asserting the watermark reflects page 1's max even though we can
     inspect it (via the route side_effect) before page 2 is requested."""
     repo.set_last_shipment_id("digikala", 0)
+    _mock_empty_history()
     route = respx.get(_SBS_URL)
     seen_watermark_before_page_2 = {}
 
@@ -166,6 +184,7 @@ def test_fetch_new_orders_paginates_via_full_page_guard(repo):
     """Same double-signal pagination guard as the old /orders/history
     fetch: a full page keeps paginating even if total_pages under-reports."""
     repo.set_last_shipment_id("digikala", 0)
+    _mock_empty_history()
     route = respx.get(_SBS_URL)
     route.mock(
         side_effect=[
@@ -334,6 +353,7 @@ def test_normalize_sbs_row_missing_order_date_falls_back_to_now(repo):
 
 @respx.mock
 def test_fetch_order_detail_uses_single_shipment_endpoint(repo):
+    _mock_empty_history()
     respx.get(f"{_SBS_URL}/42").mock(
         return_value=httpx.Response(200, json={"status": "ok", "data": _sbs_row(shipment_id=42)})
     )
@@ -350,6 +370,7 @@ def test_fetch_order_detail_supports_items_wrapped_shape(repo):
     """fetch_shipment_details observed a different real-payload shape
     ({"items": [...]}) for this same endpoint - fetch_order_detail must
     not break on it."""
+    _mock_empty_history()
     respx.get(f"{_SBS_URL}/42").mock(
         return_value=httpx.Response(
             200, json={"status": "ok", "data": {"items": [_sbs_row(shipment_id=42)]}}
@@ -403,6 +424,7 @@ def test_fetch_new_orders_confirms_pending_row_before_normalizing(repo):
     so the resulting NormalizedOrder carries the post-confirm status and
     customer data - not the pending row's null fields."""
     repo.set_last_shipment_id("digikala", 0)
+    _mock_empty_history()
     respx.get(_SBS_URL).mock(
         return_value=_sbs_list_response([_pending_row(shipment_id=1)])
     )
@@ -439,6 +461,7 @@ def test_fetch_new_orders_skips_confirm_for_non_pending_rows(repo):
     """processing/processed/edited/rejected/cancelled rows must never
     trigger an update-status call - there's nothing to confirm."""
     repo.set_last_shipment_id("digikala", 0)
+    _mock_empty_history()
     respx.get(_SBS_URL).mock(
         return_value=_sbs_list_response([_sbs_row(shipment_id=1, status={"text": "processing"})])
     )
@@ -459,6 +482,7 @@ def test_confirm_uses_next_status_and_falls_back_to_processing(repo):
     present, since that's Digikala's documented "what can this shipment
     become next" value - not a hardcoded "processing"."""
     repo.set_last_shipment_id("digikala", 0)
+    _mock_empty_history()
     respx.get(_SBS_URL).mock(
         return_value=_sbs_list_response([_pending_row(shipment_id=1, next_status="edited")])
     )
@@ -479,6 +503,7 @@ def test_confirm_uses_next_status_and_falls_back_to_processing(repo):
 @respx.mock
 def test_confirm_omits_verification_code_when_row_has_none(repo):
     repo.set_last_shipment_id("digikala", 0)
+    _mock_empty_history()
     respx.get(_SBS_URL).mock(
         return_value=_sbs_list_response([_pending_row(shipment_id=1, verification_code=None)])
     )
@@ -502,6 +527,7 @@ def test_confirm_failure_falls_back_to_original_pending_row(repo):
     still sync - with whatever data the pending row already had - rather
     than being lost or raising out of fetch_new_orders."""
     repo.set_last_shipment_id("digikala", 0)
+    _mock_empty_history()
     respx.get(_SBS_URL).mock(
         return_value=_sbs_list_response([_pending_row(shipment_id=1)])
     )
@@ -525,6 +551,7 @@ def test_confirm_success_but_refetch_failure_falls_back_to_pending_row(repo):
     pre-confirmation row must still be used rather than blowing up the
     whole poll."""
     repo.set_last_shipment_id("digikala", 0)
+    _mock_empty_history()
     respx.get(_SBS_URL).mock(
         return_value=_sbs_list_response([_pending_row(shipment_id=1)])
     )
@@ -545,6 +572,7 @@ def test_fetch_order_detail_also_confirms_pending_row(repo):
     """fetch_order_detail (used by the retry path) must apply the same
     auto-confirm as fetch_new_orders, since a shipment can still be
     pending the first time it's fetched through this path."""
+    _mock_empty_history()
     respx.get(f"{_SBS_URL}/1").mock(
         side_effect=[
             httpx.Response(200, json={"status": "ok", "data": _pending_row(shipment_id=1)}),
@@ -776,3 +804,301 @@ def test_fetch_shipment_details_returns_none_on_failure(repo):
 
     assert result["tracking_code"] is None
     assert result["shipping_cost"] is None
+
+
+# --- price enrichment from /orders/history (2026-09, client request) -----
+# /ship-by-seller-orders' variants[] was confirmed to expose only "price" +
+# "count" per item - no unit-price/discount split exists there at all (see
+# _fetch_history_price_map's docstring in digikala.py). These tests cover
+# the /orders/history lookup that fills in the real unit_price/discount,
+# shaped after a real response sample the client shared (2026-09).
+
+def _history_row(
+    order_id,
+    product_supplier_code="123213",
+    unit_price=120000000,
+    unit_discount=100000,
+    quantity=5,
+    order_created_at="2024-08-07T13:01:10+03:30",
+    **overrides,
+):
+    row = {
+        "product_variant_title": "کامپیوتر همه کاره 24 اینچی",
+        "product_id": 1234,
+        "order_id": order_id,
+        "shipment_id": 1231218721,
+        "order_created_at": order_created_at,
+        "order_status": {"key": "confirmed", "title": "نهایی شده"},
+        "product_supplier_code": product_supplier_code,
+        "image_src": "https://example.com/a.jpg",
+        "unit_discount": unit_discount,
+        "unit_price": unit_price,
+        "quantity": quantity,
+        # NOT trusted/used by _fetch_history_price_map - see its
+        # docstring on why (the real sample's own total_price didn't
+        # reconcile with unit_price*quantity-unit_discount at all).
+        "total_price": unit_price * quantity,
+    }
+    row.update(overrides)
+    return row
+
+
+def _history_list_response(items, page=1, total_pages=0):
+    return httpx.Response(
+        200,
+        json={
+            "status": "ok",
+            "data": {
+                "pager": {
+                    "page": page,
+                    "item_per_page": 50,
+                    "total_pages": total_pages,
+                    "total_rows": len(items),
+                },
+                "items": items,
+            },
+        },
+    )
+
+
+def test_fetch_history_price_map_returns_unit_price_and_discount(repo):
+    """Direct unit test against the real /orders/history response shape
+    (client-shared sample, 2026-09)."""
+    with respx.mock:
+        respx.get(_HISTORY_URL).mock(
+            return_value=_history_list_response(
+                [_history_row(order_id=9, product_supplier_code="123213")]
+            )
+        )
+        adapter = DigikalaAdapter(config=_CFG, repository=repo)
+        price_map = adapter._fetch_history_price_map(order_id=9, order_date="1403/05/17")
+
+    assert price_map == {
+        "123213": {"unit_price": Decimal("120000000"), "unit_discount": Decimal("100000")}
+    }
+
+
+def test_fetch_history_price_map_sends_narrow_date_window(repo):
+    """The date window sent to /orders/history must be derived from the
+    SBS row's own Jalali orderDate (+/- a day) to keep the page count
+    small - see _fetch_history_price_map's docstring."""
+    with respx.mock:
+        route = respx.get(_HISTORY_URL).mock(return_value=_history_list_response([]))
+        adapter = DigikalaAdapter(config=_CFG, repository=repo)
+        adapter._fetch_history_price_map(order_id=9, order_date="1403/05/17")
+
+    sent_params = route.calls[0].request.url.params
+    assert "order_created_at_from" in sent_params
+    assert "order_created_at_to" in sent_params
+    from_dt = datetime.strptime(
+        sent_params["order_created_at_from"], "%Y-%m-%dT%H:%M:%S.%fZ"
+    ).replace(tzinfo=timezone.utc)
+    to_dt = datetime.strptime(
+        sent_params["order_created_at_to"], "%Y-%m-%dT%H:%M:%S.%fZ"
+    ).replace(tzinfo=timezone.utc)
+    assert from_dt < to_dt
+    assert (to_dt - from_dt) <= timedelta(days=4)
+
+
+def test_fetch_history_price_map_filters_rows_to_matching_order_id(repo):
+    """Rows from other orders on the same page must not leak into this
+    order's price map."""
+    with respx.mock:
+        respx.get(_HISTORY_URL).mock(
+            return_value=_history_list_response(
+                [
+                    _history_row(order_id=9, product_supplier_code="A"),
+                    _history_row(order_id=999, product_supplier_code="B"),
+                ]
+            )
+        )
+        adapter = DigikalaAdapter(config=_CFG, repository=repo)
+        price_map = adapter._fetch_history_price_map(order_id=9, order_date="1403/05/17")
+
+    assert list(price_map.keys()) == ["A"]
+
+
+def test_fetch_history_price_map_returns_empty_on_transport_failure(repo):
+    """Best-effort: any failure (500, malformed body, etc.) must return
+    {} rather than raise or block the shipment from syncing."""
+    with respx.mock:
+        respx.get(_HISTORY_URL).mock(return_value=httpx.Response(500, json={"status": "error"}))
+        adapter = DigikalaAdapter(config=_CFG, repository=repo)
+        price_map = adapter._fetch_history_price_map(order_id=9, order_date="1403/05/17")
+
+    assert price_map == {}
+
+
+def test_fetch_history_price_map_returns_empty_when_order_id_is_none(repo):
+    adapter = DigikalaAdapter(config=_CFG, repository=repo)
+    assert adapter._fetch_history_price_map(order_id=None, order_date="1403/05/17") == {}
+
+
+def test_fetch_history_price_map_stops_early_past_the_date_window(repo):
+    """Rows arrive newest-first (sort=id, order=desc) - once a page's
+    oldest row already predates the window, later pages must not be
+    fetched (same client-side early-stop technique as the pre-migration
+    adapter's _fetch_history_rows)."""
+    with respx.mock:
+        old_row = _history_row(order_id=9, order_created_at="2000-01-01T00:00:00+03:30")
+        route = respx.get(_HISTORY_URL).mock(
+            return_value=_history_list_response([old_row], page=1, total_pages=2)
+        )
+        adapter = DigikalaAdapter(config=_CFG, repository=repo)
+        adapter._fetch_history_price_map(order_id=9, order_date="1403/05/17")
+
+    assert route.call_count == 1
+
+
+# --- _normalize_sbs_row + price_map (pure, no I/O) ------------------------
+
+def test_normalize_sbs_row_applies_price_map_discount(repo):
+    """When a price_map entry matches a variant's sku, unit_price/
+    final_price must reflect the real pre/post-discount amounts - not
+    the SBS price*count fallback."""
+    adapter = DigikalaAdapter(config=_CFG, repository=repo)
+    row = _sbs_row(
+        shipment_id=1,
+        order_id=9,
+        variants=[
+            {
+                "title": "Product A",
+                "sellerCode": 42,
+                "count": 3,
+                "price": 999999,  # must be ignored once price_map has a match
+                "image_url": "https://example.com/a.jpg",
+            }
+        ],
+    )
+    price_map = {"42": {"unit_price": Decimal("120000000"), "unit_discount": Decimal("100000")}}
+
+    order = adapter._normalize_sbs_row(row, price_map=price_map)
+
+    item = order.items[0]
+    assert item.unit_price == Decimal("120000000")
+    assert item.final_price == Decimal("359700000")  # (120,000,000 - 100,000) * 3
+    assert order.total_price == Decimal("359700000")
+
+
+def test_normalize_sbs_row_falls_back_when_sku_missing_from_price_map(repo):
+    """A price_map that doesn't cover this particular sku (partial
+    enrichment failure) must fall back to price*count for that item
+    only."""
+    adapter = DigikalaAdapter(config=_CFG, repository=repo)
+    row = _sbs_row(
+        shipment_id=1,
+        variants=[{"title": "Product A", "sellerCode": 42, "count": 2, "price": 500000}],
+    )
+    order = adapter._normalize_sbs_row(
+        row,
+        price_map={"some-other-sku": {"unit_price": Decimal("1"), "unit_discount": Decimal("0")}},
+    )
+
+    item = order.items[0]
+    assert item.unit_price == Decimal("500000")
+    assert item.final_price == Decimal("1000000")
+
+
+def test_normalize_sbs_row_no_price_map_matches_pre_enrichment_behavior(repo):
+    """Calling _normalize_sbs_row with no price_map at all (as every
+    pre-enrichment test in this file already does) must behave exactly
+    as before this feature existed."""
+    adapter = DigikalaAdapter(config=_CFG, repository=repo)
+    row = _sbs_row(
+        shipment_id=1,
+        variants=[{"title": "Product A", "sellerCode": 42, "count": 3, "price": 100000}],
+    )
+    order = adapter._normalize_sbs_row(row)
+
+    item = order.items[0]
+    assert item.unit_price == Decimal("100000")
+    assert item.final_price == Decimal("300000")
+
+
+def test_normalize_sbs_row_clamps_final_price_when_discount_exceeds_unit_price(repo):
+    """Bad/stale history data (unit_discount > unit_price) must never
+    produce a negative line total."""
+    adapter = DigikalaAdapter(config=_CFG, repository=repo)
+    row = _sbs_row(
+        shipment_id=1,
+        variants=[{"title": "Product A", "sellerCode": 42, "count": 2, "price": 100000}],
+    )
+    price_map = {"42": {"unit_price": Decimal("100000"), "unit_discount": Decimal("500000")}}
+
+    order = adapter._normalize_sbs_row(row, price_map=price_map)
+
+    assert order.items[0].final_price == Decimal("0")
+
+
+# --- end-to-end: fetch_new_orders wires price_map through -----------------
+
+@respx.mock
+def test_fetch_new_orders_enriches_items_with_history_discount(repo):
+    """Full integration: a new shipment whose product matches an
+    /orders/history row with a real discount must carry that discount
+    all the way through to the NormalizedOrder returned by
+    fetch_new_orders."""
+    repo.set_last_shipment_id("digikala", 0)
+    respx.get(_SBS_URL).mock(
+        return_value=_sbs_list_response(
+            [
+                _sbs_row(
+                    shipment_id=1,
+                    order_id=9,
+                    variants=[
+                        {
+                            "title": "کامپیوتر همه کاره",
+                            "sellerCode": "123213",
+                            "count": 5,
+                            "price": 999999,
+                        }
+                    ],
+                )
+            ]
+        )
+    )
+    respx.get(_HISTORY_URL).mock(
+        return_value=_history_list_response(
+            [_history_row(order_id=9, product_supplier_code="123213", quantity=5)]
+        )
+    )
+
+    adapter = DigikalaAdapter(config=_CFG, repository=repo)
+    orders = adapter.fetch_new_orders(since=None)
+
+    assert len(orders) == 1
+    item = orders[0].items[0]
+    assert item.unit_price == Decimal("120000000")
+    assert item.final_price == Decimal("599500000")  # (120,000,000 - 100,000) * 5
+
+
+@respx.mock
+def test_fetch_order_detail_enriches_items_with_history_discount(repo):
+    """Same enrichment must apply through the fetch_order_detail path
+    (used by the retry flow), not just fetch_new_orders."""
+    respx.get(f"{_SBS_URL}/1").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "status": "ok",
+                "data": _sbs_row(
+                    shipment_id=1,
+                    order_id=9,
+                    variants=[
+                        {"title": "Product A", "sellerCode": "123213", "count": 5, "price": 1},
+                    ],
+                ),
+            },
+        )
+    )
+    respx.get(_HISTORY_URL).mock(
+        return_value=_history_list_response(
+            [_history_row(order_id=9, product_supplier_code="123213", quantity=5)]
+        )
+    )
+
+    adapter = DigikalaAdapter(config=_CFG, repository=repo)
+    order = adapter.fetch_order_detail("1")
+
+    assert order.items[0].unit_price == Decimal("120000000")
+    assert order.items[0].final_price == Decimal("599500000")
