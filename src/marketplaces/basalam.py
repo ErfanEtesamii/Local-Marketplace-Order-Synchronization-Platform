@@ -18,6 +18,10 @@ natural sync unit for this project. NormalizedOrder.source_order_id maps
 to the parcel id; NormalizedOrder.order_number carries the underlying
 platform order id (order.id) for cross-reference.
 
+IMPORTANT: a parcel's own `created_at` can predate the underlying
+order's `paid_at` by a long margin (confirmed: over a day) - see
+_PARCEL_CREATION_LOOKBACK_HOURS below for the full story and the fix.
+
 Endpoints used:
   GET /v3/vendor-parcels                 -> paginated list (cursor-based)
   GET /v3/vendor-parcels/{parcel_id}      -> full detail incl. items
@@ -51,6 +55,43 @@ log = get_logger(__name__)
 # callers that want to scope polling to freshly placed orders only.
 STATUS_NEW_ORDER = 3739
 
+# BUGFIX (2026-09, order 80027578): a Basalam parcel's own `created_at`
+# can be set LONG before the underlying order is actually paid - e.g.
+# this order's parcel had created_at=2026-09-04T21:17 while
+# order.paid_at was 2026-09-06T04:52, ~31.5 hours later. sync_engine.py
+# uses NormalizedOrder.created_at both (a) to build the `created_at[gte]`
+# query param sent to /v3/vendor-parcels, and (b) for its own
+# client-side window-drop check - so as long as this field carried the
+# stale parcel date, an order like this was outside the 5-hour window
+# (FETCH_WINDOW_HOURS in sync_engine.py) from the very first poll and
+# could NEVER be seen, permanently. This wasn't a token/scope/Didar
+# issue - the parcel was simply never inside the window basalam.py or
+# sync_engine.py ever asked for.
+#
+# Fix, in two parts (see _order_created_at and fetch_new_orders below):
+#   1. NormalizedOrder.created_at now reflects order.paid_at (falling
+#      back to the parcel's created_at only if paid_at is missing), so
+#      sync_engine's window-drop judges freshness by when the customer
+#      actually paid, not by whatever moment Basalam happened to create
+#      the parcel record.
+#   2. The server-side `created_at[gte]` query param - the ONLY time
+#      filter /v3/vendor-parcels accepts (paid_at[gte] is documented
+#      only on the different /v1/customer-orders endpoint, which needs
+#      a buyer-side `customer.order.read` scope this project doesn't
+#      have - see basalam_api_full.md) - now always looks back at LEAST
+#      _PARCEL_CREATION_LOOKBACK_HOURS, regardless of the `since` the
+#      engine passed in. Otherwise part 1 alone would fix the window
+#      check but the parcel would still never be RETURNED by the API in
+#      the first place.
+# This mirrors the spirit of Digikala's uses_id_based_watermark fix
+# (fetch a wider net server-side, then let a more reliable freshness
+# signal + the synced_orders ID dedup in sync_engine.py sort out what's
+# actually new) without needing a full ID-watermark migration - unlike
+# Digikala's shipmentId, Basalam's parcel id ordering relative to
+# payment time isn't confirmed, so an ID-based cursor isn't a safe
+# substitute for a date filter here.
+_PARCEL_CREATION_LOOKBACK_HOURS = 72
+
 
 def _to_decimal(value) -> Decimal:
     try:
@@ -79,6 +120,21 @@ def _item_photo_url(item: dict) -> str | None:
         if url:
             return str(url)
     return None
+
+
+def _order_created_at(raw: dict) -> datetime:
+    """The date NormalizedOrder.created_at should carry for a parcel -
+    see _PARCEL_CREATION_LOOKBACK_HOURS above for why this must be
+    order.paid_at rather than the parcel's own created_at whenever
+    paid_at is present. Falls back to the parcel's created_at only for
+    the rare/defensive case of a missing paid_at (a parcel that
+    genuinely doesn't have one yet is more likely a data anomaly than a
+    real customer order sync_engine should treat as fresh)."""
+    order = raw.get("order") or {}
+    paid_at = order.get("paid_at")
+    if paid_at:
+        return _parse_date(paid_at)
+    return _parse_date(raw.get("created_at"))
 
 
 def _first_item_photo_url(raw_items: list[dict]) -> str | None:
@@ -133,9 +189,20 @@ class BasalamAdapter(MarketplaceAdapter):
         orders: list[NormalizedOrder] = []
         cursor = None
 
+        # See _PARCEL_CREATION_LOOKBACK_HOURS's docstring: the parcel's own
+        # created_at (the only thing this endpoint can filter by) can lag
+        # WAY behind order.paid_at, so the server-side query must look back
+        # further than the `since` sync_engine asked for, or a
+        # payment-delayed parcel is never returned at all. Freshness is
+        # judged downstream by order.paid_at (_order_created_at) plus the
+        # synced_orders ID dedup in sync_engine.py, not by this query alone.
+        requested_since = (since or datetime.now(timezone.utc) - timedelta(hours=5)).astimezone(timezone.utc)
+        lookback_floor = datetime.now(timezone.utc) - timedelta(hours=_PARCEL_CREATION_LOOKBACK_HOURS)
+        server_since = min(requested_since, lookback_floor)
+
         while True:
             params = {
-                "created_at[gte]": (since or datetime.now(timezone.utc) - timedelta(hours=5)).astimezone(timezone.utc).isoformat(),
+                "created_at[gte]": server_since.isoformat(),
                 # Confirmed via live 422s ("مرتب سازی معتبر نمی باشد"):
                 # created_at:desc and id:desc are both rejected. Only
                 # estimate_send_at:desc (the documented default) works -
@@ -173,7 +240,7 @@ class BasalamAdapter(MarketplaceAdapter):
             source=self.name,
             source_order_id=str(raw.get("id")),
             order_number=str(order.get("id", raw.get("id"))),
-            created_at=_parse_date(raw.get("created_at")),
+            created_at=_order_created_at(raw),
             total_price=to_rial(_to_decimal(raw.get("total_items_price")), self._config.price_unit),
             status=str(status.get("title", "unknown")),
             items=[],  # list endpoint gives summary items only - fetch_order_detail has full items
@@ -235,7 +302,7 @@ class BasalamAdapter(MarketplaceAdapter):
             source=self.name,
             source_order_id=str(raw.get("id")),
             order_number=str(order.get("id", raw.get("id"))),
-            created_at=_parse_date(raw.get("created_at")),
+            created_at=_order_created_at(raw),
             total_price=to_rial(_to_decimal(raw.get("total_items_price")), self._config.price_unit),
             status=str(status.get("title", "unknown")),
             items=items,

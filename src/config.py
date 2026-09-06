@@ -145,14 +145,19 @@ class DidarConfig:
     # One Title per marketplace source rather than a hardcoded GUID, so
     # this survives the label being deleted/recreated in Didar (a new
     # GUID) without a code or .env change - same tradeoff as the
-    # category-by-title matching in product_client.py. "سایت فرامرزی"
-    # for farazhonar is CONFIRMED (seen directly in a screenshot of this
-    # account's Deal Labels, 2026-09); the other four are best guesses
-    # and MUST be verified against a live GET /Label/GetDealLabels
-    # response for this account. Matching is exact after Persian
-    # normalization (see _normalize_fa) - a Title here that doesn't
-    # match what's actually in Didar just means that source's Deals get
-    # created without a label (logged as a warning), never an error.
+    # category-by-title matching in product_client.py. "با سلام" (two
+    # words, with a space) for basalam and "سایت فرازهنر" for farazhonar
+    # are CONFIRMED (seen directly in a screenshot of this account's Deal
+    # Labels, 2026-09 - an earlier version of this comment/default had
+    # both wrong: "باسلام" with no space, and "سایت فرامرزی", a
+    # different word entirely); the other three are best guesses and
+    # MUST be verified against a live GET /Label/GetDealLabels response
+    # for this account. Matching is exact after Persian normalization
+    # (see _normalize_fa), which only collapses repeated/half-space
+    # whitespace - it does NOT merge two genuinely different strings
+    # like "باسلام" and "با سلام". A Title here that doesn't match what's
+    # actually in Didar just means that source's Deals get created
+    # without a label (logged as a warning), never an error.
     deal_label_title_tapsishop: str = field(
         default_factory=lambda: _get("DIDAR_DEAL_LABEL_TITLE_TAPSISHOP", "تپسی")
     )
@@ -160,13 +165,13 @@ class DidarConfig:
         default_factory=lambda: _get("DIDAR_DEAL_LABEL_TITLE_DIGIKALA", "دیجی کالا")
     )
     deal_label_title_basalam: str = field(
-        default_factory=lambda: _get("DIDAR_DEAL_LABEL_TITLE_BASALAM", "باسلام")
+        default_factory=lambda: _get("DIDAR_DEAL_LABEL_TITLE_BASALAM", "با سلام")
     )
     deal_label_title_snappshop: str = field(
         default_factory=lambda: _get("DIDAR_DEAL_LABEL_TITLE_SNAPPSHOP", "اسنپ")
     )
     deal_label_title_farazhonar: str = field(
-        default_factory=lambda: _get("DIDAR_DEAL_LABEL_TITLE_FARAZHONAR", "سایت فرامرزی")
+        default_factory=lambda: _get("DIDAR_DEAL_LABEL_TITLE_FARAZHONAR", "سایت فرازهنر")
     )
     # Confirmed 2026-09 from Didar's own support agent. Relative to
     # base_url (same convention as every other path in this project).
