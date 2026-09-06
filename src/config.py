@@ -273,6 +273,17 @@ class Settings:
     didar_deal_poll_enabled: bool = field(
         default_factory=lambda: _get("DIDAR_DEAL_POLL_ENABLED", "true").lower() == "true"
     )
+    # Interactive /report date-range picker (src/telegram.py's
+    # poll_updates()) - runs on its own short interval, separate from
+    # POLL_INTERVAL_SECONDS, because that one defaults to 120s and a
+    # calendar button press feeling broken for two minutes is bad UX.
+    # Short polling (not Telegram's long-poll), so this is purely how
+    # often we ask "anything new?" - a few seconds is plenty responsive
+    # for a human tapping buttons and costs nothing at this traffic
+    # level.
+    telegram_report_picker_poll_seconds: int = field(
+        default_factory=lambda: int(_get("TELEGRAM_REPORT_PICKER_POLL_SECONDS", "3"))
+    )
     tapsishop: TapsiShopConfig = field(default_factory=TapsiShopConfig)
     digikala: DigikalaConfig = field(default_factory=DigikalaConfig)
     snappshop: SnappShopConfig = field(default_factory=SnappShopConfig)

@@ -131,6 +131,20 @@ def run_forever() -> None:
         minute=5,
         args=[repository, engine.adapter_names],
     )
+    # Interactive /report command (custom Jalali date-range picker -
+    # see src/telegram.py's poll_updates()). A separate, much shorter
+    # interval than the main poll cycle above: that one defaults to
+    # 120s (POLL_INTERVAL_SECONDS), which would make every calendar
+    # button press feel unresponsive. APScheduler won't overlap two
+    # runs of the same job (default max_instances=1), so if a
+    # getUpdates call ever takes a while this just runs back-to-back
+    # rather than piling up.
+    scheduler.add_job(
+        telegram.poll_updates,
+        "interval",
+        seconds=settings.telegram_report_picker_poll_seconds,
+        args=[repository, engine.adapter_names],
+    )
 
     log.info(
         "order-sync-platform starting - polling every %d seconds",

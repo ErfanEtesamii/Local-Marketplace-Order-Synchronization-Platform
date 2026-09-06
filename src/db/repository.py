@@ -485,9 +485,13 @@ class Repository:
     # --- Telegram report rollover markers -------------------------------
 
     def get_report_marker(self, period: str) -> str | None:
-        """`period` is one of "day"/"week"/"month". Returns the last
-        rollover marker src/telegram.py's check_and_send_reports() saw for
-        that period (a Jalali date key), or None if never set."""
+        """`period` is one of "day"/"week"/"month"/"year" for
+        src/telegram.py's check_and_send_reports() rollover markers, or
+        the dedicated key "telegram_update_offset" for poll_updates()'s
+        Telegram getUpdates offset - this table is a generic
+        string-keyed marker store, reused there rather than adding a
+        second table just for one integer. Returns the stored value, or
+        None if never set."""
         with self._connect() as conn:
             row = conn.execute(
                 "SELECT marker FROM report_progress WHERE period = ?", (period,)

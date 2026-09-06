@@ -86,7 +86,7 @@ src/
 ├── currency.py               # Toman -> Rial conversion (per-source unit)
 ├── finglish.py               # Finglish (Latin-typed Persian names) -> Persian script
 ├── shipping_fees.py          # fixed client-specified shipping-fee display amounts
-├── telegram.py               # per-order alerts + daily/weekly/monthly/yearly reports
+├── telegram.py               # per-order alerts + daily/weekly/monthly/yearly reports + /report custom-range picker
 ├── sync_engine.py            # orchestrates adapters + dedupe + watermark + Didar sync
 ├── reporting.py              # daily summary report + per-cycle health check
 ├── main.py                   # service entrypoint (APScheduler polling loop)

@@ -2,9 +2,11 @@
 Telegram notifications for the order sync platform.
 
 Single entry point for all Telegram-side work: a per-order alert right
-after a deal is created in Didar, and end-of-day / end-of-week /
-end-of-month / end-of-year aggregate reports in Persian (Jalali
-calendar, RTL).
+after a deal is created in Didar, end-of-day / end-of-week /
+end-of-month / end-of-year aggregate reports, and an interactive
+/report command that lets the operator pick any custom Jalali date
+range via inline-keyboard buttons and get the same kind of report for
+it - all in Persian (Jalali calendar, RTL).
 
 DESIGN CHOICES:
 
@@ -174,6 +176,38 @@ _PLATFORM_DISPLAY = {
 # centering isn't achievable regardless of how the padding is computed.
 _BOX_WIDTH = 26
 
+# ------------------------------------------------------------------
+# Custom-range report picker (interactive /report command)
+# ------------------------------------------------------------------
+# Client request, 2026-09: a report "like the yearly one" but for any
+# Jalali date range picked on demand - confirmed with the client that
+# they choose the exact range themselves each time (e.g. "3 Tir to 6
+# Azar"), not a fixed recurring schedule, so this is driven entirely by
+# inline-keyboard button presses in Telegram rather than a cron job.
+#
+# Deliberately STATELESS: every button's callback_data encodes the
+# partial date being built (e.g. "rpt:sm:1405:04" = start date, year
+# 1405 already chosen, now picking the month) instead of keeping picker
+# progress in a server-side session keyed by chat id. A process restart
+# mid-pick just makes the next press on that stale keyboard fail
+# harmlessly (nothing keys off in-memory state that could vanish) - the
+# user re-sends /report. No per-chat session table or expiry logic
+# needed. Telegram caps callback_data at 64 bytes; the longest value
+# used here ("rpt:ed:1405-04-03:1405-09-06") is well under that.
+_REPORT_CALLBACK_PREFIX = "rpt:"
+
+# Key under which the getUpdates offset is persisted, via Repository's
+# report_progress table (see get/set_report_marker) - reused as the
+# generic key-value store it already is rather than adding a dedicated
+# table just for one integer.
+_UPDATE_OFFSET_MARKER = "telegram_update_offset"
+
+# Offer the current Jalali year and the one before it as start/end year
+# choices - this business only started keeping data in 1405, but one
+# extra year of headroom costs nothing and avoids hardcoding a single
+# year.
+_REPORT_YEAR_SPAN = 2
+
 
 def _to_persian_digits(text: str) -> str:
     """Convert ASCII digits in `text` to Persian (۰-۹)."""
@@ -220,6 +254,81 @@ def _jalali_from_key(key: str) -> "jdatetime.date":
 
 def _jalali_date_str(d: "jdatetime.date") -> str:
     return _to_persian_digits(f"{d.year:04d}/{d.month:02d}/{d.day:02d}")
+
+
+def _jalali_days_in_month(year: int, month: int) -> int:
+    """Days in a Jalali month: 31 for months 1-6, 30 for months 7-11,
+    and for month 12 (Esfand) 29 normally or 30 in a leap year. Rather
+    than reimplementing the Jalali leap-year rule (33-year cycle) by
+    hand, this probes jdatetime.date itself - it already raises
+    ValueError for an invalid day, exactly like the stdlib datetime.date
+    it mirrors (same "don't trust an unverified library detail, check
+    what's actually installed" caution as _iranian_weekday() above)."""
+    if month <= 6:
+        return 31
+    if month <= 11:
+        return 30
+    try:
+        jdatetime.date(year, 12, 30)
+        return 30
+    except ValueError:
+        return 29
+
+
+def _current_jalali_year() -> int:
+    now_local = datetime.now(timezone.utc).astimezone(IRAN_TZ)
+    return jdatetime.date.fromgregorian(date=now_local.date()).year
+
+
+def _inline_keyboard(rows: list) -> dict:
+    """Build a Telegram `reply_markup` dict from rows of (label,
+    callback_data) tuples."""
+    return {
+        "inline_keyboard": [
+            [{"text": label, "callback_data": data} for label, data in row]
+            for row in rows
+        ]
+    }
+
+
+def _report_cancel_row() -> list:
+    return [("❌ لغو", f"{_REPORT_CALLBACK_PREFIX}cancel")]
+
+
+def _report_year_keyboard(next_prefix: str) -> dict:
+    """`next_prefix` is e.g. "rpt:sy" or "rpt:ey:1405-04-03" - the year
+    picked gets appended as ":<year>"."""
+    current = _current_jalali_year()
+    years = [current - offset for offset in range(_REPORT_YEAR_SPAN - 1, -1, -1)]
+    row = [(_to_persian_digits(str(y)), f"{next_prefix}:{y}") for y in years]
+    return _inline_keyboard([row, _report_cancel_row()])
+
+
+def _report_month_keyboard(next_prefix: str) -> dict:
+    """`next_prefix` is e.g. "rpt:sm:1405" - the month picked gets
+    appended as ":<month>". 3 months per row, in calendar order."""
+    rows = []
+    for start in range(1, 13, 3):
+        rows.append([
+            (_MONTH_NAMES_FA[m], f"{next_prefix}:{m}")
+            for m in range(start, start + 3)
+        ])
+    rows.append(_report_cancel_row())
+    return _inline_keyboard(rows)
+
+
+def _report_day_keyboard(next_prefix: str, year: int, month: int) -> dict:
+    """`next_prefix` is e.g. "rpt:sd:1405:04" - the day picked gets
+    appended as ":<day>". 7 buttons per row, matching a calendar week."""
+    days = _jalali_days_in_month(year, month)
+    rows = []
+    for start in range(1, days + 1, 7):
+        rows.append([
+            (_to_persian_digits(str(d)), f"{next_prefix}:{d}")
+            for d in range(start, min(start + 7, days + 1))
+        ])
+    rows.append(_report_cancel_row())
+    return _inline_keyboard(rows)
 
 
 def _iran_midnight_utc(d: "jdatetime.date") -> datetime:
@@ -347,6 +456,21 @@ class TelegramNotifier:
         self._chat_ids = chat_ids
         self._configured = True
         log.info("telegram: bot configured (%d recipient(s): %r)", len(chat_ids), chat_ids)
+
+        # Register /report in Telegram's own command menu (the "/" menu
+        # next to the message box) - purely cosmetic, so a failure here
+        # must never affect `_configured`; poll_updates() would still
+        # answer a hand-typed "/report" either way.
+        try:
+            self._request(
+                client, "setMyCommands",
+                commands=[
+                    {"command": "report", "description": "گزارش عملکرد یک بازه دلخواه"},
+                ],
+            )
+        except TelegramError as exc:
+            log.debug("telegram: setMyCommands failed (non-fatal): %s", exc)
+
         return True
 
     @staticmethod
@@ -635,8 +759,6 @@ class TelegramNotifier:
             "━━━━━━━━━━━━━━━━━━━━\n"
             "💳 مجموع فروش\n"
             f"└─ {_format_rial(total)} ریال\n"
-            "📈 میانگین هر سفارش\n"
-            f"└─ {_format_rial(average)} ریال\n"
             "━━━━━━━━━━━━━━━━━━━━\n"
             "🟢 همه سفارش‌ها با موفقیت\n"
             "در دیدار ثبت شده‌اند.\n"
@@ -732,6 +854,268 @@ class TelegramNotifier:
             log.error("telegram: failed to send yearly report: %s", exc)
         except Exception:
             log.exception("telegram: unexpected error sending yearly report")
+
+    # ------------------------------------------------------------------
+    # Interactive /report command - custom Jalali date-range picker
+    # (see the "Custom-range report picker" comment near the top of
+    # this file for the design rationale)
+    # ------------------------------------------------------------------
+    def poll_updates(self, repository: Repository, source_names: list[str]) -> None:
+        """Poll Telegram for new messages/button presses and drive the
+        /report date-range picker. Called every few seconds from its
+        own dedicated scheduler job in main.py - deliberately NOT
+        folded into the main _poll_cycle() (which runs every
+        settings.poll_interval_seconds, e.g. every 2 minutes by
+        default): that cadence would make every button press feel
+        broken. Short polling (timeout=0) rather than Telegram's own
+        long-poll support - simpler, and at a few-second job interval
+        the extra API calls cost nothing for a single-bot, low-traffic
+        setup like this one.
+
+        Best-effort like every other public method on this class: any
+        failure is logged and swallowed so a Telegram/network hiccup
+        here can never affect order syncing or the other scheduled
+        jobs. The update offset is persisted via Repository's
+        report_progress table (get/set_report_marker) under a
+        dedicated marker key - reusing that table rather than adding a
+        new one just for one integer.
+        """
+        if not self.is_configured():
+            return
+        try:
+            marker = repository.get_report_marker(_UPDATE_OFFSET_MARKER)
+            if marker is None:
+                # First run ever - there was no update handling at all
+                # before this feature existed, so the getUpdates
+                # backlog could hold months of unrelated updates.
+                # Fast-forward past all of it (offset=-1 asks Telegram
+                # for only the single most recent update) instead of
+                # processing a huge stale backlog on the first poll.
+                payload = self._request(self._client, "getUpdates", offset=-1, timeout=0)
+                results = payload.get("result", [])
+                seed = results[-1]["update_id"] if results else 0
+                repository.set_report_marker(_UPDATE_OFFSET_MARKER, str(seed))
+                return
+
+            payload = self._request(
+                self._client, "getUpdates",
+                offset=int(marker) + 1, timeout=0,
+                allowed_updates=["message", "callback_query"],
+            )
+        except TelegramError as exc:
+            log.warning("telegram: getUpdates failed: %s", exc)
+            return
+        except Exception:
+            log.exception("telegram: unexpected error polling for updates")
+            return
+
+        max_update_id = None
+        for update in payload.get("result", []):
+            max_update_id = update["update_id"]
+            try:
+                self._handle_report_update(update, repository, source_names)
+            except Exception:
+                log.exception(
+                    "telegram: failed to handle update %s", update.get("update_id")
+                )
+        if max_update_id is not None:
+            repository.set_report_marker(_UPDATE_OFFSET_MARKER, str(max_update_id))
+
+    def _handle_report_update(
+        self, update: dict, repository: Repository, source_names: list[str]
+    ) -> None:
+        if "callback_query" in update:
+            self._handle_report_callback(update["callback_query"], repository, source_names)
+        elif "message" in update:
+            self._handle_report_message(update["message"])
+
+    def _handle_report_message(self, message: dict) -> None:
+        chat = message.get("chat") or {}
+        chat_id = chat.get("id")
+        # Only the operator's own configured chat(s) can pull sales
+        # figures this way - Telegram usernames are public, so anyone
+        # who finds the bot and messages it is silently ignored, same
+        # as if this handler didn't exist. (A recipient configured as
+        # "@channel_username" can still RECEIVE reports but can't drive
+        # the picker: Telegram sends the numeric chat id in updates,
+        # never the @username - fine, since this bot is used from the
+        # operator's own private chat, not a broadcast channel.)
+        if chat_id not in self._chat_ids:
+            return
+        text = (message.get("text") or "").strip()
+        command = text.split("@", 1)[0].split()[0] if text else ""
+        if command == "/report":
+            reply_markup = _report_year_keyboard(f"{_REPORT_CALLBACK_PREFIX}sy")
+            self._send_message_with_keyboard(
+                chat_id, "📅 سال شروع بازه را انتخاب کنید:", reply_markup
+            )
+        elif command == "/start":
+            self._post_message(
+                chat_id,
+                "سلام! برای گرفتن گزارش یک بازه‌ی دلخواه دستور /report را بفرستید.",
+            )
+
+    def _handle_report_callback(
+        self, query: dict, repository: Repository, source_names: list[str]
+    ) -> None:
+        query_id = query.get("id")
+        message = query.get("message") or {}
+        chat = message.get("chat") or {}
+        chat_id = chat.get("id")
+        message_id = message.get("message_id")
+        data = query.get("data") or ""
+
+        if chat_id not in self._chat_ids or not data.startswith(_REPORT_CALLBACK_PREFIX):
+            self._answer_callback_query(query_id)
+            return
+
+        parts = data[len(_REPORT_CALLBACK_PREFIX):].split(":")
+        action = parts[0] if parts else ""
+        try:
+            if action == "cancel":
+                self._edit_message(
+                    chat_id, message_id,
+                    "❌ انتخاب بازه لغو شد.\nبرای شروع دوباره دستور /report را بفرستید.",
+                )
+            elif action == "sy":
+                year = int(parts[1])
+                self._edit_message(
+                    chat_id, message_id, "📅 ماه شروع بازه را انتخاب کنید:",
+                    _report_month_keyboard(f"{_REPORT_CALLBACK_PREFIX}sm:{year}"),
+                )
+            elif action == "sm":
+                year, month = int(parts[1]), int(parts[2])
+                self._edit_message(
+                    chat_id, message_id, "📅 روز شروع بازه را انتخاب کنید:",
+                    _report_day_keyboard(
+                        f"{_REPORT_CALLBACK_PREFIX}sd:{year}:{month}", year, month
+                    ),
+                )
+            elif action == "sd":
+                year, month, day = int(parts[1]), int(parts[2]), int(parts[3])
+                start_date = jdatetime.date(year, month, day)
+                start_key = _jalali_key(start_date)
+                self._edit_message(
+                    chat_id, message_id,
+                    f"✅ شروع بازه: {_jalali_date_str(start_date)}\n"
+                    "📅 حالا سال پایان بازه را انتخاب کنید:",
+                    _report_year_keyboard(f"{_REPORT_CALLBACK_PREFIX}ey:{start_key}"),
+                )
+            elif action == "ey":
+                start_key, year = parts[1], int(parts[2])
+                self._edit_message(
+                    chat_id, message_id, "📅 ماه پایان بازه را انتخاب کنید:",
+                    _report_month_keyboard(f"{_REPORT_CALLBACK_PREFIX}em:{start_key}:{year}"),
+                )
+            elif action == "em":
+                start_key, year, month = parts[1], int(parts[2]), int(parts[3])
+                self._edit_message(
+                    chat_id, message_id, "📅 روز پایان بازه را انتخاب کنید:",
+                    _report_day_keyboard(
+                        f"{_REPORT_CALLBACK_PREFIX}ed:{start_key}:{year}:{month}", year, month
+                    ),
+                )
+            elif action == "ed":
+                start_key = parts[1]
+                year, month, day = int(parts[2]), int(parts[3]), int(parts[4])
+                self._send_custom_range_report(
+                    chat_id, message_id, start_key,
+                    jdatetime.date(year, month, day),
+                    repository, source_names,
+                )
+            else:
+                log.warning("telegram: unknown report-picker callback data %r", data)
+        except (ValueError, IndexError):
+            log.warning("telegram: malformed report-picker callback data %r", data)
+            self._edit_message(
+                chat_id, message_id,
+                "⚠️ خطایی رخ داد. لطفاً دوباره دستور /report را بفرستید.",
+            )
+        finally:
+            self._answer_callback_query(query_id)
+
+    def _send_custom_range_report(
+        self,
+        chat_id,
+        message_id,
+        start_key: str,
+        end_date: "jdatetime.date",
+        repository: Repository,
+        source_names: list[str],
+    ) -> None:
+        start_date = _jalali_from_key(start_key)
+        if end_date < start_date:
+            self._edit_message(
+                chat_id, message_id,
+                "⚠️ تاریخ پایان نمی‌تواند قبل از تاریخ شروع باشد.\n"
+                "لطفاً دوباره دستور /report را بفرستید.",
+            )
+            return
+        since = _iran_midnight_utc(start_date)
+        until = _iran_midnight_utc(end_date + timedelta(days=1))
+        products, shipping, total, count = self._aggregate(repository, source_names, since, until)
+        period_line = f"📅 از {_jalali_date_str(start_date)} تا {_jalali_date_str(end_date)}"
+        message = self._format_report_message(
+            "📊 گزارش بازه دلخواه", "📊 گزارش بازه‌ای", period_line,
+            products, shipping, total, count,
+        )
+        self._edit_message(chat_id, message_id, message)
+        log.info(
+            "telegram: sent custom-range report %s..%s", start_key, _jalali_key(end_date)
+        )
+
+    def _send_message_with_keyboard(
+        self, chat_id: Union[int, str], text: str, reply_markup: dict
+    ) -> Optional[int]:
+        """sendMessage with an inline keyboard attached. Returns the new
+        message's message_id (needed to edit it as the picker
+        advances), or None on failure - callers must tolerate that,
+        since a failed picker step must never raise into poll_updates()
+        and break every later update in the same batch."""
+        assert self._client is not None  # only called after is_configured()
+        try:
+            payload = self._request(
+                self._client, "sendMessage",
+                chat_id=chat_id, text=text, reply_markup=reply_markup,
+            )
+            return payload.get("result", {}).get("message_id")
+        except TelegramError as exc:
+            log.error(
+                "telegram: failed to send report picker to chat_id=%r: %s", chat_id, exc
+            )
+            return None
+
+    def _edit_message(
+        self, chat_id, message_id, text: str, reply_markup: Optional[dict] = None
+    ) -> None:
+        """editMessageText for one picker message - advances the picker
+        in place instead of sending a new message at every step."""
+        if message_id is None:
+            return
+        assert self._client is not None
+        try:
+            kwargs = {"chat_id": chat_id, "message_id": message_id, "text": text}
+            if reply_markup is not None:
+                kwargs["reply_markup"] = reply_markup
+            self._request(self._client, "editMessageText", **kwargs)
+        except TelegramError as exc:
+            log.error(
+                "telegram: failed to edit report-picker message %s in chat_id=%r: %s",
+                message_id, chat_id, exc,
+            )
+
+    def _answer_callback_query(self, callback_query_id: Optional[str]) -> None:
+        """Clears the button's loading spinner. Best-effort - a failure
+        here is cosmetic only (the button just keeps spinning briefly)
+        and must never stop the rest of update handling."""
+        if callback_query_id is None or self._client is None:
+            return
+        try:
+            self._request(
+                self._client, "answerCallbackQuery", callback_query_id=callback_query_id
+            )
+        except TelegramError as exc:
+            log.debug("telegram: answerCallbackQuery failed (non-fatal): %s", exc)
 
     # ------------------------------------------------------------------
     # Retry queue for failed sends (2026-09 - see module docstring)
