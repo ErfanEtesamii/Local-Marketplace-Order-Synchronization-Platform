@@ -149,12 +149,9 @@ def test_full_range_pick_sends_report_with_correct_period(repo):
     notifier._chat_ids = [775753176]
     source_names = ["digikala", "basalam"]
 
-    # The custom-range /report queries Didar live (see
-    # DidarDealClient.get_status_breakdown()) rather than Repository's
-    # local cache - fake out the Didar client entirely so this test
-    # never makes a real HTTP call. Two sources, 4 deals each (1 won,
-    # 2 pending, 1 lost) -> 8 total / 4 pending / 2 won / 2 lost,
-    # matching the assertions below.
+    # The custom-range /report queries Didar live rather than Repository's
+    # local cache - fake out the Didar client entirely so this test never
+    # makes a real HTTP call.
     fake_breakdown = DealStatusBreakdown(
         all_count=4, all_total=Decimal("525000"),
         pending_count=2, pending_total=Decimal("200000"),
@@ -165,9 +162,9 @@ def test_full_range_pick_sends_report_with_correct_period(repo):
     # the 2026-09 "کل لیبل هارو از گزارش خود دیدار بگیره" refactor - see
     # _send_custom_range_report's docstring) calls list_deal_labels() then
     # get_status_breakdown_for_label() per label, not get_status_breakdown()
-    # per source any more. Two labels, each returning the same
-    # fake_breakdown, so the summed total (8/4/2/2) matches the two-source
-    # sum this test originally exercised.
+    # per source any more. Two labels ("دیجی‌کالا"/"باسلام" - both match
+    # _RANGE_REPORT_PLATFORM_KEYWORDS, see _select_range_report_platforms),
+    # each returning the same fake_breakdown.
     fake_didar = type(
         "FakeDidarClient", (),
         {
@@ -200,10 +197,14 @@ def test_full_range_pick_sends_report_with_correct_period(repo):
     assert final_message_id == 42
     assert "از" in final_text and "تا" in final_text
     assert "1405" not in final_text  # dates are rendered in Persian digits
-    # Two sources summed: 4+4=8 total, 2+2=4 pending, 1+1=2 won, 1+1=2 lost.
-    assert "└─ 8 سفارش" in final_text
-    assert "└─ 4 سفارش" in final_text
-    assert "└─ 2 سفارش" in final_text
+    # _format_live_range_report_message() (current format, 2026-09 follow-up
+    # 3) shows the overall total, then one "🛍 <label>" block per matched
+    # platform - no Pending/Won/Lost split any more. Two labels summed:
+    # 4+4=8 total; each platform block repeats its own 4-count/525,000-total.
+    assert "└─ 8 سفارش - 1,050,000 ریال" in final_text
+    assert "🛍 دیجی‌کالا" in final_text
+    assert "🛍 باسلام" in final_text
+    assert final_text.count("└─ 4 سفارش - 525,000 ریال") == 2
 
 
 def test_end_before_start_shows_error_instead_of_report(repo):
