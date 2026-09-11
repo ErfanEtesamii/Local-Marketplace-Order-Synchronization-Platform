@@ -310,6 +310,10 @@ class DidarDealClient:
                         "SearchToTime": _iso(until),
                         "Status": "Won",
                         "LabelIds": [label_id],
+                        # 2026-09 bugfix: same PipelineId leak as
+                        # _status_count_and_total() above - this call shape
+                        # is otherwise identical, so it needs the same fix.
+                        "PipelineId": self._config.pipeline_id,
                     },
                     "From": 0,
                     "Limit": 1,
@@ -498,6 +502,12 @@ class DidarDealClient:
                         "SearchToTime": _iso(until),
                         "Status": status,
                         "LabelIds": [label_id],
+                        # 2026-09 bugfix: without this, a Label reused across
+                        # more than one Pipeline pulls in deals from every
+                        # pipeline it's attached to, not just this project's
+                        # own pipeline (DIDAR_PIPELINE_ID) - see the same
+                        # field already used when creating a Deal, below.
+                        "PipelineId": self._config.pipeline_id,
                     },
                     "From": 0,
                     "Limit": 1,
