@@ -1,13 +1,16 @@
 """
-Didar CRM - "any deal" poller.
+Didar CRM - order-pipeline deal poller.
 
-CLIENT REQUIREMENT (2026-09): every Deal that lands in Didar - typed in
-by hand in Didar's own UI, or created automatically by this program
-from a marketplace order - must trigger a Telegram notification. This
-account has no Webhook support (confirmed in the client conversation),
-so the only way to detect "a Deal was registered" regardless of *how*
-is to poll Didar's own Search Deal endpoint on an interval and diff
-against what's already been notified.
+CLIENT REQUIREMENT (2026-09, revised 2026-09): every Deal registered
+in Didar's کاریز سفارشات (order pipeline, Criteria.PipelineId =
+DIDAR_PIPELINE_ID) - typed in by hand in Didar's own UI, or created
+automatically by this program from a marketplace order - must trigger
+a Telegram notification. Deals in any OTHER pipeline must never reach
+Telegram from this poller. This account has no Webhook support
+(confirmed in the client conversation), so the only way to detect "a
+Deal was registered" regardless of *how* is to poll Didar's own Search
+Deal endpoint on an interval and diff against what's already been
+notified.
 
 This is deliberately a SEPARATE code path from the existing per-order
 notification (TelegramNotifier.notify_new_order(), driven by
@@ -23,8 +26,13 @@ FLOW (matches the client-approved design worked out over chat):
     every poll cycle (main.py's _poll_cycle, same interval as the
     marketplace polling - POLL_INTERVAL_SECONDS):
         POST /deal/search_v2 with Criteria.SearchFromTime/SearchToTime
-            = [last watermark - _OVERLAP_SECONDS, now]
-        for every Deal.Id in the result not already in
+            = [last watermark - _OVERLAP_SECONDS, now] AND
+            Criteria.PipelineId = DIDAR_PIPELINE_ID (کاریز سفارشات only)
+        drop any returned row whose own RegisterTime doesn't actually
+            fall inside that window (see search_deals()) - a second,
+            independent guard in case Didar's own SearchFromTime/
+            SearchToTime filtering ever lets an older Deal through
+        for every remaining Deal.Id not already in
         Repository.notified_deals:
             POST /deal/getdealdetail to get the full record
             -> build a NewDealInfo -> caller sends it to Telegram
@@ -39,6 +47,16 @@ poll boundary is timestamped. Re-scanning a small overlap
 silently skipped. This is only safe because of the Id-based dedup
 below - seeing the same Id again on the next poll is an expected,
 harmless no-op, not a bug.
+
+WHY EVERY ROW'S RegisterTime IS RE-CHECKED AFTER THE SEARCH RESPONSE
+COMES BACK (see search_deals()): SearchFromTime/SearchToTime tell
+Didar what window to search, but this poller does not treat that as
+a guarantee - if the API ever returns a row whose own RegisterTime
+falls outside the requested window, that row is dropped rather than
+forwarded to Telegram. RegisterTime is the Deal's original creation
+time (not last-edit time), so this is the same signal Sort=0 already
+sorts by; it's just also verified per-row instead of only trusted at
+the query level.
 
 WHY DEDUP IS BY DEAL ID IN THE REPOSITORY, NOT BY TIME ALONE:
   1. The overlap window above deliberately re-fetches some Ids more
@@ -170,20 +188,37 @@ class DidarDealPoller:
     # Raw Didar API calls
     # ------------------------------------------------------------------
     def search_deals(self, since: datetime, until: datetime, limit: int = _PAGE_SIZE) -> list[dict]:
-        """Every Deal registered in [since, until), across as many
+        """Deals in the کاریز سفارشات pipeline (Criteria.PipelineId =
+        DIDAR_PIPELINE_ID) registered in [since, until), across as many
         pages as needed (From/Limit pagination - see the docs' Search
         Deal request body). Returns the raw List rows (Id/Title/
         RegisterTime/Price/PersonId/OwnerId/PipelineStageId/... per the
         documented response shape) - NOT full detail; see
-        get_deal_detail(). No Status/PipelineId filter is applied on
-        purpose: "every deal, whatever its stage or status" is the
-        whole point of this feature.
+        get_deal_detail().
+
+        Rows are additionally filtered here by their own RegisterTime
+        against [since, until] before being returned. This is a second,
+        independent guard on top of the SearchFromTime/SearchToTime
+        query params: those params tell Didar what to search for, but
+        this poller must never trust them as the ONLY thing standing
+        between an old Deal and Telegram - see poll_new_deals() and the
+        module docstring for why. A row missing/with an unparseable
+        RegisterTime is dropped rather than risk letting an
+        unverifiable old Deal through.
         """
+        if not self._config.pipeline_id:
+            log.warning(
+                "didar: DIDAR_PIPELINE_ID is not configured - deal poller will "
+                "search ALL pipelines, not just کاریز سفارشات"
+            )
         criteria = {
             "SearchFromTime": _iso(since),
             "SearchToTime": _iso(until),
             "Sort": 0,  # 0 = تاریخ ثبت (register time)
         }
+        if self._config.pipeline_id:
+            criteria["PipelineId"] = self._config.pipeline_id
+
         results: list[dict] = []
         offset = 0
         for _page in range(_MAX_PAGES):
@@ -202,7 +237,26 @@ class DidarDealPoller:
                 "%s..%s - some deals in this window may not have been fetched",
                 _MAX_PAGES, since, until,
             )
-        return results
+
+        filtered: list[dict] = []
+        for row in results:
+            register_time = _parse_didar_datetime(row.get("RegisterTime"))
+            if register_time is None:
+                log.warning(
+                    "didar: deal search - dropping row Id=%s: missing/unparseable "
+                    "RegisterTime %r, cannot verify it belongs in window %s..%s",
+                    row.get("Id"), row.get("RegisterTime"), since, until,
+                )
+                continue
+            if not (since <= register_time <= until):
+                log.warning(
+                    "didar: deal search - dropping row Id=%s: RegisterTime %s is "
+                    "outside the queried window %s..%s (Didar returned it anyway)",
+                    row.get("Id"), register_time, since, until,
+                )
+                continue
+            filtered.append(row)
+        return filtered
 
     def get_deal_detail(self, deal_id: str) -> dict:
         """Full record for one Deal (POST /deal/getdealdetail) - see
