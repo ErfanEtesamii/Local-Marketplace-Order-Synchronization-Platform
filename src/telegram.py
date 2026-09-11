@@ -1014,7 +1014,12 @@ class TelegramNotifier:
         self, title_line: str, box_label: str, period_line: str,
         products: int, shipping: int, total: int, count: int,
     ) -> str:
-        average = round(total / count) if count else 0
+        """Not called by any report path any more (see the module
+        docstring's "unused by any report now" note) - kept only so
+        Repository.get_amount_stats_since()'s local/historical figures
+        stay formattable if ever needed again. No average-per-order
+        line (there never was one - see test_format_report_message_*
+        in tests/test_telegram.py)."""
         return (
             f"{title_line}\n"
             f"{_boxed_title(box_label)}\n"

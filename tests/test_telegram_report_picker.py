@@ -161,9 +161,19 @@ def test_full_range_pick_sends_report_with_correct_period(repo):
         won_count=1, won_total=Decimal("225000"),
         lost_count=1, lost_total=Decimal("100000"),
     )
+    # _aggregate_live_breakdown() (used by the custom-range picker since
+    # the 2026-09 "کل لیبل هارو از گزارش خود دیدار بگیره" refactor - see
+    # _send_custom_range_report's docstring) calls list_deal_labels() then
+    # get_status_breakdown_for_label() per label, not get_status_breakdown()
+    # per source any more. Two labels, each returning the same
+    # fake_breakdown, so the summed total (8/4/2/2) matches the two-source
+    # sum this test originally exercised.
     fake_didar = type(
         "FakeDidarClient", (),
-        {"get_status_breakdown": lambda self, source, since, until: fake_breakdown},
+        {
+            "list_deal_labels": lambda self: [("دیجی‌کالا", "L1"), ("باسلام", "L2")],
+            "get_status_breakdown_for_label": lambda self, label_id, since, until: fake_breakdown,
+        },
     )()
 
     with patch.object(notifier, "_edit_message") as mock_edit, \
@@ -206,7 +216,7 @@ def test_end_before_start_shows_error_instead_of_report(repo):
         notifier._send_custom_range_report(
             775753176, 42, _jalali_key(jdatetime.date(1405, 9, 6)),
             jdatetime.date(1405, 4, 3),  # end before start
-            repo, ["digikala"],
+            repo,
         )
 
     # The end-before-start guard returns before ever touching Didar.

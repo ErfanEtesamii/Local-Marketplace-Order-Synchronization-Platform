@@ -46,6 +46,14 @@ _API = f"https://api.telegram.org/bot{_TOKEN}"
 
 
 def _ok_get_me():
+    # is_configured() also registers /report via setMyCommands right after
+    # getMe succeeds (see its docstring: purely cosmetic, non-fatal on
+    # failure) - respx's default assert_all_mocked=True fails the whole
+    # test on any unmocked request, so every caller of this helper needs
+    # that route mocked too, not just getMe.
+    respx.post(f"{_API}/setMyCommands").mock(
+        return_value=httpx.Response(200, json={"ok": True, "result": True})
+    )
     return respx.post(f"{_API}/getMe").mock(
         return_value=httpx.Response(200, json={"ok": True, "result": {"id": 1, "is_bot": True}})
     )
@@ -650,6 +658,13 @@ def test_repository_amount_stats_respects_until_bound(repo):
 
 
 def test_format_report_message_matches_expected_shape():
+    """_format_report_message() itself is unused by any report path any
+    more (see src/telegram.py's module docstring) - kept only so
+    Repository's local/historical figures stay formattable. Tested here
+    purely so it isn't silently broken by an unrelated edit. No
+    average-per-order line - the real output never had one; the old
+    version of this assertion (asserting a "262,500 ریال" average line)
+    was checking for something the method never actually produced."""
     notifier = TelegramNotifier()
     message = notifier._format_report_message(
         "📊 گزارش پایان روز", "📊 گزارش روزانه", "📅 شنبه ۱۴۰۵/۰۶/۰۷",
@@ -662,7 +677,6 @@ def test_format_report_message_matches_expected_shape():
     assert "└─ 1,000,000 ریال" in message  # products
     assert "└─ 50,000 ریال" in message      # shipping
     assert "└─ 1,050,000 ریال" in message   # total
-    assert "└─ 262,500 ریال" in message     # average (1,050,000 / 4)
     assert message.endswith("🟢 همه سفارش‌ها با موفقیت\nدر دیدار ثبت شده‌اند.\n#گزارش")
 
 
