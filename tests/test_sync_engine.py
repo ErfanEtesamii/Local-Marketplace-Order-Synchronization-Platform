@@ -850,3 +850,67 @@ def test_digikala_without_shipment_id_not_enriched(repo, synced_ids_file):
     assert synced.customer_full_name is None
     assert synced.customer_mobile is None
     assert adapter.fetch_sbs_customer_details_calls == []
+
+# --- per-source cancelled/failed status filter (2026-09 bugfix) ----------
+# Regression tests for CANCELLED_OR_FAILED_STATUSES being keyed per source
+# (see its docstring in sync_engine.py) rather than one flat set shared by
+# every marketplace.
+
+def test_farazhonar_pending_order_is_not_synced_to_didar(repo, synced_ids_file):
+    """Client report (2026-09): a Faraz Honar (WooCommerce) order in the
+    "pending" (pre-invoice / awaiting-payment) status is not a confirmed
+    sale and must never become a Deal in Didar - same as an explicitly
+    cancelled order."""
+    from dataclasses import replace
+
+    order = replace(_order("farazhonar", "1", with_items=True), status="pending")
+    adapter = FakeAdapter("farazhonar", list_orders=[order])
+    didar = FakeDidarService()
+    engine = SyncEngine(
+        adapters=[adapter], repository=repo, didar_service=didar,
+        synced_ids_file_path=str(synced_ids_file),
+    )
+
+    engine.run_once()
+
+    assert didar.synced_orders == []
+    assert not repo.is_already_synced("farazhonar", "1")
+
+
+def test_farazhonar_confirmed_order_still_syncs(repo, synced_ids_file):
+    """Sanity check alongside the pending-order regression test above: a
+    normal, non-pending Faraz Honar order must be unaffected."""
+    order = _order("farazhonar", "1", with_items=True)  # status="confirmed"
+    adapter = FakeAdapter("farazhonar", list_orders=[order])
+    didar = FakeDidarService()
+    engine = SyncEngine(
+        adapters=[adapter], repository=repo, didar_service=didar,
+        synced_ids_file_path=str(synced_ids_file),
+    )
+
+    engine.run_once()
+
+    assert len(didar.synced_orders) == 1
+    assert repo.is_already_synced("farazhonar", "1")
+
+
+def test_digikala_pending_order_still_syncs(repo, synced_ids_file):
+    """Digikala's "pending" status means something different (an active,
+    still-processing shipment - see digikala.py's _normalize_sbs_row) and
+    must keep syncing normally. Guards against a fix for the Faraz Honar
+    "pending" case accidentally being applied as a global status instead
+    of a per-source one."""
+    from dataclasses import replace
+
+    order = replace(_order("digikala", "1", with_items=True), status="pending")
+    adapter = FakeAdapter("digikala", list_orders=[order])
+    didar = FakeDidarService()
+    engine = SyncEngine(
+        adapters=[adapter], repository=repo, didar_service=didar,
+        synced_ids_file_path=str(synced_ids_file),
+    )
+
+    engine.run_once()
+
+    assert len(didar.synced_orders) == 1
+    assert repo.is_already_synced("digikala", "1")

@@ -296,8 +296,10 @@ class SyncEngine:
         # Central filter: prevent cancelled/failed orders from syncing to Didar.
         # Uses NormalizedOrder.status rather than per-adapter filters so that
         # no order of any marketplace slips through if an adapter's own guard
-        # is incomplete or outdated.
-        if order.status.lower() in CANCELLED_OR_FAILED_STATUSES:
+        # is incomplete or outdated. Keyed per source (see
+        # CANCELLED_OR_FAILED_STATUSES's own docstring) so one source's
+        # excluded statuses never affect another's.
+        if order.status.lower() in CANCELLED_OR_FAILED_STATUSES.get(order.source, set()):
             log.info(
                 "sync_engine: skipping %s order %s - status %s is cancelled/failed",
                 order.source, order.source_order_id, order.status,
@@ -598,11 +600,21 @@ class SyncEngine:
 # migration - see digikala-sbs-migration-prompt.md, Decision 3).
 # "unknown" (SnappShop default) is intentionally included so unconfirmed
 # schemas don't silently sync orders - they pass through for manual review.
-CANCELLED_OR_FAILED_STATUSES: set[str] = {
-    # Tapsi Shop: status codes 6 (لغو سفارش - cancelled) and 9 (تحویل کامل - delivered)
-    # are explicitly excluded by the adapter's _ACTIVE_ORDER_STATUS_IDS = [4].
-    "cancelled",
-    "failed",
+#
+# BUGFIX (2026-09): this used to be a single flat set shared across every
+# source, with no source check at all - so a status string that means
+# "cancelled" for one marketplace but "still active" for another (e.g.
+# Digikala's "pending", which IS a normal in-progress shipment - see
+# digikala.py's _normalize_sbs_row comment "pending/processing/processed/
+# edited are all active and sync normally") could never be added for just
+# the one source that needs it without silently breaking every other
+# source's orders in that status. Now keyed per source, so each
+# marketplace's excluded statuses are independent.
+CANCELLED_OR_FAILED_STATUSES: dict[str, set[str]] = {
+    # Tapsi Shop: status codes 6 (لغو سفارش - cancelled) and 9 (تحویل کامل -
+    # delivered) are already excluded by the adapter's own
+    # _ACTIVE_ORDER_STATUS_IDS = [4] filter, so nothing further to exclude here.
+    "tapsishop": set(),
     # Digikala (2026-09 migration to /ship-by-seller-orders - see
     # digikala.py's _normalize_sbs_row and the migration prompt's
     # Decision 3): the old order_type query parameter
@@ -610,18 +622,32 @@ CANCELLED_OR_FAILED_STATUSES: set[str] = {
     # status strings the adapter used to produce are gone. The SBS
     # schema instead exposes isCancelled (boolean) and status.text
     # (including "rejected"), which the adapter maps directly to:
-    "cancelled",         # Digikala isCancelled=true
-    "rejected",          # Digikala status.text == "rejected"
+    "digikala": {
+        "cancelled",  # Digikala isCancelled=true
+        "rejected",   # Digikala status.text == "rejected"
+    },
     # Basalam: confirmed status values for cancelled/failed orders
     # (from the "وضعیت‌های سفارش" section in the official docs).
-    "cancelled",         # Basalam order_status=cancelled
-    "refunded",          # Basalam order_status=refunded
-    # Faraz Honar (WooCommerce): typical status values. Exact strings depend
-    # on WooCommerce localization/installation.
-    "cancelled",
-    "failed",
+    "basalam": {
+        "cancelled",  # Basalam order_status=cancelled
+        "refunded",   # Basalam order_status=refunded
+    },
+    # Faraz Honar (WooCommerce): the adapter fetches with status="any"
+    # (see farazhonar.py's fetch_new_orders), so this filter is the only
+    # thing stopping non-final orders from reaching Didar.
+    "farazhonar": {
+        "cancelled",
+        "failed",
+        # "pending" is WooCommerce's awaiting-payment status - a
+        # pre-invoice order, not a confirmed sale. The client treats these
+        # the same as a cancelled order and they must never become a real
+        # Deal in Didar (client report, 2026-09: "سایت فراز هنر سفارش پیش
+        # فاکتور هم در دیدار ثبت شده در صورتی که این مدل سفارش‌ها سفارش
+        # کنسلی حساب میشن و نباید ثبت بشن").
+        "pending",
+    },
     # SnappShop: schema unconfirmed (_SCHEMA_CONFIRMED = False).
     # "unknown" is the adapter's default fallback - included so unconfirmed
     # schemas don't silently sync orders; they pass through for manual review.
-    "unknown",
+    "snappshop": {"unknown"},
 }
