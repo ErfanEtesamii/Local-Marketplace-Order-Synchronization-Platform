@@ -119,7 +119,6 @@ from src.db.repository import Repository
 from src.didar.deal_client import DealStatusBreakdown, DidarDealClient
 from src.http_utils import default_retry, raise_for_status_with_body
 from src.logger import get_logger
-from src.proxy_config import get_current_proxy
 from src.shipping_fees import shipping_fee_rial
 
 if TYPE_CHECKING:
@@ -434,27 +433,6 @@ class TelegramNotifier:
                 pass
         self._client = None
 
-    def _reset_connection(self) -> None:
-        """Drop the current client and the "configured" flag so the
-        next call to is_configured() builds a fresh httpx.Client with
-        whatever proxy.txt currently says.
-
-        Called only when a network/transport error happens (see
-        _request()'s httpx.TransportError branch) - that's the
-        signal that the network path/proxy is broken, not just a
-        Telegram-side 4xx (bad token, blocked chat, etc.), which is a
-        logical error and must NOT reset the client. Without this,
-        is_configured()'s one-time cache means a dead proxy can only
-        ever be fixed by restarting the whole service, even after
-        someone edits proxy.txt."""
-        if self._client is not None:
-            try:
-                self._client.close()
-            except Exception:
-                pass
-        self._client = None
-        self._configured = False
-
     # ------------------------------------------------------------------
     # Helper methods (delegates to module-level functions - exposed on
     # the instance because tests exercise them this way)
@@ -510,17 +488,7 @@ class TelegramNotifier:
             )
             return False
 
-        proxy = get_current_proxy()
-        if proxy:
-            # Never log the proxy URL itself - it may embed
-            # user:pass credentials. "configured" is all an operator
-            # needs to confirm proxy.txt took effect.
-            log.info("telegram: connecting via proxy")
-        client = httpx.Client(
-            base_url=f"{_TELEGRAM_API_BASE}/bot{token}",
-            timeout=15.0,
-            proxy=proxy,
-        )
+        client = httpx.Client(base_url=f"{_TELEGRAM_API_BASE}/bot{token}", timeout=15.0)
         try:
             # getMe validates the token and is the cheapest call to
             # confirm we can talk to the Telegram API. Catches both
@@ -1655,17 +1623,6 @@ class TelegramNotifier:
         except httpx.HTTPStatusError as exc:
             raise TelegramError(str(exc)) from exc
         except httpx.TransportError as exc:
-            # A transport-level failure means the network path (proxy
-            # or otherwise) to api.telegram.org is broken right now -
-            # reset so the *next* call rebuilds the client against
-            # whatever proxy.txt currently says, instead of retrying
-            # forever against the same dead client until the service
-            # is restarted. This only clears internal state; the
-            # exception below is still raised/logged exactly as
-            # before, so _send()/_deliver()/retry_pending_notifications()
-            # need no changes - their next call naturally re-checks
-            # is_configured() or rebuilds self._client.
-            self._reset_connection()
             raise TelegramError(f"network error calling {method}: {exc}") from exc
         except ValueError as exc:
             raise TelegramError(f"{method}: non-JSON response") from exc
