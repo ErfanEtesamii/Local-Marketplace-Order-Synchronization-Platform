@@ -135,6 +135,15 @@ class NewDealInfo:
     owner_name: str | None
     stage_name: str | None
     register_time: datetime | None
+    # Best-effort platform name for the Telegram "manual deal" message
+    # (client request 2026-09: manual entries should show پلتفرم like
+    # the automatic order message does). Resolved from the deal's own
+    # LabelIds (confirmed field per Didar's Get Deal By Id docs - see
+    # DidarDealPoller._deal_info_from_detail()/_label_title_map())
+    # matched against GET /Label/GetDealLabels. None if the deal has no
+    # Label, the Id doesn't resolve, or the lookup itself fails -
+    # callers must treat None as "unknown", never as "no platform".
+    platform_label: str | None = None
 
 
 def _iso(dt: datetime) -> str:
@@ -168,6 +177,7 @@ class DidarDealPoller:
         self._config = config or settings.didar
         self._client = httpx.Client(base_url=self._config.base_url, timeout=30.0)
         self._pipeline_stage_titles: dict[str, str] | None = None  # populated lazily
+        self._label_titles: dict[str, str] | None = None  # populated lazily
 
     @default_retry()
     def _post(self, path: str, json: dict) -> dict:
@@ -181,6 +191,12 @@ class DidarDealPoller:
         POST with only the apikey query param, same shape exception as
         DidarConfig.get_locations_path's GET-with-no-apikey case."""
         resp = self._client.post(path, params={"apikey": self._config.api_key})
+        raise_for_status_with_body(resp)
+        return resp.json()
+
+    @default_retry()
+    def _get(self, path: str) -> dict:
+        resp = self._client.get(path, params={"apikey": self._config.api_key})
         raise_for_status_with_body(resp)
         return resp.json()
 
@@ -299,10 +315,50 @@ class DidarDealPoller:
             self._pipeline_stage_titles = titles
         return self._pipeline_stage_titles
 
+    def label_title(self, label_id: str | None) -> str | None:
+        """Resolves a Deal Label Id (from a Deal's LabelIds[] - the
+        field name confirmed by Didar's own support agent, 2026-09;
+        NOT "Labels" - see the module/NewDealInfo docstrings for the
+        earlier, wrong guess this replaces) to its human-readable
+        Title via GET /Label/GetDealLabels, same endpoint
+        DidarDealClient already uses for the opposite (Title -> Id)
+        lookup. Cached for this poller's lifetime, same tradeoff as
+        pipeline_stage_title() above. Returns None - never raises - on
+        any failure, missing Id, or unrecognized Id: an unresolved
+        Label must never break a notification."""
+        if not label_id:
+            return None
+        try:
+            titles = self._label_title_map()
+        except Exception:
+            log.exception("didar: failed to fetch Deal Labels for platform-name lookup")
+            return None
+        return titles.get(label_id)
+
+    def _label_title_map(self) -> dict[str, str]:
+        if self._label_titles is None:
+            payload = self._get(self._config.get_deal_labels_path)
+            self._label_titles = {
+                str(item["Id"]): str(item["Title"])
+                for item in payload.get("Response", []) or []
+                if isinstance(item, dict) and item.get("Id") and item.get("Title")
+            }
+        return self._label_titles
+
     # ------------------------------------------------------------------
     # Detail -> NewDealInfo
     # ------------------------------------------------------------------
     def _deal_info_from_detail(self, detail: dict) -> NewDealInfo:
+        """NOTE on platform_label below: confirmed (2026-09, Didar's
+        own support agent, re: "Get Deal By Id") the field is
+        `LabelIds` - a list of Label Id strings (e.g. []), NOT a
+        `Labels` list of {Id, Title} objects as first (wrongly)
+        assumed here. Ids are resolved to Title via a SEPARATE call to
+        GET /Label/GetDealLabels (see label_title()/_label_title_map()
+        above) - getdealdetail itself never returns the Title text.
+        Still best-effort: an empty/missing LabelIds, or an Id that
+        doesn't resolve, just leaves platform_label as None (message
+        falls back to "نامشخص") rather than raising."""
         deal_id = str(detail.get("Id") or "")
         title = str(detail.get("Title") or "").strip() or "بدون عنوان"
 
@@ -326,6 +382,17 @@ class DidarDealPoller:
         code = detail.get("Code")
         code = code if isinstance(code, int) else None
 
+        platform_label = None
+        label_ids = detail.get("LabelIds")
+        if isinstance(label_ids, list):
+            for label_id in label_ids:
+                if not label_id:
+                    continue
+                resolved = self.label_title(str(label_id))
+                if resolved:
+                    platform_label = resolved
+                    break
+
         return NewDealInfo(
             deal_id=deal_id,
             code=code,
@@ -335,6 +402,7 @@ class DidarDealPoller:
             owner_name=owner_name,
             stage_name=self.pipeline_stage_title(detail.get("PipelineStageId")),
             register_time=_parse_didar_datetime(detail.get("RegisterTime")),
+            platform_label=platform_label,
         )
 
     # ------------------------------------------------------------------

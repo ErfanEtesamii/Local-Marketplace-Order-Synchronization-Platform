@@ -3,10 +3,10 @@ Telegram notifications for the order sync platform.
 
 Single entry point for all Telegram-side work: a per-order alert right
 after a deal is created in Didar, end-of-day / end-of-week /
-end-of-month / end-of-half-year / end-of-year aggregate reports, and
-an interactive /report command that lets the operator pick any custom
-Jalali date range via inline-keyboard buttons and get the same kind of
-report for it - all in Persian (Jalali calendar, RTL).
+end-of-month / end-of-year aggregate reports, and an interactive
+/report command that lets the operator pick any custom Jalali date
+range via inline-keyboard buttons and get the same kind of report for
+it - all in Persian (Jalali calendar, RTL).
 
 DESIGN CHOICES:
 
@@ -108,7 +108,6 @@ DESIGN CHOICES:
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from typing import TYPE_CHECKING, Optional, Union
@@ -129,31 +128,6 @@ if TYPE_CHECKING:
     from src.didar.deal_poller import NewDealInfo
 
 log = get_logger(__name__)
-
-
-@dataclass
-class NewStageBreakdown:
-    """Count + total for one Deal Label (or the "بدون لیبل" bucket) in
-    the local `new_customer_stage_deals` history - see
-    Repository.get_new_stage_deals() and
-    TelegramNotifier._aggregate_new_stage_breakdown() below. Deliberately
-    a separate, smaller type from DealStatusBreakdown: this feature has
-    no Pending/Won/Lost split (a row in new_customer_stage_deals only
-    ever means "entered the مشتری جدید stage", there is no Status
-    concept here at all), just how many deals entered and their summed
-    amount. Zero by default so a label with no rows in a given window
-    contributes nothing when summed."""
-
-    count: int = 0
-    total: Decimal = Decimal("0")
-
-    def __add__(self, other: "NewStageBreakdown") -> "NewStageBreakdown":
-        return NewStageBreakdown(
-            count=self.count + other.count, total=self.total + other.total
-        )
-
-
-_NO_LABEL_TITLE = "بدون لیبل"
 
 _TELEGRAM_API_BASE = "https://api.telegram.org"
 
@@ -205,6 +179,14 @@ _PLATFORM_DISPLAY = {
     "farazhonar": ("🔵", "فرازهنر"),
     "snappshop": ("⚪", "اسنپ‌شاپ"),
 }
+
+# Reverse lookup (Didar Deal Label title -> emoji) so the manual-deal
+# message (_format_new_deal_message) can show the same emoji as the
+# automatic order message when NewDealInfo.platform_label matches one
+# of this account's known marketplace Label titles. A label title that
+# doesn't match any of these (or no label at all) falls back to "⚪"
+# with the raw label text (or "نامشخص") - never raises.
+_PLATFORM_EMOJI_BY_TITLE = {title: emoji for emoji, title in _PLATFORM_DISPLAY.values()}
 
 # Width (in "═" characters) of the report box, matched to the box shown
 # in the feature request's daily-report example. Centering text inside it
@@ -287,15 +269,6 @@ def _jalali_key(d: "jdatetime.date") -> str:
 def _jalali_from_key(key: str) -> "jdatetime.date":
     year, month, day = (int(part) for part in key.split("-"))
     return jdatetime.date(year, month, day)
-
-
-def _half_year_from_key(key: str) -> "jdatetime.date":
-    """Inverse of the "{year}-H{1|2}" marker key built in
-    _check_six_month_rollover: returns the first day of that half
-    (month 1 for H1, month 7 for H2)."""
-    year_str, half_str = key.split("-H")
-    month = 1 if half_str == "1" else 7
-    return jdatetime.date(int(year_str), month, 1)
 
 
 def _jalali_date_str(d: "jdatetime.date") -> str:
@@ -756,7 +729,7 @@ class TelegramNotifier:
         when = self._format_jalali_datetime(order.created_at)
 
         return (
-            "🟢 سفارش جدید ثبت شد\n"
+            "🟢 سفارش جدید در دیدار به صورت اتوماتیک ثبت شد\n"
             f"🛍 پلتفرم:\n"
             f"{emoji} {platform_name}\n"
             "👤 مشتری:\n"
@@ -828,29 +801,63 @@ class TelegramNotifier:
         self._deliver(ref_id, message, repository, description)
 
     def _format_new_deal_message(self, deal: "NewDealInfo") -> str:
-        """Field set matches what's actually confirmed available from
-        POST /deal/getdealdetail (Title, Person/Company.DisplayName,
-        Price, Owner.DisplayName, PipelineStageId -> stage Title via
-        DidarDealPoller.pipeline_stage_title()) - no field is guessed
-        beyond that response shape."""
+        """Manual-entry counterpart to _format_new_order_message() -
+        client request 2026-09 follow-up: same box layout/emoji style
+        as the automatic order message, title text is the only
+        intentional difference ("پیام دوم باید مثل پیام اول باشه فقط
+        تایتلش فرق کنه").
+
+        TWO fields the automatic message has that this one CANNOT
+        show for real, confirmed against Didar's own documented
+        response shape (see DidarDealClient.get_won_stats()'s
+        docstring):
+          - a per-product quantity/price breakdown - POST
+            /deal/getdealdetail never returns DealItems, for ANY deal
+            (manual or automatic), so there is no API call this
+            project could make to read it back once the deal exists.
+            The "محصولات" line below shows the Deal's own Title
+            instead - the only line-item text Didar actually returns -
+            rather than inventing quantities/prices that were never
+            entered anywhere this program can read.
+          - a shipping figure - same reason, never round-trips through
+            Didar. Left out entirely rather than guessed as 0.
+        Because of that, "مبلغ کل" here is Deal.Price as a single
+        number, not products+shipping added together like the
+        automatic message (there is no reliable split to add).
+
+        پلتفرم is NewDealInfo.platform_label (best-effort - see
+        DidarDealPoller._deal_info_from_detail()'s docstring on why
+        this isn't guaranteed) matched against this project's own
+        known marketplace titles for the matching emoji; an
+        unrecognized label falls back to a plain 🟡 with the raw label
+        text, and no label at all falls back to "نامشخص" - a human
+        typing a deal into Didar by hand isn't required to pick a
+        marketplace Label."""
+        if deal.platform_label:
+            emoji = _PLATFORM_EMOJI_BY_TITLE.get(deal.platform_label, "🟡")
+            platform_name = deal.platform_label
+        else:
+            emoji, platform_name = "🟡", "نامشخص"
+
         when = self._format_jalali_datetime(deal.register_time)
         reference = f"#{deal.code}" if deal.code else deal.deal_id
+
         return (
-            "🔔 معامله جدید در دیدار\n"
-            "📌 عنوان:\n"
-            f"{deal.title}\n"
+            "🟡 سفارش جدید در دیدار به صورت دستی ثبت شد\n"
+            "🛍 پلتفرم:\n"
+            f"{emoji} {platform_name}\n"
             "👤 مشتری:\n"
             f"{deal.customer_name or 'نامشخص'}\n"
-            "💰 مبلغ:\n"
+            "📦 محصولات:\n"
+            f"{deal.title}\n"
+            "━━━━━━━━━━━━━━━━━━━━\n"
+            "💳 مبلغ کل:\n"
             f"{_format_rial(deal.price)} ریال\n"
-            "🧑\u200d💼 مسئول:\n"
-            f"{deal.owner_name or 'نامشخص'}\n"
-            "🚦 مرحله:\n"
-            f"{deal.stage_name or 'نامشخص'}\n"
             "━━━━━━━━━━━━━━━━━━━━\n"
             f"🕐 {when}\n"
+            "🟡 ثبت دستی در دیدار\n"
             f"شناسه معامله: {reference}\n"
-            f"#{deal.title}"
+            f"#{platform_name}"
         )
 
     def _format_jalali_datetime(self, dt: Optional[datetime]) -> str:
@@ -890,7 +897,6 @@ class TelegramNotifier:
         self._check_daily_rollover(repository, source_names, today)
         self._check_weekly_rollover(repository, source_names, today)
         self._check_monthly_rollover(repository, source_names, today)
-        self._check_six_month_rollover(repository, source_names, today)
         self._check_yearly_rollover(repository, source_names, today)
 
     def _check_daily_rollover(self, repository, source_names, today) -> None:
@@ -929,29 +935,6 @@ class TelegramNotifier:
         ended_month_first_day = jdatetime.date(int(year_str), int(month_str), 1)
         self._send_monthly_report(repository, source_names, ended_month_first_day)
         repository.set_report_marker("month", key)
-
-    def _check_six_month_rollover(self, repository, source_names, today) -> None:
-        """Jalali half-year rollover ("نیمسال"): H1 = months ۱-۶,
-        H2 = months ۷-۱۲ - same marker-based approach as
-        _check_monthly_rollover/_check_yearly_rollover above (a
-        half-year has no fixed Gregorian day-of-month/day-of-year
-        either, so it needs the same per-poll-cycle rollover check
-        rather than a cron trigger - see the module docstring's
-        "Report scheduling" note). Marker key is "{year}-H{1|2}"
-        (e.g. "1405-H1"), stored under its own "six_month" period so
-        it never collides with the existing day/week/month/year
-        markers."""
-        half = 1 if today.month <= 6 else 2
-        key = f"{today.year:04d}-H{half}"
-        marker = repository.get_report_marker("six_month")
-        if marker is None:
-            repository.set_report_marker("six_month", key)
-            return
-        if marker == key:
-            return
-        ended_half_first_day = _half_year_from_key(marker)
-        self._send_six_month_report(repository, source_names, ended_half_first_day)
-        repository.set_report_marker("six_month", key)
 
     def _check_yearly_rollover(self, repository, source_names, today) -> None:
         key = f"{today.year:04d}"
@@ -1027,60 +1010,6 @@ class TelegramNotifier:
             total = total + label_breakdown
         return total, per_label
 
-    def _aggregate_new_stage_breakdown(
-        self, repository: Repository, since: datetime, until: datetime | None = None
-    ) -> tuple[NewStageBreakdown, list[tuple[str, NewStageBreakdown]]]:
-        """Local counterpart to _aggregate_live_breakdown() above, for
-        the "مشتری جدید" ("new customer") pipeline-stage history only
-        (client request, 2026-09 - see the "تفکیک سفارش‌های مرحله
-        «مشتری جدید»" prompt / src/db/repository.py's
-        new_customer_stage_deals docstring). Reads
-        Repository.get_new_stage_deals(since, until) - the local,
-        permanent, append-only log that
-        DidarDealClient.record_current_stage_snapshot() fills in every
-        poll cycle - instead of a live Didar call, because Didar's API
-        exposes a Deal's CURRENT PipelineStageId only, never when it
-        entered that stage; there is no way to ask Didar itself "what
-        entered this stage between since and until", only the local
-        history can answer that (see list_current_deals_in_stage()'s
-        docstring for the full reasoning).
-
-        Deliberately scoped to ONLY this one breakdown: every other
-        report figure (Won/Pending/Lost via _aggregate_live/
-        _aggregate_live_breakdown) is untouched and keeps reading
-        live from Didar as before - this method is purely additive.
-
-        Groups by label_title, preserving first-seen order across the
-        window's rows (NOT list_deal_labels() order, unlike
-        _aggregate_live_breakdown - there is no need to show a label
-        with zero rows here, since this is a plain group-by over rows
-        that already exist locally, not a fan-out over every
-        configured Didar label). A row with label_title=None (no
-        resolvable Label - see record_current_stage_snapshot()'s
-        docstring for when that happens) is grouped under the
-        "بدون لیبل" bucket rather than dropped, so every recorded deal
-        is still represented in the total. A row with amount=None
-        contributes 0 to that bucket's total without affecting its
-        count.
-
-        Returns (zero total, []) for an empty window - no Didar client
-        involved here at all, so there's no "client unavailable"
-        degrade case to handle, unlike _aggregate_live/
-        _aggregate_live_breakdown above."""
-        total = NewStageBreakdown()
-        per_label: dict[str, NewStageBreakdown] = {}
-        order: list[str] = []
-        for row in repository.get_new_stage_deals(since, until):
-            title = row.label_title or _NO_LABEL_TITLE
-            if title not in per_label:
-                per_label[title] = NewStageBreakdown()
-                order.append(title)
-            row_amount = Decimal(row.amount) if row.amount is not None else Decimal("0")
-            row_breakdown = NewStageBreakdown(count=1, total=row_amount)
-            per_label[title] = per_label[title] + row_breakdown
-            total = total + row_breakdown
-        return total, [(title, per_label[title]) for title in order]
-
     def _aggregate(self, repository, source_names, since, until=None):
         products = shipping = total = count = 0
         for source in source_names:
@@ -1122,60 +1051,26 @@ class TelegramNotifier:
 
     def _format_live_report_message(
         self, title_line: str, box_label: str, period_line: str, count: int, total,
-        new_stage_total: "NewStageBreakdown",
-        new_stage_per_label: list[tuple[str, "NewStageBreakdown"]],
     ) -> str:
         """Used by the periodic live-from-Didar reports - daily/weekly/
-        monthly/six-month/yearly (see _aggregate_live above). NOT used
-        by the custom-range /report picker any more - that one shows a
-        fuller All/Pending/Won/Lost breakdown instead, see
+        monthly/yearly (see _aggregate_live above). NOT used by the
+        custom-range /report picker any more - that one shows a fuller
+        All/Pending/Won/Lost breakdown instead, see
         _format_live_range_report_message below. No products/shipping
-        split here - see _aggregate_live()'s docstring.
-
-        `new_stage_total`/`new_stage_per_label` add the local "ورود به
-        مرحله «مشتری جدید»" section (client request, 2026-09 - see the
-        "تفکیک سفارش‌های مرحله «مشتری جدید»" prompt / TelegramNotifier.
-        _aggregate_new_stage_breakdown()'s docstring). This section is
-        entirely separate from the Won count/total above it: it comes
-        from the local new_customer_stage_deals history, not a live
-        Didar status, so it can legitimately disagree with the Won
-        figure (a deal can enter "مشتری جدید" and later move to a
-        different stage without ever reaching Won, or vice versa).
-
-        The total line is always shown, including a "0 سفارش" window,
-        for the same reason _format_live_range_report_message always
-        shows "کل سفارشات" - consistent shape across every send,
-        nothing hidden for a quiet period. Per-label lines are only
-        emitted for labels that actually had a row in this window
-        (see _aggregate_new_stage_breakdown's docstring - unlike the
-        Won breakdown above, there's no fixed catalog of labels to
-        fan out over here)."""
-        lines = [
-            title_line,
-            _boxed_title(box_label),
-            period_line,
-            "🛒 تعداد سفارش‌های موفق",
-            f"└─ {count} سفارش",
-            "💰 مبلغ فروش",
-            f"└─ {_format_rial(total)} ریال",
-            "━━━━━━━━━━━━━━━━━━━━",
-            "🆕 ورود به مرحله «مشتری جدید»",
-            f"└─ {new_stage_total.count} سفارش - {_format_rial(new_stage_total.total)} ریال",
-        ]
-        for label_title, label_breakdown in new_stage_per_label:
-            lines.append("")
-            lines.append(f"🛍 {label_title}")
-            lines.append(
-                f"└─ {label_breakdown.count} سفارش - "
-                f"{_format_rial(label_breakdown.total)} ریال"
-            )
-        lines.extend([
-            "━━━━━━━━━━━━━━━━━━━━",
-            "🟢 برگرفته از معامله‌های موفق ثبت‌شده در دیدار",
-            "(بدون احتساب هزینه ارسال).",
-            "#گزارش",
-        ])
-        return "\n".join(lines)
+        split here - see _aggregate_live()'s docstring."""
+        return (
+            f"{title_line}\n"
+            f"{_boxed_title(box_label)}\n"
+            f"{period_line}\n"
+            "🛒 تعداد سفارش‌های موفق\n"
+            f"└─ {count} سفارش\n"
+            "💰 مبلغ فروش\n"
+            f"└─ {_format_rial(total)} ریال\n"
+            "━━━━━━━━━━━━━━━━━━━━\n"
+            "🟢 برگرفته از معامله‌های موفق ثبت‌شده در دیدار\n"
+            "(بدون احتساب هزینه ارسال).\n"
+            "#گزارش"
+        )
 
     def _send_daily_report(self, repository, source_names, day) -> None:
         if not self.is_configured():
@@ -1184,13 +1079,9 @@ class TelegramNotifier:
             since = _iran_midnight_utc(day)
             until = _iran_midnight_utc(day + timedelta(days=1))
             count, total = self._aggregate_live(source_names, since, until)
-            new_stage_total, new_stage_per_label = self._aggregate_new_stage_breakdown(
-                repository, since, until
-            )
             period_line = f"📅 {_WEEKDAY_FA[_iranian_weekday(day)]} {_jalali_date_str(day)}"
             message = self._format_live_report_message(
                 "📊 گزارش پایان روز", "📊 گزارش روزانه", period_line, count, total,
-                new_stage_total, new_stage_per_label,
             )
             self._send(message)
             log.info("telegram: sent daily report for %s", _jalali_key(day))
@@ -1207,13 +1098,9 @@ class TelegramNotifier:
             since = _iran_midnight_utc(week_start)
             until = _iran_midnight_utc(week_end + timedelta(days=1))
             count, total = self._aggregate_live(source_names, since, until)
-            new_stage_total, new_stage_per_label = self._aggregate_new_stage_breakdown(
-                repository, since, until
-            )
             period_line = f"📅 {_jalali_date_str(week_start)} تا {_jalali_date_str(week_end)}"
             message = self._format_live_report_message(
                 "📊 گزارش پایان هفته", "📊 گزارش هفتگی", period_line, count, total,
-                new_stage_total, new_stage_per_label,
             )
             self._send(message)
             log.info(
@@ -1236,9 +1123,6 @@ class TelegramNotifier:
             since = _iran_midnight_utc(month_first_day)
             until = _iran_midnight_utc(next_month_first)
             count, total = self._aggregate_live(source_names, since, until)
-            new_stage_total, new_stage_per_label = self._aggregate_new_stage_breakdown(
-                repository, since, until
-            )
             month_label = (
                 f"{_MONTH_NAMES_FA[month_first_day.month]} "
                 f"{_to_persian_digits(str(month_first_day.year))}"
@@ -1246,7 +1130,6 @@ class TelegramNotifier:
             period_line = f"📅 {month_label}"
             message = self._format_live_report_message(
                 "📊 گزارش پایان ماه", "📊 گزارش ماهانه", period_line, count, total,
-                new_stage_total, new_stage_per_label,
             )
             self._send(message)
             log.info("telegram: sent monthly report for %04d-%02d",
@@ -1256,45 +1139,6 @@ class TelegramNotifier:
         except Exception:
             log.exception("telegram: unexpected error sending monthly report")
 
-    def _send_six_month_report(self, repository, source_names, half_first_day) -> None:
-        """Jalali half-year ("نیمسال") report - same live-from-Didar
-        figure as the daily/weekly/monthly/yearly reports above (see
-        _aggregate_live's docstring for why: count + total sale
-        amount only, no products/shipping split). `half_first_day` is
-        always the 1st of month 1 (H1) or month 7 (H2), as produced by
-        _half_year_from_key()."""
-        if not self.is_configured():
-            return
-        try:
-            if half_first_day.month == 1:
-                next_half_first_day = jdatetime.date(half_first_day.year, 7, 1)
-                half_label = "نیمه اول"
-            else:
-                next_half_first_day = jdatetime.date(half_first_day.year + 1, 1, 1)
-                half_label = "نیمه دوم"
-            since = _iran_midnight_utc(half_first_day)
-            until = _iran_midnight_utc(next_half_first_day)
-            count, total = self._aggregate_live(source_names, since, until)
-            new_stage_total, new_stage_per_label = self._aggregate_new_stage_breakdown(
-                repository, since, until
-            )
-            period_line = (
-                f"📅 {half_label} سال {_to_persian_digits(str(half_first_day.year))}"
-            )
-            message = self._format_live_report_message(
-                "📊 گزارش پایان نیمسال", "📊 گزارش شش‌ماهه", period_line, count, total,
-                new_stage_total, new_stage_per_label,
-            )
-            self._send(message)
-            log.info(
-                "telegram: sent six-month report for %04d-H%d",
-                half_first_day.year, 1 if half_first_day.month == 1 else 2,
-            )
-        except TelegramError as exc:
-            log.error("telegram: failed to send six-month report: %s", exc)
-        except Exception:
-            log.exception("telegram: unexpected error sending six-month report")
-
     def _send_yearly_report(self, repository, source_names, year_first_day) -> None:
         if not self.is_configured():
             return
@@ -1303,13 +1147,9 @@ class TelegramNotifier:
             since = _iran_midnight_utc(year_first_day)
             until = _iran_midnight_utc(next_year_first)
             count, total = self._aggregate_live(source_names, since, until)
-            new_stage_total, new_stage_per_label = self._aggregate_new_stage_breakdown(
-                repository, since, until
-            )
             period_line = f"📅 سال {_to_persian_digits(str(year_first_day.year))}"
             message = self._format_live_report_message(
                 "📊 گزارش پایان سال", "📊 گزارش سالانه", period_line, count, total,
-                new_stage_total, new_stage_per_label,
             )
             self._send(message)
             log.info("telegram: sent yearly report for %04d", year_first_day.year)

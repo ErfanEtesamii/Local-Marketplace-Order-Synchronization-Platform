@@ -98,6 +98,13 @@ _PIPELINES_RESPONSE = {
     ]
 }
 
+_DEAL_LABELS_RESPONSE = {
+    "Response": [
+        {"Id": "label-farazhonar", "Title": "فرازهنر", "Type": "Deal"},
+        {"Id": "label-digikala", "Title": "دیجی‌کالا", "Type": "Deal"},
+    ]
+}
+
 
 # --- watermark / first-run behaviour ------------------------------------
 
@@ -164,6 +171,61 @@ def test_poll_new_deals_returns_new_deal_info(poller, repo):
     )
     # Discovering it must have marked it notified so it isn't sent twice.
     assert repo.is_deal_notified("deal-1") is True
+
+
+@respx.mock
+def test_poll_new_deals_resolves_platform_label_from_label_ids(poller, repo):
+    """Confirmed 2026-09 (Didar's own support agent, re: Get Deal By
+    Id): the field on a Deal's detail response is `LabelIds` (a list
+    of Label Id strings), NOT a `Labels` list of {Id, Title} objects.
+    Resolving an Id to its Title requires a SEPARATE GET
+    /Label/GetDealLabels call - getdealdetail itself never returns the
+    Title text for a Label."""
+    repo.set_deal_poll_watermark(datetime.now(timezone.utc) - timedelta(minutes=5))
+    register_time = _recent()
+
+    respx.post("https://app.didar.me/api/deal/search_v2").mock(
+        return_value=httpx.Response(
+            200, json=_search_response([_deal_row("deal-1", register_time)])
+        )
+    )
+    respx.post("https://app.didar.me/api/deal/getdealdetail").mock(
+        return_value=httpx.Response(
+            200,
+            json=_deal_detail("deal-1", register_time, LabelIds=["label-farazhonar"]),
+        )
+    )
+    respx.get("https://app.didar.me/api/Label/GetDealLabels").mock(
+        return_value=httpx.Response(200, json=_DEAL_LABELS_RESPONSE)
+    )
+
+    [deal] = poller.poll_new_deals(repo)
+
+    assert deal.platform_label == "فرازهنر"
+
+
+@respx.mock
+def test_poll_new_deals_platform_label_none_when_label_ids_empty(poller, repo):
+    """A manually-typed deal with no Label picked - the documented
+    example shape ("LabelIds": []) - must fall back to None, never
+    raise or pick an arbitrary label."""
+    repo.set_deal_poll_watermark(datetime.now(timezone.utc) - timedelta(minutes=5))
+    register_time = _recent()
+
+    respx.post("https://app.didar.me/api/deal/search_v2").mock(
+        return_value=httpx.Response(
+            200, json=_search_response([_deal_row("deal-1", register_time)])
+        )
+    )
+    respx.post("https://app.didar.me/api/deal/getdealdetail").mock(
+        return_value=httpx.Response(
+            200, json=_deal_detail("deal-1", register_time, LabelIds=[])
+        )
+    )
+
+    [deal] = poller.poll_new_deals(repo)
+
+    assert deal.platform_label is None
 
 
 @respx.mock
