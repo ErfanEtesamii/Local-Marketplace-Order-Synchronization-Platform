@@ -20,10 +20,17 @@ PER-SOURCE UNIT, AND HOW CONFIDENT EACH ONE IS (2026-08-29):
     the official Basalam SDK's quick-start example printing a price
     with "تومان" next to it - never a confirmed live order payload, and
     it turned out to be wrong.
-  - SnappShop, Tapsi Shop: UNCONFIRMED - neither vendor's available
-    documentation states a currency unit anywhere. Defaulted to "rial"
-    (no conversion applied) purely to avoid silently guessing on money;
-    this is a placeholder, not a claim that it's correct.
+  - SnappShop: TOMAN - CONFIRMED (2026-09, client pulled a real order
+    via GET /vendors/{vendor_id}/orders/{order_number} and matched its
+    item `final_price` (3350000) against the same order's total shown
+    on the vendor panel, labeled "قیمت کل (تومان)" (3,350,000) - exact
+    match, no factor-of-10 gap). The official API doc never states the
+    unit for order payloads (only for the product-update endpoint), so
+    this came from a live cross-check, not the doc itself.
+  - Tapsi Shop: UNCONFIRMED - no available documentation states a
+    currency unit anywhere. Defaulted to "rial" (no conversion applied)
+    purely to avoid silently guessing on money; this is a placeholder,
+    not a claim that it's correct.
 
 Each source's unit is a config value (see src/config.py's
 `price_unit` fields, one per marketplace, each reading a

@@ -75,10 +75,13 @@ class SnappShopConfig:
     auth_token: str = field(default_factory=lambda: _get("SNAPPSHOP_AUTH_TOKEN"))
     agent_user: str = field(default_factory=lambda: _get("SNAPPSHOP_AGENT_USER"))
     vendor_id: str = field(default_factory=lambda: _get("SNAPPSHOP_VENDOR_ID"))
-    # UNCONFIRMED - see src/currency.py's module docstring. Defaults to
-    # "rial" (no conversion) until someone checks a real order.
+    # CONFIRMED 2026-09 - see src/currency.py's module docstring: a
+    # real order's item final_price matched the vendor panel's Toman
+    # total exactly (no factor-of-10 gap). Defaults to "toman"; still
+    # overridable via env in case a different vendor account ever
+    # shows otherwise.
     price_unit: str = field(
-        default_factory=lambda: _get_price_unit("SNAPPSHOP_PRICE_UNIT", "rial")
+        default_factory=lambda: _get_price_unit("SNAPPSHOP_PRICE_UNIT", "toman")
     )
 
 
