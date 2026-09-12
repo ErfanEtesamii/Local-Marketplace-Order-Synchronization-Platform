@@ -44,13 +44,21 @@ def test_basalam_price_unit_defaults_to_rial(monkeypatch):
     assert BasalamConfig().price_unit == "rial"
 
 
-def test_tapsishop_and_snappshop_price_unit_default_to_rial_when_unconfirmed(monkeypatch):
-    # Neither vendor's docs state a currency unit - default to "rial"
+def test_tapsishop_price_unit_defaults_to_rial_when_unconfirmed(monkeypatch):
+    # Tapsi Shop's docs don't state a currency unit - default to "rial"
     # (no conversion) rather than guessing, until confirmed otherwise.
     monkeypatch.delenv("TAPSISHOP_PRICE_UNIT", raising=False)
-    monkeypatch.delenv("SNAPPSHOP_PRICE_UNIT", raising=False)
     assert TapsiShopConfig().price_unit == "rial"
-    assert SnappShopConfig().price_unit == "rial"
+
+
+def test_snappshop_price_unit_defaults_to_toman(monkeypatch):
+    # CONFIRMED 2026-09 (client cross-checked a real order against the
+    # vendor panel - see src/marketplaces/snappshop.py's module
+    # docstring): item final_price matches the panel's Toman total
+    # exactly. Superseded the earlier "unconfirmed, defaults to rial"
+    # placeholder this test used to assert.
+    monkeypatch.delenv("SNAPPSHOP_PRICE_UNIT", raising=False)
+    assert SnappShopConfig().price_unit == "toman"
 
 
 def test_price_unit_env_var_overrides_default(monkeypatch):
