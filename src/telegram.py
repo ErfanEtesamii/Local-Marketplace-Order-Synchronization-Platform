@@ -108,6 +108,7 @@ DESIGN CHOICES:
 from __future__ import annotations
 
 import os
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from typing import TYPE_CHECKING, Optional, Union
@@ -404,6 +405,19 @@ def _select_range_report_platforms(
                 selected.append((title, breakdown))
                 break
     return selected
+
+
+@dataclass(frozen=True)
+class NewStageBreakdown:
+    """Count+total for one grouping window of the "مشتری جدید" pipeline-
+    stage history (`Repository.new_customer_stage_deals` /
+    `get_new_stage_deals()`) - see
+    `TelegramNotifier._aggregate_new_stage_breakdown()` below. All zero
+    by default, same reasoning as `DealStatusBreakdown` in
+    deal_client.py: an empty window contributes nothing when summed."""
+
+    count: int = 0
+    total: Decimal = Decimal("0")
 
 
 class TelegramNotifier:
@@ -1023,6 +1037,64 @@ class TelegramNotifier:
             per_label.append((title, label_breakdown))
             total = total + label_breakdown
         return total, per_label
+
+    def _aggregate_new_stage_breakdown(
+        self, repository: Repository, since: datetime, until: datetime | None = None
+    ) -> tuple[NewStageBreakdown, list[tuple[str, NewStageBreakdown]]]:
+        """Overall total AND a per-Deal-Label-title breakdown of the local
+        "مشتری جدید" pipeline-stage history
+        (`Repository.get_new_stage_deals()` -
+        `new_customer_stage_deals`, step 3 of that feature - see the
+        table's docstring in `db/repository.py`). Unlike
+        `_aggregate_live`/`_aggregate_live_breakdown` above, this makes
+        no Didar API call - it reads purely from the local append-only
+        log, so it never returns a degrade-to-zero result the way those
+        two do on a Didar-client failure.
+
+        `label_title` rows with no resolved label (deal seen before its
+        Label could be looked up, or the Deal genuinely has none) are
+        grouped under a literal "بدون لیبل" ("no label") bucket rather
+        than being dropped, so the overall total in `count`/`total`
+        always matches the sum of every row in the window. A `None`
+        `amount` (see `record_new_stage_deal`'s docstring) still counts
+        toward `count` but contributes `Decimal("0")` to `total`, same
+        as a genuinely-zero-amount deal - there is no way to distinguish
+        "unknown amount" from "amount confirmed as zero" from this
+        table alone, and undercounting `count` for a deal that
+        definitely happened would be worse than treating it as zero
+        value.
+
+        `per_label` preserves first-seen label order (the order
+        `get_new_stage_deals()` itself returns, which is insertion
+        order) rather than alphabetical or by-total sorting, matching
+        `_aggregate_live_breakdown`'s "order matches whatever the
+        underlying source returns" convention above.
+        """
+        deals = repository.get_new_stage_deals(since, until)
+
+        total_count = 0
+        total_amount = Decimal("0")
+        label_order: list[str] = []
+        per_label: dict[str, NewStageBreakdown] = {}
+
+        for deal in deals:
+            label = deal.label_title or "بدون لیبل"
+            amount = Decimal(str(deal.amount)) if deal.amount is not None else Decimal("0")
+
+            total_count += 1
+            total_amount += amount
+
+            if label not in per_label:
+                label_order.append(label)
+                per_label[label] = NewStageBreakdown()
+            current = per_label[label]
+            per_label[label] = NewStageBreakdown(
+                count=current.count + 1, total=current.total + amount
+            )
+
+        total = NewStageBreakdown(count=total_count, total=total_amount)
+        breakdown = [(label, per_label[label]) for label in label_order]
+        return total, breakdown
 
     def _aggregate(self, repository, source_names, since, until=None):
         products = shipping = total = count = 0
