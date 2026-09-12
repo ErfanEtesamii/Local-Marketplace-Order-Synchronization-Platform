@@ -25,10 +25,12 @@ from src.db.repository import Repository
 from src.marketplaces.base import NormalizedOrder, OrderItem
 from src.telegram import (
     IRAN_TZ,
+    NewStageBreakdown,
     TelegramError,
     TelegramNotifier,
     _emoji_number,
     _format_rial,
+    _iran_midnight_utc,
     _iranian_weekday,
     _jalali_key,
 )
@@ -698,6 +700,270 @@ def test_send_yearly_report_noops_when_not_configured(repo, monkeypatch):
         notifier._send_yearly_report(repo, ["digikala"], jdatetime.date(1405, 1, 1))
 
     mock_send.assert_not_called()
+
+
+# ---------------------------------------------------------------------
+# Six-month ("نیمسال") rollover detection - H1 = months 1-6,
+# H2 = months 7-12. Same marker-based approach as the monthly/yearly
+# checks above, under its own "six_month" period key so it never
+# collides with them.
+# ---------------------------------------------------------------------
+
+def test_six_month_rollover_first_run_sets_marker_without_sending(repo):
+    notifier = TelegramNotifier()
+    today = jdatetime.date(1405, 3, 15)  # H1
+
+    with patch.object(notifier, "_send_six_month_report") as mock_send:
+        notifier._check_six_month_rollover(repo, ["digikala"], today)
+
+    mock_send.assert_not_called()
+    assert repo.get_report_marker("six_month") == "1405-H1"
+
+
+def test_six_month_rollover_same_half_does_not_resend(repo):
+    notifier = TelegramNotifier()
+    repo.set_report_marker("six_month", "1405-H1")
+
+    with patch.object(notifier, "_send_six_month_report") as mock_send:
+        # Still H1, different day - no rollover yet.
+        notifier._check_six_month_rollover(repo, ["digikala"], jdatetime.date(1405, 5, 1))
+
+    mock_send.assert_not_called()
+
+
+def test_six_month_rollover_fires_when_first_half_ends(repo):
+    notifier = TelegramNotifier()
+    repo.set_report_marker("six_month", "1405-H1")
+
+    with patch.object(notifier, "_send_six_month_report") as mock_send:
+        notifier._check_six_month_rollover(repo, ["digikala"], jdatetime.date(1405, 7, 1))
+
+    mock_send.assert_called_once_with(repo, ["digikala"], jdatetime.date(1405, 1, 1))
+    assert repo.get_report_marker("six_month") == "1405-H2"
+
+
+def test_six_month_rollover_fires_when_second_half_ends_into_next_year(repo):
+    notifier = TelegramNotifier()
+    repo.set_report_marker("six_month", "1405-H2")
+
+    with patch.object(notifier, "_send_six_month_report") as mock_send:
+        notifier._check_six_month_rollover(repo, ["digikala"], jdatetime.date(1406, 2, 1))
+
+    mock_send.assert_called_once_with(repo, ["digikala"], jdatetime.date(1405, 7, 1))
+    assert repo.get_report_marker("six_month") == "1406-H1"
+
+
+def test_check_and_send_reports_includes_six_month_check(repo, monkeypatch):
+    """check_and_send_reports() must run the new half-year check
+    alongside the existing day/week/month/year ones every poll cycle."""
+    monkeypatch.delenv("TELEGRAM_BOT_TOKEN", raising=False)
+    monkeypatch.delenv("TELEGRAM_CHAT_ID", raising=False)
+    notifier = TelegramNotifier()
+
+    notifier.check_and_send_reports(repo, ["digikala"])
+
+    assert repo.get_report_marker("six_month") is not None
+
+
+def test_send_six_month_report_noops_when_not_configured(repo, monkeypatch):
+    monkeypatch.delenv("TELEGRAM_BOT_TOKEN", raising=False)
+    monkeypatch.delenv("TELEGRAM_CHAT_ID", raising=False)
+    notifier = TelegramNotifier()
+
+    with patch.object(notifier, "_send") as mock_send:
+        notifier._send_six_month_report(repo, ["digikala"], jdatetime.date(1405, 1, 1))
+
+    mock_send.assert_not_called()
+
+
+def test_send_six_month_report_first_half_queries_months_1_through_6(repo):
+    notifier = TelegramNotifier()
+
+    with patch.object(notifier, "is_configured", return_value=True), \
+         patch.object(notifier, "_aggregate_live", return_value=(3, Decimal("1000"))) as mock_agg, \
+         patch.object(notifier, "_send") as mock_send:
+        notifier._send_six_month_report(repo, ["digikala"], jdatetime.date(1405, 1, 1))
+
+    since, until = mock_agg.call_args[0][1], mock_agg.call_args[0][2]
+    assert since == _iran_midnight_utc(jdatetime.date(1405, 1, 1))
+    assert until == _iran_midnight_utc(jdatetime.date(1405, 7, 1))
+    mock_send.assert_called_once()
+    assert "نیمه اول" in mock_send.call_args[0][0]
+
+
+def test_send_six_month_report_second_half_queries_into_next_jalali_year(repo):
+    notifier = TelegramNotifier()
+
+    with patch.object(notifier, "is_configured", return_value=True), \
+         patch.object(notifier, "_aggregate_live", return_value=(0, Decimal("0"))) as mock_agg, \
+         patch.object(notifier, "_send") as mock_send:
+        notifier._send_six_month_report(repo, ["digikala"], jdatetime.date(1405, 7, 1))
+
+    since, until = mock_agg.call_args[0][1], mock_agg.call_args[0][2]
+    assert since == _iran_midnight_utc(jdatetime.date(1405, 7, 1))
+    assert until == _iran_midnight_utc(jdatetime.date(1406, 1, 1))
+    mock_send.assert_called_once()
+    assert "نیمه دوم" in mock_send.call_args[0][0]
+
+
+# ---------------------------------------------------------------------
+# "مشتری جدید" stage breakdown wired into all 5 periodic report paths
+# (stage 5 of the "تفکیک سفارش‌های مرحله «مشتری جدید»" prompt). Each
+# _send_*_report method must fetch TelegramNotifier.
+# _aggregate_new_stage_breakdown() for the SAME since/until window it
+# already passes to _aggregate_live() - one source of truth
+# (new_customer_stage_deals), window differs per report level only -
+# and fold the result into the message via _format_live_report_message.
+# ---------------------------------------------------------------------
+
+def test_send_daily_report_includes_new_stage_breakdown(repo):
+    notifier = TelegramNotifier()
+    day = jdatetime.date(1405, 6, 9)
+
+    with patch.object(notifier, "is_configured", return_value=True), \
+         patch.object(notifier, "_aggregate_live", return_value=(4, Decimal("500000"))) as mock_agg, \
+         patch.object(
+             notifier, "_aggregate_new_stage_breakdown",
+             return_value=(
+                 NewStageBreakdown(count=2, total=Decimal("300000")),
+                 [("دیجی‌کالا", NewStageBreakdown(count=2, total=Decimal("300000")))],
+             ),
+         ) as mock_new_stage, \
+         patch.object(notifier, "_send") as mock_send:
+        notifier._send_daily_report(repo, ["digikala"], day)
+
+    since, until = mock_agg.call_args[0][1], mock_agg.call_args[0][2]
+    mock_new_stage.assert_called_once_with(repo, since, until)
+
+    message = mock_send.call_args[0][0]
+    assert "🆕 ورود به مرحله «مشتری جدید»" in message
+    assert "└─ 2 سفارش - 300,000 ریال" in message
+    assert "🛍 دیجی‌کالا" in message
+
+
+def test_send_weekly_report_includes_new_stage_breakdown(repo):
+    notifier = TelegramNotifier()
+    week_start = jdatetime.date(1405, 6, 7)
+
+    with patch.object(notifier, "is_configured", return_value=True), \
+         patch.object(notifier, "_aggregate_live", return_value=(0, Decimal("0"))) as mock_agg, \
+         patch.object(
+             notifier, "_aggregate_new_stage_breakdown",
+             return_value=(NewStageBreakdown(count=5, total=Decimal("750000")), []),
+         ) as mock_new_stage, \
+         patch.object(notifier, "_send") as mock_send:
+        notifier._send_weekly_report(repo, ["digikala"], week_start)
+
+    since, until = mock_agg.call_args[0][1], mock_agg.call_args[0][2]
+    mock_new_stage.assert_called_once_with(repo, since, until)
+
+    message = mock_send.call_args[0][0]
+    assert "└─ 5 سفارش - 750,000 ریال" in message
+
+
+def test_send_monthly_report_includes_new_stage_breakdown(repo):
+    notifier = TelegramNotifier()
+    month_first_day = jdatetime.date(1405, 6, 1)
+
+    with patch.object(notifier, "is_configured", return_value=True), \
+         patch.object(notifier, "_aggregate_live", return_value=(0, Decimal("0"))) as mock_agg, \
+         patch.object(
+             notifier, "_aggregate_new_stage_breakdown",
+             return_value=(
+                 NewStageBreakdown(count=1, total=Decimal("10000")),
+                 [("بدون لیبل", NewStageBreakdown(count=1, total=Decimal("10000")))],
+             ),
+         ) as mock_new_stage, \
+         patch.object(notifier, "_send") as mock_send:
+        notifier._send_monthly_report(repo, ["digikala"], month_first_day)
+
+    since, until = mock_agg.call_args[0][1], mock_agg.call_args[0][2]
+    mock_new_stage.assert_called_once_with(repo, since, until)
+
+    message = mock_send.call_args[0][0]
+    assert "└─ 1 سفارش - 10,000 ریال" in message
+    assert "🛍 بدون لیبل" in message
+
+
+def test_send_six_month_report_includes_new_stage_breakdown(repo):
+    notifier = TelegramNotifier()
+
+    with patch.object(notifier, "is_configured", return_value=True), \
+         patch.object(notifier, "_aggregate_live", return_value=(0, Decimal("0"))) as mock_agg, \
+         patch.object(
+             notifier, "_aggregate_new_stage_breakdown",
+             return_value=(NewStageBreakdown(count=9, total=Decimal("900000")), []),
+         ) as mock_new_stage, \
+         patch.object(notifier, "_send") as mock_send:
+        notifier._send_six_month_report(repo, ["digikala"], jdatetime.date(1405, 1, 1))
+
+    since, until = mock_agg.call_args[0][1], mock_agg.call_args[0][2]
+    mock_new_stage.assert_called_once_with(repo, since, until)
+
+    message = mock_send.call_args[0][0]
+    assert "└─ 9 سفارش - 900,000 ریال" in message
+
+
+def test_send_yearly_report_includes_new_stage_breakdown(repo):
+    notifier = TelegramNotifier()
+    year_first_day = jdatetime.date(1405, 1, 1)
+
+    with patch.object(notifier, "is_configured", return_value=True), \
+         patch.object(notifier, "_aggregate_live", return_value=(0, Decimal("0"))) as mock_agg, \
+         patch.object(
+             notifier, "_aggregate_new_stage_breakdown",
+             return_value=(NewStageBreakdown(count=42, total=Decimal("4200000")), []),
+         ) as mock_new_stage, \
+         patch.object(notifier, "_send") as mock_send:
+        notifier._send_yearly_report(repo, ["digikala"], year_first_day)
+
+    since, until = mock_agg.call_args[0][1], mock_agg.call_args[0][2]
+    mock_new_stage.assert_called_once_with(repo, since, until)
+
+    message = mock_send.call_args[0][0]
+    assert "└─ 42 سفارش - 4,200,000 ریال" in message
+
+
+def test_daily_and_weekly_new_stage_totals_are_consistent(repo):
+    """The daily and weekly report paths must read the same underlying
+    new_customer_stage_deals history (client requirement: "جمع بازه
+    بزرگ‌تر با جمع بازه‌های کوچک‌تر همخوان باشد"). Unlike the tests
+    above, _aggregate_new_stage_breakdown is NOT mocked here - it runs
+    for real against `repo` - so this exercises the actual
+    since/until wiring end-to-end for two different report levels at
+    once; only _aggregate_live (the unrelated Won figure) and the
+    outbound Telegram send are mocked."""
+    notifier = TelegramNotifier()
+    week_start = jdatetime.date(1405, 6, 7)  # Saturday
+    day1 = week_start
+    day2 = week_start + timedelta(days=1)  # still inside the same week
+
+    repo.record_new_stage_deal(
+        "deal-1", "lbl-a", "دیجی‌کالا", 100_000,
+        _iran_midnight_utc(day1) + timedelta(hours=1),
+    )
+    repo.record_new_stage_deal(
+        "deal-2", "lbl-a", "دیجی‌کالا", 150_000,
+        _iran_midnight_utc(day2) + timedelta(hours=2),
+    )
+    repo.record_new_stage_deal(
+        "deal-3", "lbl-b", "باسلام", 50_000,
+        _iran_midnight_utc(day2) + timedelta(hours=3),
+    )
+
+    messages = []
+    with patch.object(notifier, "is_configured", return_value=True), \
+         patch.object(notifier, "_aggregate_live", return_value=(0, Decimal("0"))), \
+         patch.object(notifier, "_send", side_effect=messages.append):
+        notifier._send_daily_report(repo, ["digikala"], day1)
+        notifier._send_daily_report(repo, ["digikala"], day2)
+        notifier._send_weekly_report(repo, ["digikala"], week_start)
+
+    day1_message, day2_message, week_message = messages
+    assert "└─ 1 سفارش - 100,000 ریال" in day1_message
+    assert "└─ 2 سفارش - 200,000 ریال" in day2_message
+    # The week's total must equal the sum of every day inside it.
+    assert "└─ 3 سفارش - 300,000 ریال" in week_message
 
 
 # ---------------------------------------------------------------------
