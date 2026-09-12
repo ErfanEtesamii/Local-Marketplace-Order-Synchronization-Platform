@@ -52,6 +52,19 @@ Five responsibilities:
      ("order:<platform>:<source_order_id>" or "deal:<deal_id>") so a
      re-queue replaces the same row instead of piling up duplicates for
      the same logical notification.
+  9. Permanent history of every Deal ever seen in the "new customer"
+     ("مشتری جدید") pipeline stage (new_customer_stage_deals table,
+     2026-09 - see the "تفکیک سفارش‌های مرحله «مشتری جدید»" prompt).
+     Didar's API only exposes a Deal's CURRENT PipelineStageId, not
+     when it entered that stage, so a live query can answer "how many
+     deals are in this stage right now" but never "how many entered it
+     today/this week/etc". This table is the missing history: a Deal
+     Id is recorded here, once, together with the timestamp this
+     program first observed it sitting in that stage. Rows are NEVER
+     deleted or reset - every report period (day/week/month/
+     six-month/year) is just a since/until filter over this one
+     ever-growing table, the same pattern get_amount_stats_since()
+     already uses over synced_orders above.
 
 Kept deliberately simple - one file, no ORM - matching the scale of a
 single-server background service.
@@ -127,6 +140,17 @@ CREATE TABLE IF NOT EXISTS notification_failures (
     attempt_count   INTEGER NOT NULL DEFAULT 1,
     last_attempt_at TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS new_customer_stage_deals (
+    deal_id     TEXT PRIMARY KEY,
+    label_id    TEXT,
+    label_title TEXT,
+    amount      INTEGER,
+    entered_at  TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_new_customer_stage_deals_entered_at
+    ON new_customer_stage_deals (entered_at);
 """
 
 
@@ -146,6 +170,15 @@ class NotificationFailure:
     error_message: str
     attempt_count: int
     last_attempt_at: str
+
+
+@dataclass(frozen=True)
+class NewStageDeal:
+    deal_id: str
+    label_id: str | None
+    label_title: str | None
+    amount: int | None
+    entered_at: str
 
 
 class Repository:
@@ -508,3 +541,57 @@ class Repository:
                 """,
                 (period, marker),
             )
+
+    # --- "مشتری جدید" pipeline-stage history (2026-09) -------------------
+    # See new_customer_stage_deals in the schema docstring above. This is
+    # a permanent, append-only log of every Deal Id ever observed in that
+    # stage - idempotent on deal_id (INSERT OR IGNORE, same pattern as
+    # mark_deal_notified above) so a Deal seen across many poll cycles is
+    # recorded exactly once, at its FIRST observed entered_at. There is
+    # deliberately no update/reset/delete method: every report period
+    # reads this one table with a since/until window instead.
+
+    def record_new_stage_deal(
+        self,
+        deal_id: str,
+        label_id: str | None,
+        label_title: str | None,
+        amount,
+        entered_at: datetime,
+    ) -> None:
+        """Record a Deal's first-observed entry into the "new customer"
+        stage. `amount` accepts Decimal/int/float/None like mark_synced()'s
+        money columns; INSERT OR IGNORE means repeated calls for the same
+        deal_id (e.g. seen again on the next poll cycle) are a no-op, so
+        entered_at is never overwritten once set."""
+        def _to_int(value):
+            return int(round(float(value))) if value is not None else None
+
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT OR IGNORE INTO new_customer_stage_deals
+                    (deal_id, label_id, label_title, amount, entered_at)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (deal_id, label_id, label_title, _to_int(amount), entered_at.isoformat()),
+            )
+
+    def get_new_stage_deals(
+        self, since: datetime, until: datetime | None = None
+    ) -> list[NewStageDeal]:
+        """Rows whose entered_at falls in [since, until). `until=None`
+        means no upper bound - same half-open-interval convention as
+        get_amount_stats_since() above."""
+        query = (
+            "SELECT deal_id, label_id, label_title, amount, entered_at "
+            "FROM new_customer_stage_deals WHERE entered_at >= ?"
+        )
+        params: list = [since.isoformat()]
+        if until is not None:
+            query += " AND entered_at < ?"
+            params.append(until.isoformat())
+
+        with self._connect() as conn:
+            rows = conn.execute(query, params).fetchall()
+        return [NewStageDeal(*row) for row in rows]

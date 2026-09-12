@@ -102,3 +102,69 @@ def test_count_pending_failures_is_scoped_per_source(repo):
     assert repo.count_pending_failures("basalam") == 1
     assert repo.count_pending_failures("snappshop") == 1
     assert repo.count_pending_failures("digikala") == 0
+
+
+# --- new_customer_stage_deals -----------------------------------------
+
+def test_record_new_stage_deal_is_idempotent_on_deal_id(repo):
+    now = datetime.now(timezone.utc)
+    later = now + timedelta(minutes=5)
+
+    repo.record_new_stage_deal("deal-1", "label-1", "کالای دیجیتال", 100000, now)
+    # Same deal seen again on a later poll cycle: must not overwrite
+    # entered_at or create a second row.
+    repo.record_new_stage_deal("deal-1", "label-1", "کالای دیجیتال", 100000, later)
+
+    rows = repo.get_new_stage_deals(since=now - timedelta(minutes=1))
+    assert len(rows) == 1
+    assert rows[0].deal_id == "deal-1"
+    assert rows[0].entered_at == now.isoformat()
+
+
+def test_get_new_stage_deals_filters_by_since_until_window(repo):
+    base = datetime.now(timezone.utc)
+    before = base - timedelta(days=2)
+    inside = base - timedelta(hours=1)
+    after = base + timedelta(days=2)
+
+    repo.record_new_stage_deal("deal-before", None, None, None, before)
+    repo.record_new_stage_deal("deal-inside", None, None, None, inside)
+    repo.record_new_stage_deal("deal-after", None, None, None, after)
+
+    rows = repo.get_new_stage_deals(since=base - timedelta(days=1), until=base + timedelta(days=1))
+    ids = {row.deal_id for row in rows}
+    assert ids == {"deal-inside"}
+
+
+def test_get_new_stage_deals_since_is_inclusive_and_until_is_exclusive(repo):
+    t0 = datetime.now(timezone.utc)
+    t1 = t0 + timedelta(hours=1)
+
+    repo.record_new_stage_deal("deal-at-since", None, None, None, t0)
+    repo.record_new_stage_deal("deal-at-until", None, None, None, t1)
+
+    rows = repo.get_new_stage_deals(since=t0, until=t1)
+    ids = {row.deal_id for row in rows}
+    # since boundary included, until boundary excluded
+    assert ids == {"deal-at-since"}
+
+
+def test_get_new_stage_deals_without_until_has_no_upper_bound(repo):
+    now = datetime.now(timezone.utc)
+    far_future = now + timedelta(days=365)
+
+    repo.record_new_stage_deal("deal-now", None, None, None, now)
+    repo.record_new_stage_deal("deal-far-future", None, None, None, far_future)
+
+    rows = repo.get_new_stage_deals(since=now)
+    ids = {row.deal_id for row in rows}
+    assert ids == {"deal-now", "deal-far-future"}
+
+
+def test_new_stage_deals_never_exposes_a_delete_or_reset_method(repo):
+    """Architectural invariant from the design prompt: no row in this
+    table is ever removed or reset - every report period is just a
+    since/until filter over the same ever-growing table."""
+    assert not hasattr(repo, "delete_new_stage_deal")
+    assert not hasattr(repo, "reset_new_stage_deals")
+    assert not hasattr(repo, "clear_new_stage_deals")
