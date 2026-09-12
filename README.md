@@ -18,7 +18,7 @@ uses official/documented APIs wherever they exist.
 | Digikala | `src/marketplaces/digikala.py` | OAuth-style, auto-refreshing | ✅ live orders syncing |
 | Tapsi Shop | `src/marketplaces/tapsishop.py` | Bearer token | ✅ live orders syncing |
 | Basalam | `src/marketplaces/basalam.py` | Bearer token (official Salam API) | ✅ live orders syncing |
-| SnappShop | `src/marketplaces/snappshop.py` | Bearer token + Agent-User header | ⏸️ disabled by default — client hasn't been granted API access yet (`SNAPPSHOP_ENABLED=false`); code is written but unverified against real data |
+| SnappShop | `src/marketplaces/snappshop.py` | Bearer token + Agent-User header | ⏸️ disabled by default — client hasn't been granted API access yet (`SNAPPSHOP_ENABLED=false`); schema confirmed against the official vendor API doc and a real order, code is written and tested, just waiting on credentials |
 | Didar CRM | `src/didar/*.py` | API key (query param) | ✅ Contact, Product, Deal, and post-sale checklist Activity creation all confirmed live |
 
 243 automated tests passing (`pytest tests/ -v`). See [`docs/architecture.md`](docs/architecture.md)
@@ -163,13 +163,15 @@ ActivityTypes).
 
 ## Known limitations
 
-- **SnappShop**: disabled by default (`SNAPPSHOP_ENABLED=false`) — the
-  client hasn't been granted API access yet. The adapter code is
-  written and unit-tested, but its order field names aren't confirmed
-  against a real populated response (only prose docs were available,
-  no JSON example) — see the module docstring in `snappshop.py`. Set
-  `SNAPPSHOP_ENABLED=true` and fill in credentials once access exists,
-  then verify a real sync before trusting it unattended.
+- **SnappShop**: disabled by default (`SNAPPSHOP_ENABLED=false`) —
+  purely a credentials gap, not a schema one: the client hasn't been
+  granted API access yet. The adapter's order field names are
+  confirmed from SnappShop's official vendor API doc (v2.1.2 PDF) and
+  cross-checked against a real order in the vendor panel — see the
+  module docstring in `snappshop.py`. Set `SNAPPSHOP_ENABLED=true` and
+  fill in credentials once access exists; no further code changes
+  should be needed, but do one real sync before trusting it
+  unattended, same as any newly-enabled source.
 - **Didar Product categories**: only Faraz Honar's orders carry a real
   marketplace category name. For the other four sources, the category
   is guessed from a keyword table (`src/didar/category_mapping.py`)

@@ -170,22 +170,44 @@ that was fixed).
 
 ### SnappShop (`marketplaces/snappshop.py`)
 
-- Source: two vendor-onboarding blog posts (prose documentation, not a
-  Swagger/Postman spec) - so auth and pagination mechanics are
-  confirmed and tested, but individual order field names are not.
-- Auth: `Authorization: Bearer` + `Agent-User` header (vendor
-  identifier).
+- Source: SnappShop's own official vendor API doc ("پیوست فنی یکپارچه
+  سازی فروشندگان اسنپ شاپ", v2.1.2, PDF), which superseded the two
+  vendor-onboarding blog posts this adapter was originally (and only
+  partially) built from - the PDF gives full worked JSON examples for
+  every endpoint, resolving the field-name gaps the blog posts left.
+- Auth: `Authorization: Bearer {token}` + `Agent-User: {vendor_identifier}`
+  header (a unique caller-chosen id, not a per-endpoint value) on
+  every request.
 - `GET /vendors/{vendor_id}/orders` (history, cursor pagination via
-  `meta.pagination.{has_more,next_cursor}`) +
-  `GET /vendors/{vendor_id}/orders/{order_number}` (detail).
-- `_SCHEMA_CONFIRMED = False` in the module - `_normalize_*()` uses
-  defensive `.get()`-with-fallbacks, same pattern as Basalam's earlier
-  draft, and logs a warning on every call until this is verified
-  against a real populated response.
-- Base URL (`apix.snappshop.ir`) is **inferred** from Snapp's public
-  bug-bounty domain scope, not stated in the docs available - verify
-  against the seller panel's own "تنظیمات فروشگاه » مشاهده و ثبت API"
-  page before relying on it.
+  `meta.pagination.{has_more,next_cursor,links.next}`, 20/page, first
+  call with no filters returns the last **14** days) +
+  `GET /vendors/{vendor_id}/orders/{order_number}` (detail) - both
+  confirmed to return an identical per-order/per-item shape, so both
+  go through one shared `_normalize_order()`/`_normalize_items()` path.
+- `_SCHEMA_CONFIRMED = True` in the module as of 2026-09:
+  `_normalize_order()`/`_normalize_items()` are rewritten against the
+  PDF's confirmed field names, `tests/test_snappshop.py` locks in the
+  PDF's own worked samples, and the client independently cross-checked
+  a real order against the vendor panel - which also confirmed the
+  item currency unit is **Toman** (`SNAPPSHOP_PRICE_UNIT=toman`) and
+  that there is **no order-level total-price field** on either
+  endpoint (summed from per-item `final_price` instead). See the
+  module docstring for the full confirmation trail. Confirmed
+  `order_status` values (e.g. `CONFIRMED`/`CANCELED`) are now also
+  used in `sync_engine.py`'s per-source `CANCELLED_OR_FAILED_STATUSES`
+  filter, so a cancelled SnappShop order is excluded the same way a
+  cancelled Basalam/Digikala order already was.
+- Base URL (`https://apix.snappshop.ir/automation/v1`) is now stated
+  explicitly in the official doc, no longer an inference from Snapp's
+  public bug-bounty domain scope as an earlier draft assumed.
+- Remaining known gap (not a blocker, tracked in the module docstring):
+  neither orders endpoint returns an item title/name field - only
+  `product_number`/`parent_product_number`/`sku`/`vendor_product_info_id`.
+  A human-readable title would need a separate
+  `GET /vendors/{vendor_id}/products/{id}` lookup, not yet implemented.
+- Still disabled by default (`SNAPPSHOP_ENABLED=false`) - purely
+  because the client hasn't been granted API access yet, unrelated to
+  the schema confirmation above.
 
 ### Faraz Honar (`marketplaces/farazhonar.py`)
 
@@ -441,7 +463,8 @@ Also listed in `README.md`; repeated here with more context:
 
 | Limitation | Where | Impact |
 |---|---|---|
-| SnappShop order field names unconfirmed | `snappshop.py` | Sync may silently produce incomplete `NormalizedOrder`s until verified against real data |
+| SnappShop disabled pending API access | `snappshop.py` | Schema confirmed (doc + real order); nothing syncs from this source until the client gets credentials and `SNAPPSHOP_ENABLED=true` is set |
+| SnappShop item titles unavailable | `snappshop.py` | Neither orders endpoint returns an item title - synced items carry identifiers only, no human-readable name, until a per-item `GET /products/{id}` lookup is added |
 | Product upsert-by-Code behavior unconfirmed | `product_client.py` | If `product/save` doesn't upsert by `Code` in practice, duplicate catalog products may accumulate on re-sync |
 | Basalam has no confirmed token-refresh endpoint | `basalam.py` | A 401 needs a manual PAT renewal from the developer panel |
 | Digikala `refresh_token` needs yearly manual renewal | `digikala.py` | Requires the private-key bootstrap process, off-server |
