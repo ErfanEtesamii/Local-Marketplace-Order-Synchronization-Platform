@@ -199,7 +199,14 @@ class SnappShopAdapter(MarketplaceAdapter):
 
             pagination = payload.get("meta", {}).get("pagination", {})
             cursor = pagination.get("next_cursor")
-            if not pagination.get("has_more") or not raw_orders:
+            # Confirmed (doc section 2-3-3): `has_more`/`next_cursor` alone
+            # govern continuation - an empty page is not itself a stop
+            # signal (the API could legitimately return zero rows for a
+            # given cursor while more still follow). `not cursor` is kept
+            # as a defensive-only guard against a malformed response that
+            # claims `has_more: true` with no `next_cursor` to follow,
+            # which would otherwise loop forever re-sending `cursor=None`.
+            if not pagination.get("has_more") or not cursor:
                 break
 
         log.info("snappshop: fetched %d orders", len(orders))
