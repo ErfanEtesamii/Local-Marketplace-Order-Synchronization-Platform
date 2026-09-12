@@ -877,10 +877,14 @@ def test_farazhonar_pending_order_is_not_synced_to_didar(repo, synced_ids_file):
     assert not repo.is_already_synced("farazhonar", "1")
 
 
-def test_farazhonar_confirmed_order_still_syncs(repo, synced_ids_file):
+def test_farazhonar_processing_order_still_syncs(repo, synced_ids_file):
     """Sanity check alongside the pending-order regression test above: a
-    normal, non-pending Faraz Honar order must be unaffected."""
-    order = _order("farazhonar", "1", with_items=True)  # status="confirmed"
+    Faraz Honar order in WooCommerce's "processing" status (سفارش در حال
+    انجام - a paid, confirmed, in-progress order) is the one status the
+    client actually wants synced, and must be unaffected."""
+    from dataclasses import replace
+
+    order = replace(_order("farazhonar", "1", with_items=True), status="processing")
     adapter = FakeAdapter("farazhonar", list_orders=[order])
     didar = FakeDidarService()
     engine = SyncEngine(
@@ -892,6 +896,50 @@ def test_farazhonar_confirmed_order_still_syncs(repo, synced_ids_file):
 
     assert len(didar.synced_orders) == 1
     assert repo.is_already_synced("farazhonar", "1")
+
+
+def test_farazhonar_on_hold_order_is_not_synced_to_didar(repo, synced_ids_file):
+    """Client report (2026-09): Faraz Honar's "پیش فاکتور" (pre-invoice)
+    orders kept reaching Didar even after "pending" was blacklisted,
+    because on this store that state is WooCommerce's "on-hold" status,
+    not "pending" - a blacklist has to know every non-progress status by
+    name, and this one wasn't on it. The fix (ALLOWED_STATUSES, an
+    allow-list of just "processing") rejects "on-hold" and any other
+    not-explicitly-allowed status without needing to name it."""
+    from dataclasses import replace
+
+    order = replace(_order("farazhonar", "1", with_items=True), status="on-hold")
+    adapter = FakeAdapter("farazhonar", list_orders=[order])
+    didar = FakeDidarService()
+    engine = SyncEngine(
+        adapters=[adapter], repository=repo, didar_service=didar,
+        synced_ids_file_path=str(synced_ids_file),
+    )
+
+    engine.run_once()
+
+    assert didar.synced_orders == []
+    assert not repo.is_already_synced("farazhonar", "1")
+
+
+def test_farazhonar_completed_order_is_not_synced_to_didar(repo, synced_ids_file):
+    """A completed WooCommerce order is no longer "در حال انجام" either -
+    the allow-list must reject it same as any other non-"processing"
+    status."""
+    from dataclasses import replace
+
+    order = replace(_order("farazhonar", "1", with_items=True), status="completed")
+    adapter = FakeAdapter("farazhonar", list_orders=[order])
+    didar = FakeDidarService()
+    engine = SyncEngine(
+        adapters=[adapter], repository=repo, didar_service=didar,
+        synced_ids_file_path=str(synced_ids_file),
+    )
+
+    engine.run_once()
+
+    assert didar.synced_orders == []
+    assert not repo.is_already_synced("farazhonar", "1")
 
 
 def test_digikala_pending_order_still_syncs(repo, synced_ids_file):

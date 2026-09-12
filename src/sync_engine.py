@@ -293,13 +293,25 @@ class SyncEngine:
     def _sync_one_order(
         self, adapter: MarketplaceAdapter, order: NormalizedOrder, unique_id: str
     ) -> None:
+        # ALLOWED_STATUSES (checked first) is an allow-list: if a source is
+        # listed there, ONLY those statuses may sync, and everything else is
+        # dropped - see its own docstring for why Faraz Honar specifically
+        # needs this instead of the CANCELLED_OR_FAILED_STATUSES blacklist.
+        allowed = ALLOWED_STATUSES.get(order.source)
+        if allowed is not None:
+            if order.status.lower() not in allowed:
+                log.info(
+                    "sync_engine: skipping %s order %s - status %s is not in the allowed set %s",
+                    order.source, order.source_order_id, order.status, sorted(allowed),
+                )
+                return
         # Central filter: prevent cancelled/failed orders from syncing to Didar.
         # Uses NormalizedOrder.status rather than per-adapter filters so that
         # no order of any marketplace slips through if an adapter's own guard
         # is incomplete or outdated. Keyed per source (see
         # CANCELLED_OR_FAILED_STATUSES's own docstring) so one source's
         # excluded statuses never affect another's.
-        if order.status.lower() in CANCELLED_OR_FAILED_STATUSES.get(order.source, set()):
+        elif order.status.lower() in CANCELLED_OR_FAILED_STATUSES.get(order.source, set()):
             log.info(
                 "sync_engine: skipping %s order %s - status %s is cancelled/failed",
                 order.source, order.source_order_id, order.status,
@@ -632,22 +644,36 @@ CANCELLED_OR_FAILED_STATUSES: dict[str, set[str]] = {
         "cancelled",  # Basalam order_status=cancelled
         "refunded",   # Basalam order_status=refunded
     },
-    # Faraz Honar (WooCommerce): the adapter fetches with status="any"
-    # (see farazhonar.py's fetch_new_orders), so this filter is the only
-    # thing stopping non-final orders from reaching Didar.
-    "farazhonar": {
-        "cancelled",
-        "failed",
-        # "pending" is WooCommerce's awaiting-payment status - a
-        # pre-invoice order, not a confirmed sale. The client treats these
-        # the same as a cancelled order and they must never become a real
-        # Deal in Didar (client report, 2026-09: "سایت فراز هنر سفارش پیش
-        # فاکتور هم در دیدار ثبت شده در صورتی که این مدل سفارش‌ها سفارش
-        # کنسلی حساب میشن و نباید ثبت بشن").
-        "pending",
-    },
+    # Faraz Honar is intentionally absent here - see ALLOWED_STATUSES below,
+    # which replaced its blacklist entry (2026-09 bugfix, see that dict's
+    # docstring).
     # SnappShop: schema unconfirmed (_SCHEMA_CONFIRMED = False).
     # "unknown" is the adapter's default fallback - included so unconfirmed
     # schemas don't silently sync orders; they pass through for manual review.
     "snappshop": {"unknown"},
+}
+
+# Allow-list: for a source listed here, ONLY these statuses may reach Didar -
+# everything else is dropped, unlike CANCELLED_OR_FAILED_STATUSES above
+# (a blacklist, which drops only the named statuses and lets everything
+# else - including ones nobody has thought of yet - through).
+#
+# BUGFIX (2026-09): Faraz Honar used to be a CANCELLED_OR_FAILED_STATUSES
+# blacklist entry ({"cancelled", "failed", "pending"}). The adapter fetches
+# every WooCommerce order via status="any" (see farazhonar.py's
+# fetch_new_orders), and WooCommerce has several other non-final statuses
+# a blacklist has to individually name to catch - e.g. "on-hold" (many
+# Iranian WooCommerce storefronts show this as a "پیش فاکتور"/pre-invoice
+# order awaiting bank-transfer confirmation, distinct from "pending"),
+# plus "completed", "refunded", "checkout-draft", "trash". Any of those
+# slipped straight through the old blacklist and into Didar as a real
+# Deal - which is what the client kept seeing (2026-09: "پیش فاکتور و
+# لغو شده رو هم میاره", i.e. proforma AND cancelled orders were both still
+# being registered). The client's actual requirement is an allow-list, not
+# a blacklist: "ما فقط سفارش های در حال انجام رو میخوایم داخل دیدار ثبت
+# بشن" - only WooCommerce's "processing" status (a paid, confirmed,
+# in-progress order) should ever become a Deal. Every other status,
+# named here or not, is now rejected by construction.
+ALLOWED_STATUSES: dict[str, set[str]] = {
+    "farazhonar": {"processing"},
 }
