@@ -110,6 +110,13 @@ _SOURCE_DISPLAY_NAMES = {
 _STAGE_SNAPSHOT_PAGE_SIZE = 50
 _STAGE_SNAPSHOT_MAX_PAGES = 100
 
+# Pagination knobs for get_created_date_stats_for_label() - same
+# values/reasoning as deal_poller.py's own _PAGE_SIZE/_MAX_PAGES (that
+# method's full-row-pagination-plus-client-side-RegisterTime-check
+# pattern is exactly what get_created_date_stats_for_label() reuses).
+_CREATED_RANGE_PAGE_SIZE = 50
+_CREATED_RANGE_MAX_PAGES = 100
+
 # Vendor panel home page URLs (confirmed - these are the same links
 # listed in the original project proposal). NOT per-order deep links -
 # see module docstring.
@@ -165,6 +172,19 @@ def _iso(dt: datetime) -> str:
     copy rather than a cross-module import, same tradeoff as this
     file's own `_format_rial()` below."""
     return dt.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
+
+
+def _parse_didar_datetime(value) -> datetime | None:
+    """Parses Didar's "...T...Z" timestamps (RegisterTime etc.). Never
+    raises - a bad/missing timestamp is handled by the caller. Matches
+    src/didar/deal_poller.py's own `_parse_didar_datetime()` - kept as a
+    separate copy, same tradeoff as this file's own `_iso()` above."""
+    if not value or not isinstance(value, str):
+        return None
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
 
 
 class DidarDealClient:
@@ -553,6 +573,149 @@ class DidarDealClient:
             total = Decimal("0")
 
         return count, total
+
+    # ------------------------------------------------------------------
+    # Creation-date-only breakdown per Deal Label (client request,
+    # 2026-09 follow-up 5: "بازه‌ای که میگیرم بر اساس تاریخ ایجاد
+    # سفارشات باشه، کاری ندارم وضعیتش چیه" - the custom-range /report
+    # picker must count every deal CREATED in [since, until), full
+    # stop, regardless of its current Status).
+    #
+    # WHY get_status_breakdown_for_label()/_status_breakdown_for_label()
+    # ABOVE CANNOT BE REUSED FOR THIS: those methods trust Didar's own
+    # server-computed TotalCount/TotalPrice for a Status-filtered
+    # SearchFromTime/SearchToTime query. That was already known to be
+    # unreliable for the Status-unset ("all") case (see
+    # _status_breakdown_for_label()'s own docstring - some labels
+    # silently leaked in deals from outside the window), which is why
+    # that method moved to three separate per-Status calls. But
+    # per-Status doesn't fix the real problem, it just hides it
+    # differently: for "Won"/"Lost", Didar's own SearchFromTime/
+    # SearchToTime window for a deal search is NOT reliably keyed to
+    # RegisterTime (creation time) the way it is for a fresh "Pending"
+    # deal - a deal created weeks earlier that simply changed status
+    # (or stage) during [since, until) can still be matched. That is
+    # exactly the symptom reported against a live Didar export filtered
+    # by "تاریخ ایجاد معامله" (creation date): the bot's count is a
+    # multiple of the real created-in-range count, because it is
+    # quietly counting "touched in this window", not "created in this
+    # window".
+    #
+    # THE FIX: never trust the server-side TotalCount/TotalPrice
+    # aggregate for this. Instead, paginate through the ACTUAL List
+    # rows (same shape/pagination as DidarDealPoller.search_deals() in
+    # deal_poller.py, which already solves this exact problem for
+    # detecting newly-registered deals) and independently verify each
+    # row's own RegisterTime falls inside [since, until) before
+    # counting it - Didar's SearchFromTime/SearchToTime is used only as
+    # a best-effort narrowing hint, never as the source of truth. No
+    # Status is sent in Criteria at all, so a single pass sees every
+    # deal (Pending/Won/Lost) for this label in one pagination run
+    # instead of three separate calls.
+    #
+    # Deliberately returns a DealStatusBreakdown with only all_count/
+    # all_total populated (pending/won/lost left at zero) - collapsing
+    # status is the entire point here, not an oversight. If a future
+    # report ever needs a real per-status split that is ALSO correct by
+    # creation date, classify each verified row by its own "Status"
+    # field (not currently read here) instead of adding back
+    # server-side per-Status queries.
+    def get_created_date_stats_for_label(
+        self, label_id: str, since: datetime, until: datetime
+    ) -> "DealStatusBreakdown":
+        """Every deal in this Deal Label, in this project's own
+        pipeline (Criteria.PipelineId), whose own RegisterTime falls in
+        [since, until) - regardless of Status. See the block comment
+        above for why this exists instead of
+        get_status_breakdown_for_label().
+
+        Returns an all-zero DealStatusBreakdown - never raises - on any
+        request failure or if PipelineId is not configured, same
+        fire-and-forget philosophy as the rest of this class."""
+        if not self._config.pipeline_id:
+            log.warning(
+                "didar: get_created_date_stats_for_label(%r) has no "
+                "DIDAR_PIPELINE_ID configured - reporting 0 rather than "
+                "counting every deal account-wide across every pipeline",
+                label_id,
+            )
+            return DealStatusBreakdown()
+
+        criteria = {
+            "SearchFromTime": _iso(since),
+            "SearchToTime": _iso(until),
+            "PipelineId": self._config.pipeline_id,
+            "LabelIds": [label_id],
+            "Sort": 0,  # 0 = تاریخ ثبت (register time) - same as deal_poller.py
+        }
+
+        rows: list[dict] = []
+        offset = 0
+        for _page in range(_CREATED_RANGE_MAX_PAGES):
+            try:
+                payload = self._post(
+                    "/deal/search_v2",
+                    json={
+                        "Criteria": criteria,
+                        "From": offset,
+                        "Limit": _CREATED_RANGE_PAGE_SIZE,
+                    },
+                )
+            except Exception:
+                log.exception(
+                    "didar: get_created_date_stats_for_label(%r) search_v2 "
+                    "request failed at offset=%d - reporting whatever was "
+                    "already accumulated rather than aborting entirely",
+                    label_id, offset,
+                )
+                break
+
+            response = payload.get("Response") if isinstance(payload, dict) else None
+            page = response.get("List", []) if isinstance(response, dict) else []
+            page = [item for item in (page or []) if isinstance(item, dict) and item.get("Id")]
+            rows.extend(page)
+            if len(page) < _CREATED_RANGE_PAGE_SIZE:
+                break
+            offset += _CREATED_RANGE_PAGE_SIZE
+        else:
+            log.warning(
+                "didar: get_created_date_stats_for_label(%r) hit the %d-page "
+                "pagination cap for window %s..%s - some deals in this "
+                "window may be missing from the count",
+                label_id, _CREATED_RANGE_MAX_PAGES, since, until,
+            )
+
+        count = 0
+        total = Decimal("0")
+        for row in rows:
+            register_time = _parse_didar_datetime(row.get("RegisterTime"))
+            if register_time is None:
+                log.warning(
+                    "didar: get_created_date_stats_for_label(%r) - dropping "
+                    "row Id=%s: missing/unparseable RegisterTime %r, cannot "
+                    "verify it belongs in window %s..%s",
+                    label_id, row.get("Id"), row.get("RegisterTime"), since, until,
+                )
+                continue
+            if not (since <= register_time < until):
+                # Didar returned this row anyway - exactly the leak this
+                # method exists to guard against. Drop it silently (not a
+                # warning): with SearchFromTime/SearchToTime removed as a
+                # trustworthy filter, seeing rows outside the window is
+                # the expected common case, not a rare anomaly worth
+                # logging every time (see deal_poller.search_deals(),
+                # which DOES warn - that call site only ever expects
+                # brand-new deals, so a stray far-outside-window row
+                # there really is anomalous).
+                continue
+            count += 1
+            price_raw = row.get("Price")
+            try:
+                total += Decimal(str(price_raw))
+            except (InvalidOperation, TypeError, ValueError):
+                pass
+
+        return DealStatusBreakdown(all_count=count, all_total=total)
 
     # ------------------------------------------------------------------
     # Live snapshot of the "new customer" ("مشتری جدید") pipeline stage

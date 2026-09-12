@@ -161,15 +161,19 @@ def test_full_range_pick_sends_report_with_correct_period(repo):
     # _aggregate_live_breakdown() (used by the custom-range picker since
     # the 2026-09 "کل لیبل هارو از گزارش خود دیدار بگیره" refactor - see
     # _send_custom_range_report's docstring) calls list_deal_labels() then
-    # get_status_breakdown_for_label() per label, not get_status_breakdown()
-    # per source any more. Two labels ("دیجی‌کالا"/"باسلام" - both match
-    # _RANGE_REPORT_PLATFORM_KEYWORDS, see _select_range_report_platforms),
-    # each returning the same fake_breakdown.
+    # get_created_date_stats_for_label() per label (2026-09 follow-up 5:
+    # switched from the Status-based get_status_breakdown_for_label(),
+    # which counted a deal into a window if it was merely touched during
+    # it rather than created in it - see that method's docstring), not
+    # get_status_breakdown() per source any more. Two labels ("دیجی‌کالا"/
+    # "باسلام" - both match _RANGE_REPORT_PLATFORM_KEYWORDS, see
+    # _select_range_report_platforms), each returning the same
+    # fake_breakdown.
     fake_didar = type(
         "FakeDidarClient", (),
         {
             "list_deal_labels": lambda self: [("دیجی‌کالا", "L1"), ("باسلام", "L2")],
-            "get_status_breakdown_for_label": lambda self, label_id, since, until: fake_breakdown,
+            "get_created_date_stats_for_label": lambda self, label_id, since, until: fake_breakdown,
         },
     )()
 

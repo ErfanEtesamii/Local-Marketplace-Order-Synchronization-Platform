@@ -992,7 +992,21 @@ class TelegramNotifier:
         list_deal_labels() itself returns from Didar. Returns (zero
         total, []) if no Didar client could be constructed or the label
         list itself couldn't be fetched - degrade-to-empty rather than
-        raising into the caller, same as _aggregate_live above."""
+        raising into the caller, same as _aggregate_live above.
+
+        Uses DidarDealClient.get_created_date_stats_for_label() (client
+        request, 2026-09 follow-up 5: "بازه‌ای که میگیرم بر اساس تاریخ
+        ایجاد سفارشات باشه، کاری ندارم وضعیتش چیه") - NOT
+        get_status_breakdown_for_label(). The Status-based version
+        counts a deal into a window if it was TOUCHED (won/lost/updated)
+        during that window, which silently pulled in deals created
+        outside the requested range and made this report diverge from a
+        plain Didar export filtered by "تاریخ ایجاد معامله" - see
+        get_created_date_stats_for_label()'s own docstring for the full
+        root-cause writeup. Each label's breakdown here only ever has
+        all_count/all_total populated (status is intentionally
+        collapsed), which is exactly what
+        _format_live_range_report_message() already reads."""
         didar_client = self._get_didar_client()
         total = DealStatusBreakdown()
         per_label: list[tuple[str, DealStatusBreakdown]] = []
@@ -1003,7 +1017,7 @@ class TelegramNotifier:
             )
             return total, per_label
         for title, label_id in didar_client.list_deal_labels():
-            label_breakdown = didar_client.get_status_breakdown_for_label(
+            label_breakdown = didar_client.get_created_date_stats_for_label(
                 label_id, since, until
             )
             per_label.append((title, label_breakdown))
