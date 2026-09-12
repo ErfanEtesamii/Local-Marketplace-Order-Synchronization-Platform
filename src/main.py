@@ -11,6 +11,7 @@ from apscheduler.schedulers.blocking import BlockingScheduler
 
 from src.config import settings
 from src.db.repository import Repository
+from src.didar.deal_client import DidarDealClient
 from src.didar.deal_poller import DidarDealPoller
 from src.didar.service import DidarSyncService
 from src.logger import get_logger
@@ -57,6 +58,7 @@ def _poll_cycle(
     repository: Repository,
     telegram: TelegramNotifier,
     deal_poller: DidarDealPoller | None,
+    stage_snapshot_client: DidarDealClient,
 ) -> None:
     engine.run_once()
     # Cheap SQLite lookups - safe to run every cycle rather than on a
@@ -81,6 +83,34 @@ def _poll_cycle(
     # DIDAR_DEAL_POLL_ENABLED=false.
     if deal_poller is not None:
         _poll_new_deals(deal_poller, repository, telegram)
+    # "مشتری جدید" pipeline-stage history (client request, 2026-09 -
+    # see the "تفکیک سفارش‌های مرحله «مشتری جدید»" prompt / src/db/
+    # repository.py's new_customer_stage_deals docstring). Every poll
+    # cycle, not on a separate schedule - see
+    # DidarDealClient.record_current_stage_snapshot()'s docstring for
+    # why this must be a live, re-taken-every-cycle snapshot rather
+    # than a one-shot/backfill job. Isolated in its own try/except,
+    # same "one Didar feature outage must never break the rest of the
+    # poll cycle" philosophy as _poll_new_deals() below - unlike that
+    # one, there's no DIDAR_DEAL_POLL_ENABLED-style toggle here:
+    # record_current_stage_snapshot() -> list_current_deals_in_stage()
+    # already no-ops (with its own warning) whenever
+    # DIDAR_PIPELINE_ID/DIDAR_PIPELINE_STAGE_ID aren't configured, so a
+    # second enable flag would be redundant.
+    _record_new_stage_deals(stage_snapshot_client, repository)
+
+
+def _record_new_stage_deals(deal_client: DidarDealClient, repository: Repository) -> None:
+    """One step of the "مشتری جدید" stage-history snapshot, isolated
+    in its own try/except so a Didar outage here can never break the
+    marketplace poll cycle it's called from - same shape as
+    _poll_new_deals() below."""
+    try:
+        deal_client.record_current_stage_snapshot(repository)
+    except Exception:
+        log.exception(
+            "didar: \"مشتری جدید\" stage snapshot failed - will retry next cycle"
+        )
 
 
 def _poll_new_deals(
@@ -101,6 +131,10 @@ def run_forever() -> None:
     engine, repository = build_engine()
     scheduler = BlockingScheduler(timezone="UTC")
     telegram = TelegramNotifier()
+    # Separate instance from DidarSyncService's own internal deal
+    # client, same tradeoff as deal_poller below - this one is only
+    # ever used for the read-only stage-snapshot call.
+    stage_snapshot_client = DidarDealClient()
 
     deal_poller: DidarDealPoller | None = None
     if settings.didar_deal_poll_enabled:
@@ -115,7 +149,7 @@ def run_forever() -> None:
         _poll_cycle,
         "interval",
         seconds=settings.poll_interval_seconds,
-        args=[engine, repository, telegram, deal_poller],
+        args=[engine, repository, telegram, deal_poller, stage_snapshot_client],
         # NOTE: do NOT pass next_run_time=None here - in APScheduler that
         # means "add this job paused", not "run immediately". It was
         # silently preventing the interval job from ever firing after the
@@ -153,7 +187,7 @@ def run_forever() -> None:
 
     # Run once immediately on startup rather than waiting a full interval.
     try:
-        _poll_cycle(engine, repository, telegram, deal_poller)
+        _poll_cycle(engine, repository, telegram, deal_poller, stage_snapshot_client)
     except Exception:
         log.exception("sync_engine: initial run_once failed - will retry on schedule")
 

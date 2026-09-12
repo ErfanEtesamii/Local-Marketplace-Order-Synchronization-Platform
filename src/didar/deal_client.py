@@ -45,6 +45,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
+from typing import TYPE_CHECKING
 
 import httpx
 
@@ -56,6 +57,9 @@ from src.http_utils import default_retry, raise_for_status_with_body
 from src.logger import get_logger
 from src.marketplaces.base import NormalizedOrder
 from src.shipping_fees import format_toman, shipping_fee_toman
+
+if TYPE_CHECKING:
+    from src.db.repository import Repository
 
 log = get_logger(__name__)
 
@@ -97,6 +101,14 @@ _SOURCE_DISPLAY_NAMES = {
     "snappshop": "اسنپ‌شاپ",
     "farazhonar": "فرازهنر",
 }
+
+# Pagination knobs for list_current_deals_in_stage()'s live stage
+# snapshot - same values/reasoning as deal_poller.py's own
+# _PAGE_SIZE/_MAX_PAGES (kept as separate module-level constants
+# rather than a cross-module import, same tradeoff this file already
+# makes for _iso()/_format_rial()).
+_STAGE_SNAPSHOT_PAGE_SIZE = 50
+_STAGE_SNAPSHOT_MAX_PAGES = 100
 
 # Vendor panel home page URLs (confirmed - these are the same links
 # listed in the original project proposal). NOT per-order deep links -
@@ -541,6 +553,201 @@ class DidarDealClient:
             total = Decimal("0")
 
         return count, total
+
+    # ------------------------------------------------------------------
+    # Live snapshot of the "new customer" ("مشتری جدید") pipeline stage
+    # (client request, 2026-09 - see the "تفکیک سفارش‌های مرحله «مشتری
+    # جدید»" prompt / src/db/repository.py's new_customer_stage_deals
+    # docstring). Didar's API only ever exposes a Deal's CURRENT
+    # PipelineStageId, never when it entered that stage - there is no
+    # history endpoint. So the only way to eventually answer "how many
+    # deals entered this stage today/this week/..." is to take a full,
+    # unfiltered snapshot of who is sitting in the stage RIGHT NOW on
+    # every poll cycle, and let the caller diff that against what is
+    # already recorded locally (see Repository.record_new_stage_deal()
+    # - idempotent on deal_id, so re-seeing the same Deal on the next
+    # snapshot is a harmless no-op). This method is only the snapshot
+    # half: it does no local bookkeeping and does not resolve
+    # LabelIds to a label title - that wiring is a separate piece.
+    def list_current_deals_in_stage(self, limit: int = _STAGE_SNAPSHOT_PAGE_SIZE) -> list[dict]:
+        """Every Deal CURRENTLY sitting in this project's configured
+        "new customer" pipeline stage (Criteria.PipelineId =
+        DIDAR_PIPELINE_ID AND Criteria.PipelineStageId =
+        DIDAR_PIPELINE_STAGE_ID), across as many pages as needed -
+        same From/Limit pagination shape as
+        DidarDealPoller.search_deals().
+
+        Deliberately sends NO SearchFromTime/SearchToTime: unlike
+        search_deals() (which windows by RegisterTime to find newly
+        REGISTERED deals), this must return every Deal in the stage
+        regardless of when it was registered, so it catches a Deal
+        that entered the stage long ago and simply hasn't left it
+        yet, every single time it's called - not just once. This also
+        means it catches a Deal no matter how it got into the stage -
+        created by this program's own SyncEngine.create_deal(), or
+        created/moved there by hand in Didar's UI - both look
+        identical to this query.
+
+        Returns the raw List rows from /deal/search_v2 (Id/Price/
+        LabelIds/Title/... per the documented response shape) as-is -
+        unfiltered, unresolved. This method does not touch the
+        Repository and does not resolve a row's LabelIds to a label
+        title; turning a snapshot page into permanent
+        new_customer_stage_deals history is the caller's job (see
+        main.py's poll cycle wiring).
+
+        Returns [] - without making any request - if either
+        DIDAR_PIPELINE_ID or DIDAR_PIPELINE_STAGE_ID is not
+        configured. Unlike search_deals()'s "search every pipeline"
+        degraded fallback, there is no sane degraded behaviour for a
+        stage-less query here: it would mean treating every Deal in
+        every pipeline as a "new customer" entry, which is worse than
+        reporting nothing.
+        """
+        if not self._config.pipeline_id or not self._config.pipeline_stage_id:
+            log.warning(
+                "didar: list_current_deals_in_stage() skipped - both "
+                "DIDAR_PIPELINE_ID and DIDAR_PIPELINE_STAGE_ID must be "
+                "configured (pipeline_id=%r, pipeline_stage_id=%r)",
+                self._config.pipeline_id, self._config.pipeline_stage_id,
+            )
+            return []
+
+        criteria = {
+            "PipelineId": self._config.pipeline_id,
+            "PipelineStageId": self._config.pipeline_stage_id,
+        }
+
+        results: list[dict] = []
+        offset = 0
+        for _page in range(_STAGE_SNAPSHOT_MAX_PAGES):
+            payload = self._post(
+                "/deal/search_v2",
+                json={"Criteria": criteria, "From": offset, "Limit": limit},
+            )
+            page = payload.get("Response", {}).get("List", []) or []
+            results.extend(item for item in page if isinstance(item, dict) and item.get("Id"))
+            if len(page) < limit:
+                break
+            offset += limit
+        else:
+            log.warning(
+                "didar: list_current_deals_in_stage() hit the %d-page "
+                "pagination cap - some deals currently in the stage may "
+                "not have been fetched this cycle (will be picked up on "
+                "a later cycle, since this is a live snapshot re-taken "
+                "every poll)",
+                _STAGE_SNAPSHOT_MAX_PAGES,
+            )
+        return results
+
+    # ------------------------------------------------------------------
+    # Part B of the "new customer" stage-history feature (see
+    # list_current_deals_in_stage()'s docstring for Part A / the
+    # overall reasoning). This is the piece main.py's poll cycle
+    # actually calls: take one live snapshot, resolve each row's
+    # LabelIds to a human label title, and persist every row into
+    # Repository.new_customer_stage_deals - idempotently, so this is
+    # safe to call every single poll cycle for as long as the process
+    # runs.
+    def record_current_stage_snapshot(self, repository: "Repository") -> int:
+        """One polling step for the "مشتری جدید" stage-history feature.
+        Calls list_current_deals_in_stage() for the live snapshot, then
+        hands every row to Repository.record_new_stage_deal() with
+        entered_at = now (UTC). Returns how many rows were handed to
+        the Repository (NOT how many were actually new - see below -
+        this is a coarse per-cycle count for logging only).
+
+        LABEL RESOLUTION: deliberately via list_deal_labels() (every
+        Deal-type Label this Didar account has), NOT
+        _label_id_by_title_map()/_label_id_for_source() (which only
+        know about the Titles configured in
+        DidarConfig.deal_label_title_by_source for THIS project's own
+        marketplace sources). A Deal sitting in this stage can carry
+        ANY Deal Label in the account - including one for a source
+        this local deployment has no adapter/credentials for yet (see
+        list_deal_labels()'s own docstring for exactly this scenario
+        with اسنپ/SnappShop), or none at all if it was entered by hand
+        in Didar's UI. Restricting resolution to the configured
+        sources would silently record label_id=label_title=None for
+        every one of those deals instead of their real label.
+
+        A row with more than one entry in LabelIds uses the FIRST one
+        that resolves to a known Deal-type Label Title; a row with no
+        resolvable Label (none at all, or a Label Id that
+        list_deal_labels() doesn't recognise) is still recorded, with
+        label_id=label_title=None - label is metadata for the report's
+        per-label breakdown, not a filter on whether the deal itself
+        counts as having entered the stage at all.
+
+        IDEMPOTENCY: record_new_stage_deal() is INSERT OR IGNORE on
+        deal_id (see repository.py) - entered_at is only ever set the
+        first time a given deal_id is observed by ANY snapshot, never
+        overwritten on a later one. This method therefore does NOT
+        pre-check the Repository before calling it for a row: unlike
+        deal_poller.py's is_deal_notified() gate (which exists purely
+        to skip an expensive extra /deal/getdealdetail call per
+        already-seen deal), there is no extra API call to save here -
+        every row's data is already in hand from the one snapshot
+        request, so re-submitting an already-recorded deal_id on the
+        next cycle is a deliberately cheap, harmless no-op.
+
+        Never raises: a failure recording one row is logged and
+        skipped so it doesn't stop the rest of the snapshot from being
+        recorded (same "one bad item must never blank out the rest"
+        philosophy as _status_count_and_total() etc. above); a failure
+        that isn't yet recorded today will simply be picked up again
+        on a later cycle, since the deal - if still genuinely in the
+        stage - will still be in tomorrow's snapshot too.
+        """
+        rows = self.list_current_deals_in_stage()
+        if not rows:
+            return 0
+
+        label_title_by_id = {
+            label_id: title for title, label_id in self.list_deal_labels()
+        }
+
+        now = datetime.now(timezone.utc)
+        handled = 0
+        for row in rows:
+            deal_id = str(row.get("Id") or "")
+            if not deal_id:
+                continue
+
+            label_id = None
+            label_title = None
+            for raw_label_id in row.get("LabelIds") or []:
+                candidate = str(raw_label_id)
+                if candidate in label_title_by_id:
+                    label_id = candidate
+                    label_title = label_title_by_id[candidate]
+                    break
+
+            try:
+                repository.record_new_stage_deal(
+                    deal_id=deal_id,
+                    label_id=label_id,
+                    label_title=label_title,
+                    amount=row.get("Price"),
+                    entered_at=now,
+                )
+            except Exception:
+                log.exception(
+                    "didar: record_current_stage_snapshot() failed to record "
+                    "deal_id=%s locally - will be retried on a later cycle "
+                    "as long as it stays in the stage",
+                    deal_id,
+                )
+                continue
+            handled += 1
+
+        log.info(
+            "didar: stage snapshot - %d deal(s) currently in \"مشتری جدید\", "
+            "%d recorded/confirmed locally this cycle",
+            len(rows), handled,
+        )
+        return handled
 
     def find_existing_deal_id(self, order: NormalizedOrder) -> str | None:
         """
