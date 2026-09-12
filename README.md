@@ -16,6 +16,7 @@ uses official/documented APIs wherever they exist.
 |---|---|---|---|
 | Faraz Honar (WooCommerce) | `src/marketplaces/farazhonar.py` | Basic Auth (Consumer Key/Secret) | ✅ live orders syncing |
 | Digikala | `src/marketplaces/digikala.py` | OAuth-style, auto-refreshing | ✅ live orders syncing |
+| Digikala (فروشگاه دوم / second store) | `src/marketplaces/digikala2.py` | OAuth-style, auto-refreshing (same model as the first Digikala store) | ⏳ code written and unit-tested against the documented Open API shape, pending a live sync against this store's own credentials before being treated as verified |
 | Tapsi Shop | `src/marketplaces/tapsishop.py` | Bearer token | ✅ live orders syncing |
 | Basalam | `src/marketplaces/basalam.py` | Bearer token (official Salam API) | ✅ live orders syncing |
 | SnappShop | `src/marketplaces/snappshop.py` | Bearer token + Agent-User header | ⏸️ disabled by default — client hasn't been granted API access yet (`SNAPPSHOP_ENABLED=false`); schema confirmed against the official vendor API doc and a real order, code is written and tested, just waiting on credentials |
@@ -98,6 +99,7 @@ src/
 │   ├── base.py                # NormalizedOrder + MarketplaceAdapter interface
 │   ├── tapsishop.py
 │   ├── digikala.py
+│   ├── digikala2.py            # second Digikala store - independent copy, see docs/architecture.md
 │   ├── basalam.py
 │   ├── snappshop.py
 │   └── farazhonar.py
@@ -116,7 +118,7 @@ deploy/                     # NSSM Windows Service install/uninstall/restart scr
 docs/                       # installation guide, architecture notes
 scripts/                    # one-off ops helpers (e.g. list_activity_types.py)
 memory/                     # project-level engineering notes (e.g. sliding-window algorithm)
-data/                       # sync.db, digikala_tokens.json, Didar product-catalog export (gitignored)
+data/                       # sync.db, digikala_tokens.json, digikala2_tokens.json, Didar product-catalog export (gitignored)
 logs/                       # rotating order-sync.log + NSSM service-stdout/stderr logs (gitignored)
 ```
 
@@ -186,6 +188,14 @@ ActivityTypes).
   year, `refresh_token` itself needs manual renewal via a separate
   RSA-encrypted authorization flow — see the module docstring in
   `digikala.py` for the full explanation.
+- **Digikala (second store)**: gated behind `DIGIKALA2_ENABLED` the same
+  way SnappShop is gated behind its own flag — off by default until this
+  store's own credentials (`DIGIKALA2_CLIENT_CODE`/`_CLIENT_SECRET`/
+  `_ACCESS_TOKEN`/`_REFRESH_TOKEN`) are filled into `.env`. The adapter
+  (`src/marketplaces/digikala2.py`) is a deliberately independent copy of
+  `digikala.py`, not a subclass — see
+  [`docs/architecture.md`](docs/architecture.md) for why, and note that
+  any future Digikala bugfix needs to be applied to both files by hand.
 - **Didar Contact MobilePhone matching**: the fallback search assumes
   Didar stores phone numbers in the same digit format marketplaces
   send (e.g. `0912...`). Not yet confirmed whether Didar normalizes

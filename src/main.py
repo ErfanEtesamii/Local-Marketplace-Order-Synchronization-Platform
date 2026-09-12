@@ -17,6 +17,7 @@ from src.didar.service import DidarSyncService
 from src.logger import get_logger
 from src.marketplaces.basalam import BasalamAdapter
 from src.marketplaces.digikala import DigikalaAdapter
+from src.marketplaces.digikala2 import Digikala2Adapter
 from src.marketplaces.farazhonar import FarazHonarAdapter
 from src.marketplaces.snappshop import SnappShopAdapter
 from src.marketplaces.tapsishop import TapsiShopAdapter
@@ -44,6 +45,17 @@ def build_engine() -> tuple[SyncEngine, Repository]:
         # SnappShopConfig.enabled in config.py. Set SNAPPSHOP_ENABLED=true
         # in .env once real credentials exist; no code change needed.
         log.info("snappshop: disabled (SNAPPSHOP_ENABLED is not 'true') - skipping")
+
+    if settings.digikala2.enabled:
+        adapters.append(Digikala2Adapter())
+    else:
+        # DIGIKALA2_ENABLED=false (the default) - same opt-in pattern as
+        # SnappShopConfig.enabled above. Left out of the poll loop
+        # entirely until the second store's own config is confirmed -
+        # see DigikalaConfig.enabled / _build_digikala2_config in
+        # config.py. Set DIGIKALA2_ENABLED=true in .env once ready; no
+        # code change needed.
+        log.info("digikala2: disabled (DIGIKALA2_ENABLED is not 'true') - skipping")
 
     engine = SyncEngine(
         adapters=adapters,

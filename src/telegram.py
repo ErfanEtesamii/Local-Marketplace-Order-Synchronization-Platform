@@ -175,6 +175,11 @@ _MONTH_NAMES_FA = [
 # it gets a neutral fallback circle rather than an invented color.
 _PLATFORM_DISPLAY = {
     "digikala": ("🟣", "دیجی‌کالا"),
+    # Second Digikala store (src/marketplaces/digikala2.py) - same
+    # purple circle (same underlying platform), distinct display name
+    # so per-order Telegram messages/reports are still distinguishable
+    # between the two stores.
+    "digikala2": ("🟣", "دیجی‌کالا (فروشگاه دوم)"),
     "basalam": ("🟢", "باسلام"),
     "tapsishop": ("🟠", "تپسی‌شاپ"),
     "farazhonar": ("🔵", "فرازهنر"),

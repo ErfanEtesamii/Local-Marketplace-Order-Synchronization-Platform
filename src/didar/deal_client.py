@@ -97,6 +97,8 @@ class DealStatusBreakdown:
 _SOURCE_DISPLAY_NAMES = {
     "tapsishop": "تپسی‌شاپ",
     "digikala": "دیجی‌کالا",
+    # Second Digikala store (src/marketplaces/digikala2.py).
+    "digikala2": "دیجی‌کالا (فروشگاه دوم)",
     "basalam": "باسلام",
     "snappshop": "اسنپ‌شاپ",
     "farazhonar": "فرازهنر",
@@ -123,6 +125,10 @@ _CREATED_RANGE_MAX_PAGES = 100
 _PANEL_URLS = {
     "tapsishop": "https://vendor.tapsi.shop/dashboard",
     "digikala": "https://seller.digikala.com/pwa",
+    # Second Digikala store (src/marketplaces/digikala2.py) - same
+    # seller panel URL as the first store (both stores log in via
+    # seller.digikala.com with their own separate credentials).
+    "digikala2": "https://seller.digikala.com/pwa",
     "basalam": "https://vendor.basalam.com",
     "snappshop": "https://seller.snappshop.ir/dashboard",
 }

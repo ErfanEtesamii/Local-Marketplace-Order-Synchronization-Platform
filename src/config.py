@@ -61,6 +61,14 @@ class DigikalaConfig:
     price_unit: str = field(
         default_factory=lambda: _get_price_unit("DIGIKALA_PRICE_UNIT", "rial")
     )
+    # Second-store opt-in (2026-09, client request: a second Digikala
+    # seller account/store, fully independent adapter - see
+    # src/marketplaces/digikala2.py). Same pattern as SnappShopConfig.
+    # enabled below: this field is only ever meaningful on
+    # `settings.digikala2` (main.py checks it before constructing
+    # Digikala2Adapter) - the primary store's own `settings.digikala.
+    # enabled` is always True and isn't checked anywhere.
+    enabled: bool = True
 
 
 @dataclass(frozen=True)
@@ -169,6 +177,17 @@ class DidarConfig:
     deal_label_title_digikala: str = field(
         default_factory=lambda: _get("DIDAR_DEAL_LABEL_TITLE_DIGIKALA", "دیجی کالا")
     )
+    # Second Digikala store (src/marketplaces/digikala2.py) - CONFIRMED
+    # 2026-09 directly from a live GET /Label/GetDealLabels response for
+    # this account (client screenshot/PowerShell output): the label
+    # "دیجی کالا سریع" (Id 9255c089-2479-401d-bc4f-dc90b4c1bfd4, Code 1)
+    # is the one the client wants used for the second store's Deals -
+    # distinct from the first store's own "دیجی کالا" label above.
+    deal_label_title_digikala2: str = field(
+        default_factory=lambda: _get(
+            "DIDAR_DEAL_LABEL_TITLE_DIGIKALA2", "دیجی کالا سریع"
+        )
+    )
     deal_label_title_basalam: str = field(
         default_factory=lambda: _get("DIDAR_DEAL_LABEL_TITLE_BASALAM", "با سلام")
     )
@@ -251,10 +270,57 @@ class DidarConfig:
         return {
             "tapsishop": self.deal_label_title_tapsishop,
             "digikala": self.deal_label_title_digikala,
+            "digikala2": self.deal_label_title_digikala2,
             "basalam": self.deal_label_title_basalam,
             "snappshop": self.deal_label_title_snappshop,
             "farazhonar": self.deal_label_title_farazhonar,
         }
+
+
+def _get_or(key: str, fallback: str) -> str:
+    """Like _get, but also falls back when the env var is PRESENT but
+    blank (e.g. `DIGIKALA2_BASE_URL=` in .env.example) - plain _get()'s
+    os.getenv(key, default) only applies `default` when the key is
+    entirely absent, so a blank-but-defined value would otherwise
+    override a real fallback with an empty string."""
+    value = _get(key)
+    return value if value else fallback
+
+
+def _build_digikala2_config() -> DigikalaConfig:
+    """Second Digikala store - see DigikalaConfig.source_name/enabled's
+    docstrings for the full rationale. Reads DIGIKALA2_* env vars;
+    BASE_URL and PRICE_UNIT fall back to the first store's own values
+    (same underlying Digikala API/currency) when left blank or unset,
+    since there's no reason to expect those to differ between two
+    stores on the same seller platform - CLIENT_CODE/SECRET/
+    ACCESS_TOKEN/REFRESH_TOKEN never fall back, each store's
+    credentials are its own.
+
+    PRICE_UNIT still gets _get_price_unit's normal "must be toman or
+    rial" validation (fails loudly on a typo, same as every other
+    source) - just resolved via _get_or first so a blank-but-present
+    `DIGIKALA2_PRICE_UNIT=` (e.g. straight out of .env.example) falls
+    back to the first store's value instead of being validated as an
+    invalid empty string.
+    """
+    fallback_price_unit = _get_or("DIGIKALA_PRICE_UNIT", "rial")
+    resolved_price_unit = _get_or("DIGIKALA2_PRICE_UNIT", fallback_price_unit)
+    if resolved_price_unit.strip().lower() not in ("toman", "rial"):
+        raise ValueError(
+            f"DIGIKALA2_PRICE_UNIT={resolved_price_unit!r} is invalid - must be "
+            f"'toman' or 'rial' (see src/currency.py for what each source is "
+            f"currently set to)"
+        )
+    return DigikalaConfig(
+        enabled=_get("DIGIKALA2_ENABLED", "false").lower() == "true",
+        base_url=_get_or("DIGIKALA2_BASE_URL", _get("DIGIKALA_BASE_URL")),
+        client_code=_get("DIGIKALA2_CLIENT_CODE"),
+        client_secret=_get("DIGIKALA2_CLIENT_SECRET"),
+        access_token=_get("DIGIKALA2_ACCESS_TOKEN"),
+        refresh_token=_get("DIGIKALA2_REFRESH_TOKEN"),
+        price_unit=resolved_price_unit.strip().lower(),
+    )
 
 
 @dataclass(frozen=True)
@@ -289,6 +355,10 @@ class Settings:
     )
     tapsishop: TapsiShopConfig = field(default_factory=TapsiShopConfig)
     digikala: DigikalaConfig = field(default_factory=DigikalaConfig)
+    # Second Digikala store - see _build_digikala2_config's and
+    # DigikalaConfig.source_name/enabled's docstrings for the full
+    # rationale.
+    digikala2: DigikalaConfig = field(default_factory=_build_digikala2_config)
     snappshop: SnappShopConfig = field(default_factory=SnappShopConfig)
     basalam: BasalamConfig = field(default_factory=BasalamConfig)
     farazhonar: FarazHonarConfig = field(default_factory=FarazHonarConfig)

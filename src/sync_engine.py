@@ -379,7 +379,7 @@ class SyncEngine:
         # succeeds (Didar can still create a deal without a real
         # customer name).
         if (
-            order.source == "digikala"
+            order.source in ("digikala", "digikala2")
             and order.shipment_id
             and not order.customer_full_name
         ):
@@ -393,7 +393,7 @@ class SyncEngine:
         # this doesn't accidentally re-fetch on the retry path once
         # already enriched, mirroring the customer enrichment's own gate.
         if (
-            order.source == "digikala"
+            order.source in ("digikala", "digikala2")
             and order.shipment_id
             and order.shipping_cost is None
         ):
@@ -639,6 +639,15 @@ CANCELLED_OR_FAILED_STATUSES: dict[str, set[str]] = {
     "digikala": {
         "cancelled",  # Digikala isCancelled=true
         "rejected",   # Digikala status.text == "rejected"
+    },
+    # Second Digikala store (src/marketplaces/digikala2.py) - same
+    # Open API, same status values, so the same blacklist applies
+    # unchanged. Kept as its own dict entry (not a shared reference)
+    # since digikala2.py is intentionally maintained as an independent
+    # copy of digikala.py's logic - see that module's docstring.
+    "digikala2": {
+        "cancelled",
+        "rejected",
     },
     # Basalam: confirmed status values for cancelled/failed orders
     # (from the "وضعیت‌های سفارش" section in the official docs).

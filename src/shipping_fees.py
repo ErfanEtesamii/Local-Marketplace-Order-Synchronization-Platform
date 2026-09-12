@@ -79,7 +79,10 @@ def shipping_fee_toman(order: NormalizedOrder) -> Decimal | None:
     existing behaviour (see call sites) rather than show nothing
     outright, since only Digikala/Faraz Honar are affected by this
     feature at all."""
-    if order.source == "digikala":
+    if order.source in ("digikala", "digikala2"):
+        # Second Digikala store (src/marketplaces/digikala2.py) - same
+        # flat client-stated fee as the first store, since both stores
+        # sell through the same Digikala Open API/shipping arrangement.
         return DIGIKALA_SHIPPING_FEE_TOMAN
 
     if order.source == "farazhonar":
