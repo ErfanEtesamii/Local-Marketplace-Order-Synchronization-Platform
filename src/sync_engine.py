@@ -610,8 +610,10 @@ class SyncEngine:
 # Values confirmed from each marketplace's official API docs (2026-08,
 # Digikala values updated 2026-09 per the SBS shipment-watermark
 # migration - see digikala-sbs-migration-prompt.md, Decision 3).
-# "unknown" (SnappShop default) is intentionally included so unconfirmed
-# schemas don't silently sync orders - they pass through for manual review.
+# "unknown" (SnappShop's fallback when a response is missing
+# `order_status` entirely) is intentionally included so a malformed
+# response doesn't silently sync as a real order - it passes through
+# for manual review instead.
 #
 # BUGFIX (2026-09): this used to be a single flat set shared across every
 # source, with no source check at all - so a status string that means
@@ -647,10 +649,15 @@ CANCELLED_OR_FAILED_STATUSES: dict[str, set[str]] = {
     # Faraz Honar is intentionally absent here - see ALLOWED_STATUSES below,
     # which replaced its blacklist entry (2026-09 bugfix, see that dict's
     # docstring).
-    # SnappShop: schema unconfirmed (_SCHEMA_CONFIRMED = False).
-    # "unknown" is the adapter's default fallback - included so unconfirmed
-    # schemas don't silently sync orders; they pass through for manual review.
-    "snappshop": {"unknown"},
+    # SnappShop: schema confirmed (_SCHEMA_CONFIRMED = True, 2026-09 -
+    # see snappshop.py's module docstring) against the official v2.1.2
+    # vendor-API PDF and a real order. `order_status` is confirmed to
+    # be "CANCELED" for a cancelled order (also seen as the events
+    # endpoint's CHANGE_STATUS new_status - doc section 2-3-1/2-3-2).
+    # "unknown" is kept as the adapter's fallback for a response
+    # missing `order_status` entirely - included so that case passes
+    # through for manual review rather than silently syncing.
+    "snappshop": {"canceled", "unknown"},
 }
 
 # Allow-list: for a source listed here, ONLY these statuses may reach Didar -

@@ -962,3 +962,46 @@ def test_digikala_pending_order_still_syncs(repo, synced_ids_file):
 
     assert len(didar.synced_orders) == 1
     assert repo.is_already_synced("digikala", "1")
+
+
+def test_snappshop_canceled_order_is_not_synced_to_didar(repo, synced_ids_file):
+    """SnappShop's `order_status` is confirmed (2026-09, official v2.1.2
+    vendor-API PDF + a real order - see snappshop.py's module docstring)
+    to be "CANCELED" for a cancelled order, same string the events
+    endpoint reports as CHANGE_STATUS's new_status. Added to
+    CANCELLED_OR_FAILED_STATUSES alongside the pre-existing "unknown"
+    fallback once the schema was confirmed - this locks that in."""
+    from dataclasses import replace
+
+    order = replace(_order("snappshop", "1", with_items=True), status="CANCELED")
+    adapter = FakeAdapter("snappshop", list_orders=[order])
+    didar = FakeDidarService()
+    engine = SyncEngine(
+        adapters=[adapter], repository=repo, didar_service=didar,
+        synced_ids_file_path=str(synced_ids_file),
+    )
+
+    engine.run_once()
+
+    assert didar.synced_orders == []
+    assert not repo.is_already_synced("snappshop", "1")
+
+
+def test_snappshop_confirmed_order_still_syncs(repo, synced_ids_file):
+    """Sanity check alongside the cancelled-order regression test above:
+    a SnappShop order in the confirmed "CONFIRMED" status must be
+    unaffected by adding "canceled" to its exclusion set."""
+    from dataclasses import replace
+
+    order = replace(_order("snappshop", "1", with_items=True), status="CONFIRMED")
+    adapter = FakeAdapter("snappshop", list_orders=[order])
+    didar = FakeDidarService()
+    engine = SyncEngine(
+        adapters=[adapter], repository=repo, didar_service=didar,
+        synced_ids_file_path=str(synced_ids_file),
+    )
+
+    engine.run_once()
+
+    assert len(didar.synced_orders) == 1
+    assert repo.is_already_synced("snappshop", "1")
