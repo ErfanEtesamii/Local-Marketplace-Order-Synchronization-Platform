@@ -416,6 +416,43 @@ class DidarDealClient:
             return DealStatusBreakdown()
         return self._status_breakdown_for_label(label_id, since, until)
 
+    def get_created_date_stats(
+        self, source: str, since: datetime, until: datetime
+    ) -> "DealStatusBreakdown":
+        """Every deal for one marketplace `source` (isolated to that
+        source's own Deal Label, see _label_id_for_source()) whose own
+        RegisterTime falls in [since, until) - regardless of Status.
+        Source-scoped counterpart of get_created_date_stats_for_label()
+        (which takes an already-resolved label id directly), for
+        callers that key by this project's own configured marketplace
+        names instead of iterating list_deal_labels().
+
+        2026-09 bugfix: added so the periodic daily/weekly/monthly/
+        yearly reports (src/telegram.py's _aggregate_live) can count
+        deals by creation date, the same way the custom-range /report
+        picker already does via get_created_date_stats_for_label() -
+        see that method's docstring/block comment for the root cause
+        this fixes (get_won_stats()'s Status="Won" filter matches
+        SearchFromTime/SearchToTime against when a deal was TOUCHED
+        into that status, not when it was created, so a deal created
+        days earlier and only confirmed today was silently counted
+        into "today"'s periodic report).
+
+        Returns an all-zero DealStatusBreakdown - never raises - if
+        this source has no resolvable Deal Label, same fire-and-forget
+        philosophy as get_won_stats()/get_status_breakdown()."""
+        label_id = self._label_id_for_source(source)
+        if not label_id:
+            log.warning(
+                "didar: get_created_date_stats(%r) has no resolvable Deal "
+                "Label - reporting 0 for this source rather than counting "
+                "every deal account-wide (which would silently mix in "
+                "other sources/manual deals)",
+                source,
+            )
+            return DealStatusBreakdown()
+        return self.get_created_date_stats_for_label(label_id, since, until)
+
     def list_deal_labels(self) -> list[tuple[str, str]]:
         """Every Deal-type Label configured in this Didar account, as
         (Title, Id) pairs, in whatever order GET /Label/GetDealLabels

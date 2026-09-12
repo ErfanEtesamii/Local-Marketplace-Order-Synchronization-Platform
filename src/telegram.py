@@ -33,22 +33,35 @@ DESIGN CHOICES:
   never blocks sends to the others (see _send()).
 
 - All reports - the daily/weekly/monthly/yearly ones AND the
-  custom-range /report picker - are built LIVE from Didar itself via
-  DidarDealClient.get_won_stats() (POST /deal/search_v2, Won deals,
-  isolated to each source's own Deal Label), not from this project's
-  own local sync cache (Repository.get_amount_stats_since()/
-  synced_orders). Changed 2026-09 (client request: "باید ... با
-  اندپوینت مستقیم از خود دیدار بگیره نه اینکه سفارش هایی که روی
-  سیستم ثبت شدن رو بررسی کنه") after the local cache was found to
-  silently undercount whenever a poll cycle was missed for longer
-  than the sync engine's own fetch window - Didar is the account's
-  actual source of truth and never has that gap. One consequence:
-  every report now shows count + total sale amount only, no
-  products/shipping breakdown - see get_won_stats()'s docstring for
-  why that split isn't retrievable from Didar at all once a deal is
-  saved. (Repository.get_amount_stats_since() and _format_report_message
+  custom-range /report picker - are built LIVE from Didar itself
+  (POST /deal/search_v2), not from this project's own local sync
+  cache (Repository.get_amount_stats_since()/synced_orders). Changed
+  2026-09 (client request: "باید ... با اندپوینت مستقیم از خود دیدار
+  بگیره نه اینکه سفارش هایی که روی سیستم ثبت شدن رو بررسی کنه") after
+  the local cache was found to silently undercount whenever a poll
+  cycle was missed for longer than the sync engine's own fetch window
+  - Didar is the account's actual source of truth and never has that
+  gap. One consequence: every report now shows count + total sale
+  amount only, no products/shipping breakdown - see
+  DidarDealClient.get_won_stats()'s docstring for why that split
+  isn't retrievable from Didar at all once a deal is saved.
+  (Repository.get_amount_stats_since() and _format_report_message
   still exist, unused by any report now, purely so historical local
   figures remain queryable if ever needed.)
+
+  Both report families now go through DidarDealClient.
+  get_created_date_stats()/get_created_date_stats_for_label() (every
+  deal whose own RegisterTime falls in the window, regardless of
+  Status) rather than get_won_stats() (Status="Won" only) - see
+  _aggregate_live()'s own docstring for the 2026-09 bugfix this was:
+  get_won_stats()'s Status filter makes Didar's SearchFromTime/
+  SearchToTime match when a deal was TOUCHED into that status, not
+  when it was created, which made the daily/weekly/monthly/yearly
+  reports diverge from a live Didar export filtered by "تاریخ ایجاد
+  معامله" (and from the custom-range /report picker, which was fixed
+  for this earlier). get_won_stats() itself is kept only for its
+  docstring's explanation of the missing products/shipping split
+  above and is otherwise unused now.
 
 - Report scheduling is a per-poll-cycle rollover check
   (check_and_send_reports(), called from main.py's _poll_cycle), not a
@@ -968,13 +981,32 @@ class TelegramNotifier:
         repository.set_report_marker("year", key)
 
     def _aggregate_live(self, source_names: list[str], since: datetime, until: datetime) -> tuple[int, Decimal]:
-        """Live Won-deal count/total straight from Didar via
-        DidarDealClient.get_won_stats() - client request 2026-09: every
-        report (daily/weekly/monthly/yearly, same as the custom-range
-        /report picker) must reflect Didar itself, the account's real
-        source of truth, rather than only the orders this program's own
-        sync engine happened to see locally (which can undercount if a
-        poll cycle was ever missed - see _sync_source()'s 5-hour window).
+        """Live count/total straight from Didar via
+        DidarDealClient.get_created_date_stats() - client request
+        2026-09: every report (daily/weekly/monthly/yearly, same as
+        the custom-range /report picker) must reflect Didar itself,
+        the account's real source of truth, rather than only the
+        orders this program's own sync engine happened to see locally
+        (which can undercount if a poll cycle was ever missed - see
+        _sync_source()'s 5-hour window).
+
+        2026-09 bugfix: this used to call get_won_stats() (Status=
+        "Won" only). Per get_created_date_stats_for_label()'s
+        docstring/block comment, filtering by Status makes Didar's
+        SearchFromTime/SearchToTime match when a deal was TOUCHED into
+        that status, not when it was created - so a deal created on an
+        earlier day and only confirmed/Won today was silently counted
+        into "today"'s periodic report, inflating count/total well
+        above a live Didar export filtered by "تاریخ ایجاد معامله" (the
+        exact mismatch reported between "گزارش پایان روز" and "گزارش
+        بازه دلخواه" for the same day). The custom-range /report picker
+        was already fixed for this (_aggregate_live_breakdown ->
+        get_created_date_stats_for_label) but the fix was never
+        propagated here. Now counts every deal (any status) whose own
+        RegisterTime falls in [since, until), same semantics as the
+        custom-range picker - client request: "فقط سفارش‌هایی که همون
+        روز ثبت شدن".
+
         Deliberately count+total only, no products/shipping split - see
         get_won_stats()'s docstring for why that breakdown isn't
         retrievable from Didar at all once a deal is saved. Returns
@@ -991,9 +1023,9 @@ class TelegramNotifier:
             )
             return count, total
         for source in source_names:
-            source_count, source_total = didar_client.get_won_stats(source, since, until)
-            count += source_count
-            total += source_total
+            breakdown = didar_client.get_created_date_stats(source, since, until)
+            count += breakdown.all_count
+            total += breakdown.all_total
         return count, total
 
     def _aggregate_live_breakdown(
@@ -1146,19 +1178,27 @@ class TelegramNotifier:
         """Used by the periodic live-from-Didar reports - daily/weekly/
         monthly/yearly (see _aggregate_live above). NOT used by the
         custom-range /report picker any more - that one shows a fuller
-        All/Pending/Won/Lost breakdown instead, see
+        per-label breakdown instead, see
         _format_live_range_report_message below. No products/shipping
-        split here - see _aggregate_live()'s docstring."""
+        split here - see _aggregate_live()'s docstring.
+
+        2026-09 bugfix: wording changed from "سفارش‌های موفق"/"معامله‌های
+        موفق ثبت‌شده" (successful/Won-only deals) to plain "سفارش‌ها"/
+        "معامله‌های ثبت‌شده" (deals registered [that day]), matching
+        _format_live_range_report_message's footer - now that
+        _aggregate_live counts by RegisterTime regardless of Status
+        (see _aggregate_live's own docstring), "موفق" would misdescribe
+        what's actually being counted."""
         return (
             f"{title_line}\n"
             f"{_boxed_title(box_label)}\n"
             f"{period_line}\n"
-            "🛒 تعداد سفارش‌های موفق\n"
+            "🛒 تعداد سفارش‌ها\n"
             f"└─ {count} سفارش\n"
             "💰 مبلغ فروش\n"
             f"└─ {_format_rial(total)} ریال\n"
             "━━━━━━━━━━━━━━━━━━━━\n"
-            "🟢 برگرفته از معامله‌های موفق ثبت‌شده در دیدار\n"
+            "🟢 برگرفته از معامله‌های ثبت‌شده در دیدار\n"
             "(بدون احتساب هزینه ارسال).\n"
             "#گزارش"
         )
