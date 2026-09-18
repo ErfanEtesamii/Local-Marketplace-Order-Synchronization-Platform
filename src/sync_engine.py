@@ -53,6 +53,7 @@ from pathlib import Path
 from src.config import settings
 from src.db.repository import Repository
 from src.didar.service import DidarSyncService
+from src.didar.warehouse_service import DidarWarehouseSyncService
 from src.logger import get_logger
 from src.marketplaces.base import MarketplaceAdapter, NormalizedOrder
 from src.modir_payamak import ModirPayamakNotifier
@@ -76,6 +77,8 @@ class SyncEngine:
         didar_service: DidarSyncService | None = None,
         synced_ids_file_path: str | None = None,
         sms_notifier: ModirPayamakNotifier | None = None,
+        warehouse_adapters: list | None = None,
+        warehouse_service: DidarWarehouseSyncService | None = None,
     ) -> None:
         self._adapters = {a.name: a for a in adapters}
         self._repo = repository or Repository()
@@ -89,16 +92,35 @@ class SyncEngine:
         # default is the same "construct our own, it's cheap and
         # config-gated" pattern the Telegram notifier uses.
         self._sms_notifier = sms_notifier or ModirPayamakNotifier()
+        # Digikala FBD ("ارسال به انبار دیجی‌کالا", 2026-09) - kept in its
+        # own dict, NEVER merged into self._adapters: an FBD item is not a
+        # NormalizedOrder (see marketplaces/warehouse_base.py), it is
+        # driven through its own loop/method below, and its name must stay
+        # out of adapter_names (main.py relies on that - see its comment
+        # at the warehouse_adapters wiring site - to keep check_health()
+        # and the Telegram reports untouched by this source).
+        self._warehouse_adapters = {a.name: a for a in (warehouse_adapters or [])}
+        self._warehouse_service = warehouse_service or (
+            DidarWarehouseSyncService() if self._warehouse_adapters else None
+        )
 
     @property
     def adapter_names(self) -> list[str]:
         return list(self._adapters.keys())
 
+    @property
+    def warehouse_adapter_names(self) -> list[str]:
+        return list(self._warehouse_adapters.keys())
+
     def run_once(self) -> None:
-        """One full poll cycle: every source, then a retry pass over
-        previously-failed orders."""
+        """One full poll cycle: every customer-order source, every FBD
+        warehouse source, then a retry pass over previously-failed
+        customer orders. (The warehouse source has no retry queue of its
+        own - see _sync_warehouse_source's docstring.)"""
         for adapter in self._adapters.values():
             self._sync_source(adapter)
+        for warehouse_adapter in self._warehouse_adapters.values():
+            self._sync_warehouse_source(warehouse_adapter)
         self.retry_pending_failures()
 
     def _sync_source(self, adapter: MarketplaceAdapter) -> None:
@@ -224,6 +246,72 @@ class SyncEngine:
         log.info(
             "sync_engine: completed poll of %s (kept=%d, dropped-out-of-window=%d, total=%d)",
             adapter.name, len(window_kept), window_dropped, len(orders),
+        )
+
+    def _sync_warehouse_source(self, adapter) -> None:
+        """One poll of a Digikala FBD ("ارسال به انبار دیجی‌کالا") source.
+
+        Deliberately separate from _sync_source above, not a branch
+        inside it - see this class's __init__ comment on
+        self._warehouse_adapters:
+
+        - No FETCH_WINDOW_HOURS sliding window and no
+          set_last_sync_time() call here. For this source,
+          get_last_sync_time()/set_last_sync_time() ARE the adapter's own
+          created-at floor (see digikala_warehouse.py's COLD START
+          section) - the adapter reads and advances it itself inside
+          fetch_new_warehouse_shipments(). If this method also called
+          set_last_sync_time(platform, now()) the way _sync_source does
+          for reporting purposes, it would silently advance that same
+          floor and start dropping items the adapter had not yet had a
+          chance to sync.
+        - Dedup is the single synced_warehouse_shipments check below, not
+          the in-memory/synced_ids.json set _sync_source uses - a
+          completely separate table (see repository.py) because an FBD
+          item is not a customer order and must never be counted,
+          reported on, or retried as one.
+        - No retry queue: a Deal-creation failure here is simply never
+          marked synced, so the item is seen again (and retried) on the
+          very next poll, since the adapter keeps returning it for as
+          long as it stays on Digikala's active list. There is nothing
+          for retry_pending_failures() to do for this source.
+        """
+        try:
+            items = adapter.fetch_new_warehouse_shipments()
+        except Exception:
+            log.exception(
+                "sync_engine: failed to fetch new FBD shipments from %s", adapter.name
+            )
+            return
+
+        for item in items:
+            if self._repo.is_warehouse_shipment_synced(item.source, item.source_shipment_id):
+                log.info(
+                    "sync_engine: skipping already-synced %s FBD item %s",
+                    item.source, item.source_shipment_id,
+                )
+                continue
+
+            try:
+                deal_id = self._warehouse_service.sync_shipment(item)
+            except Exception:
+                log.exception(
+                    "sync_engine: failed to sync %s FBD item %s to Didar - will retry "
+                    "on the next poll (Digikala keeps serving active items)",
+                    item.source, item.source_shipment_id,
+                )
+                continue
+
+            self._repo.mark_warehouse_shipment_synced(
+                item.source,
+                item.source_shipment_id,
+                deal_id,
+                total_amount=item.unit_price * item.quantity,
+            )
+
+        log.info(
+            "sync_engine: completed FBD poll of %s (%d item(s) seen)",
+            adapter.name, len(items),
         )
 
     def _order_id(self, platform: str, source_order_id: str) -> str:

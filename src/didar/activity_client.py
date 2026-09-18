@@ -193,6 +193,80 @@ class DidarActivityClient:
             "didar: attached photo '%s' to activity %s", filename, activity_id,
         )
 
+    def create_ship_only_activity(
+        self,
+        deal_id: str,
+        due_date: datetime,
+        ship_attachments: list[tuple[bytes, str, str]] | None = None,
+    ) -> None:
+        """
+        The single "ارسال محصول" Activity for a Digikala FBD deal
+        ("ارسال به انبار دیجی‌کالا" - see
+        src/marketplaces/warehouse_base.py), with the product photo(s)
+        attached.
+
+        EXACTLY ONE ACTIVITY, deliberately: the client's instruction for
+        this feature is "فقط فعالیت ارسال محصول". The other five items of
+        POST_SALE_CHECKLIST are a CUSTOMER follow-up sequence (calls,
+        satisfaction SMS) - there is no customer here at all, Digikala
+        itself is the buyer, so creating them would put six meaningless
+        todos on every FBD deal. POST_SALE_CHECKLIST and
+        create_post_sale_checklist() are untouched by this method.
+
+        Reuses create_activity() as-is (its signature is generic - deal,
+        title, type id, due date) and the same
+        attach_photo_to_activity() flow, so both stay a single
+        implementation rather than being copied for this source.
+
+        A blank DIDAR_ACTIVITY_TYPE_SHIP_ID logs a warning and returns
+        WITHOUT raising - same "missing config skips the activity, never
+        fails the sync" rule as create_post_sale_checklist()'s
+        missing_types guard. Likewise every photo upload is isolated in
+        its own try/except: one bad photo must stop neither the other
+        photos nor (since the caller treats this whole method as
+        fire-and-forget) the Deal that was already created.
+
+        `due_date` is computed by the CALLER (see
+        src/didar/warehouse_service.py) - from the item's own
+        commitment_date when Digikala gave one, else the same
+        created_at + _DEFAULT_SHIP_DELAY fallback used above. No date is
+        ever invented here.
+        """
+        activity_type_id = self._activity_type_id("activity_type_ship_id")
+        if not activity_type_id:
+            log.warning(
+                "didar: skipping the '%s' activity for warehouse deal %s - "
+                "DIDAR_ACTIVITY_TYPE_SHIP_ID is not configured "
+                "(see DidarConfig.activity_type_ship_id / .env.example)",
+                SHIP_ACTIVITY_TITLE, deal_id,
+            )
+            return
+
+        try:
+            activity_id = self.create_activity(
+                deal_id=deal_id,
+                title=SHIP_ACTIVITY_TITLE,
+                activity_type_id=activity_type_id,
+                due_date=due_date,
+            )
+        except Exception:
+            log.exception(
+                "didar: failed to create the '%s' activity on warehouse deal %s - "
+                "the deal itself is already created and stays",
+                SHIP_ACTIVITY_TITLE, deal_id,
+            )
+            return
+
+        for file_bytes, filename, content_type in ship_attachments or []:
+            try:
+                self.attach_photo_to_activity(activity_id, file_bytes, filename, content_type)
+            except Exception:
+                log.exception(
+                    "didar: failed to attach product photo '%s' to activity %s "
+                    "(warehouse deal %s) - continuing with the rest",
+                    filename, activity_id, deal_id,
+                )
+
     def create_post_sale_checklist(
         self,
         deal_id: str,

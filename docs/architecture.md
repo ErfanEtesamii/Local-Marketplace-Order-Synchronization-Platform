@@ -224,6 +224,47 @@ that was fixed).
 - Uses `date_created_gmt` (UTC) throughout, not the site-local
   `date_created`, to avoid timezone bugs.
 
+### Digikala "ارسال به انبار" / FBD (`marketplaces/digikala_warehouse.py`)
+
+- A **separate source** from the Digikala adapter above, not a mode of
+  it: `GET /open-api/v1/orders` ("active order items") returns items
+  Digikala itself is buying from the seller for its own warehouse - not
+  customer orders. Read-only; `DELETE /open-api/v1/orders/{id}` is
+  never called.
+- No customer data exists on this endpoint at all, so these items are
+  **not** `NormalizedOrder`s. They use their own frozen dataclass
+  (`marketplaces/warehouse_base.py`), their own dedupe table
+  (`synced_warehouse_shipments`), their own Didar service
+  (`didar/warehouse_service.py`) and their own loop in the Sync Engine
+  (`_sync_warehouse_source`). `base.py`, `digikala.py`, `service.py`
+  and the customer-order path are untouched.
+- Credentials, base URL and **token cache file** are shared with the
+  first Digikala store deliberately (`data/digikala_tokens.json`) - a
+  separate cache would let one adapter's refresh invalidate the other's
+  rotated `refresh_token`. The auth block itself is a copy, per this
+  project's per-source isolation rule: **a bugfix in `digikala.py`'s
+  auth must be re-applied by hand here.**
+- "New" is defined by a persisted **created-at floor** (`sync_state`,
+  key `digikala_warehouse`), because this endpoint exposes no monotonic
+  cursor like SBS's `min_shipment_id`. The first run records the floor
+  and syncs nothing - the currently active list is pre-existing
+  backlog. The floor never advances afterwards; the dedupe table is
+  what prevents re-syncing an item that stays active across polls.
+- In Didar: one Deal per item, **no Contact/PersonId**, fixed title
+  ("معامله ارسال به انبار دیجی کالا"), the existing pipeline/stage and
+  the existing "دیجی کالا" Deal Label, one DealItem, and exactly one
+  "ارسال محصول" Activity with the product photo attached (not the
+  six-item post-sale checklist - there is no customer to follow up
+  with). `supplier_code` is Description text only, never a Didar
+  product `Code` (2026-09 wrong-product incident).
+- Not in `engine.adapter_names`, so it never appears in
+  `check_health()` or the Telegram daily/weekly reports.
+  `mark_deal_notified()` is deliberately not called, so these deals get
+  the generic "a new deal was registered" Telegram message from
+  `didar/deal_poller.py`.
+- Opt-in via `DIGIKALA_WAREHOUSE_ENABLED=true` (off by default); no
+  other new setting - everything else reuses existing `DIDAR_*` values.
+
 ## 4. Didar CRM integration
 
 Three-step process per order (`src/didar/service.py`):
@@ -469,4 +510,5 @@ Also listed in `README.md`; repeated here with more context:
 | Basalam has no confirmed token-refresh endpoint | `basalam.py` | A 401 needs a manual PAT renewal from the developer panel |
 | Digikala `refresh_token` needs yearly manual renewal | `digikala.py` | Requires the private-key bootstrap process, off-server |
 | Duplicate-mobile-number Contacts aren't auto-resolved | `contact_client.py` / Didar | Such orders land in `sync_failures` for manual handling |
+| FBD has no server-side time filter or ID cursor | `digikala_warehouse.py` | "New" rests on a locally persisted created-at floor plus the dedupe table; deleting `data/sync.db` re-arms the floor (syncs nothing) rather than replaying history |
 | No webhook support | adapters generally | Sync latency bounded by `POLL_INTERVAL_SECONDS`, not instant |

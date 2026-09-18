@@ -168,3 +168,70 @@ def test_new_stage_deals_never_exposes_a_delete_or_reset_method(repo):
     assert not hasattr(repo, "delete_new_stage_deal")
     assert not hasattr(repo, "reset_new_stage_deals")
     assert not hasattr(repo, "clear_new_stage_deals")
+
+# --- Digikala FBD ("ارسال به انبار دیجی‌کالا") dedup guard (2026-09) -------
+# New table, new methods - none of the tests above change. See
+# synced_warehouse_shipments in repository.py's module docstring (item 12).
+
+
+def test_warehouse_shipment_dedupe_marks_and_checks(repo):
+    assert repo.is_warehouse_shipment_synced("digikala_warehouse", "55123") is False
+    repo.mark_warehouse_shipment_synced("digikala_warehouse", "55123", "deal-abc")
+    assert repo.is_warehouse_shipment_synced("digikala_warehouse", "55123") is True
+
+
+def test_warehouse_shipment_dedupe_is_scoped_per_source_and_id(repo):
+    repo.mark_warehouse_shipment_synced("digikala_warehouse", "55123", "deal-abc")
+
+    assert repo.is_warehouse_shipment_synced("digikala_warehouse", "55124") is False
+    assert repo.is_warehouse_shipment_synced("digikala2_warehouse", "55123") is False
+
+
+def test_marking_a_warehouse_shipment_twice_keeps_the_first_deal_id(repo):
+    """INSERT OR IGNORE: two poll cycles racing on the same item must be
+    a harmless no-op, not an error and not an overwrite."""
+    repo.mark_warehouse_shipment_synced("digikala_warehouse", "55123", "deal-first")
+    repo.mark_warehouse_shipment_synced("digikala_warehouse", "55123", "deal-second")
+
+    with repo._connect() as conn:
+        rows = conn.execute(
+            "SELECT didar_deal_id FROM synced_warehouse_shipments "
+            "WHERE source = ? AND source_shipment_id = ?",
+            ("digikala_warehouse", "55123"),
+        ).fetchall()
+
+    assert rows == [("deal-first",)]
+
+
+def test_warehouse_shipments_do_not_appear_in_the_customer_order_tables(repo):
+    """FBD items must stay out of synced_orders, or every report and
+    health check that aggregates over it silently changes meaning."""
+    repo.mark_warehouse_shipment_synced("digikala_warehouse", "55123", "deal-abc", 6000000)
+
+    assert repo.is_already_synced("digikala_warehouse", "55123") is False
+    assert repo.count_synced_since(
+        "digikala_warehouse", datetime.now(timezone.utc) - timedelta(days=1)
+    ) == 0
+
+
+def test_warehouse_shipment_total_amount_is_optional(repo):
+    repo.mark_warehouse_shipment_synced("digikala_warehouse", "1", "deal-1")
+    repo.mark_warehouse_shipment_synced("digikala_warehouse", "2", "deal-2", 6000000)
+
+    with repo._connect() as conn:
+        rows = dict(
+            conn.execute(
+                "SELECT source_shipment_id, total_amount FROM synced_warehouse_shipments"
+            ).fetchall()
+        )
+
+    assert rows == {"1": None, "2": 6000000}
+
+
+def test_warehouse_shipments_have_no_retry_queue(repo):
+    """Deliberate design decision (repository.py item 12): a failed FBD
+    item is simply re-seen on the next poll, because
+    retry_pending_failures() rebuilds orders via
+    adapter.fetch_order_detail(), which this source does not have."""
+    assert not hasattr(repo, "record_warehouse_failure")
+    assert not hasattr(repo, "get_pending_warehouse_failures")

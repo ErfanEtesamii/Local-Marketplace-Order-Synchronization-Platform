@@ -399,6 +399,23 @@ class Settings:
     telegram_report_picker_poll_seconds: int = field(
         default_factory=lambda: int(_get("TELEGRAM_REPORT_PICKER_POLL_SECONDS", "3"))
     )
+    # Digikala FBD - "ارسال به انبار دیجی‌کالا" (2026-09). Opt-in, same
+    # pattern as SNAPPSHOP_ENABLED / DIGIKALA2_ENABLED: when false (the
+    # default) main.py never constructs the adapter, so the feature
+    # costs nothing and cannot touch Didar.
+    #
+    # A single top-level flag rather than a field on DigikalaConfig
+    # because this feature is FIRST-STORE-ONLY by client decision - a
+    # per-store field would be silently inherited by
+    # _build_digikala2_config()'s own DigikalaConfig and imply a second
+    # store's FBD sync that has no adapter (digikala2_warehouse.py does
+    # not exist). Everything else this feature needs - pipeline, stage,
+    # deal label, ship activity type - deliberately reuses the existing
+    # DIDAR_* values (see deal_client.py's _WAREHOUSE_DEAL_LABEL_SOURCE),
+    # so this flag is the only new setting.
+    digikala_warehouse_enabled: bool = field(
+        default_factory=lambda: _get("DIGIKALA_WAREHOUSE_ENABLED", "false").lower() == "true"
+    )
     tapsishop: TapsiShopConfig = field(default_factory=TapsiShopConfig)
     digikala: DigikalaConfig = field(default_factory=DigikalaConfig)
     # Second Digikala store - see _build_digikala2_config's and

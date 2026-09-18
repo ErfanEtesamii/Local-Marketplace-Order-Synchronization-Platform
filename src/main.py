@@ -18,6 +18,7 @@ from src.logger import get_logger
 from src.marketplaces.basalam import BasalamAdapter
 from src.marketplaces.digikala import DigikalaAdapter
 from src.marketplaces.digikala2 import Digikala2Adapter
+from src.marketplaces.digikala_warehouse import DigikalaWarehouseAdapter
 from src.marketplaces.farazhonar import FarazHonarAdapter
 from src.marketplaces.snappshop import SnappShopAdapter
 from src.marketplaces.tapsishop import TapsiShopAdapter
@@ -58,10 +59,32 @@ def build_engine() -> tuple[SyncEngine, Repository]:
         # code change needed.
         log.info("digikala2: disabled (DIGIKALA2_ENABLED is not 'true') - skipping")
 
+    # Digikala FBD - "ارسال به انبار دیجی‌کالا" (2026-09). Kept in its
+    # own list, never appended to `adapters`: SyncEngine polls it
+    # through a separate loop (see _sync_warehouse_source) because an
+    # FBD item is not a NormalizedOrder, and its name must stay out of
+    # engine.adapter_names, which feeds check_health()/the Telegram
+    # reports.
+    warehouse_adapters = []
+    if settings.digikala_warehouse_enabled:
+        warehouse_adapters.append(DigikalaWarehouseAdapter(repository=repository))
+    else:
+        # DIGIKALA_WAREHOUSE_ENABLED=false (the default) - same opt-in
+        # pattern as SNAPPSHOP_ENABLED / DIGIKALA2_ENABLED above. Note
+        # the first run after enabling it syncs NOTHING: it only seeds
+        # the adapter's created-at floor, so the existing backlog of
+        # active FBD items never floods Didar (see
+        # digikala_warehouse.py's COLD START section).
+        log.info(
+            "digikala_warehouse: disabled (DIGIKALA_WAREHOUSE_ENABLED is not "
+            "'true') - skipping"
+        )
+
     engine = SyncEngine(
         adapters=adapters,
         repository=repository,
         didar_service=DidarSyncService(),
+        warehouse_adapters=warehouse_adapters,
     )
     return engine, repository
 

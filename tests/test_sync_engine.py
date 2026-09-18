@@ -1005,3 +1005,185 @@ def test_snappshop_confirmed_order_still_syncs(repo, synced_ids_file):
 
     assert len(didar.synced_orders) == 1
     assert repo.is_already_synced("snappshop", "1")
+
+# === Digikala FBD ("ارسال به انبار دیجی‌کالا") - stage 6 ====================
+# The warehouse source runs in its own loop, with its own dedupe table
+# and no customer-order notifications. None of the tests above change.
+
+
+def _warehouse_item(shipment_id: str, quantity: int = 2):
+    from src.marketplaces.warehouse_base import WarehouseShipmentItem
+
+    return WarehouseShipmentItem(
+        source="digikala_warehouse",
+        source_shipment_id=shipment_id,
+        product_title="کالا",
+        quantity=quantity,
+        unit_price=Decimal("3000000"),
+        created_at=datetime.now(timezone.utc),
+    )
+
+
+class FakeWarehouseAdapter:
+    """Deliberately NOT a MarketplaceAdapter - this source has no
+    fetch_order_detail()/NormalizedOrder, which is exactly why the
+    engine polls it through a separate loop."""
+
+    name = "digikala_warehouse"
+
+    def __init__(self, items=None, fail_fetch=False):
+        self._items = items or []
+        self._fail_fetch = fail_fetch
+        self.fetch_calls = 0
+
+    def fetch_new_warehouse_shipments(self, since=None):
+        self.fetch_calls += 1
+        if self._fail_fetch:
+            raise RuntimeError("simulated warehouse fetch failure")
+        return self._items
+
+
+class FakeWarehouseService:
+    def __init__(self, fail_for: set[str] | None = None):
+        self._fail_for = set(fail_for or ())
+        self.synced: list = []
+
+    def sync_shipment(self, item) -> str:
+        if item.source_shipment_id in self._fail_for:
+            raise RuntimeError("simulated Didar failure")
+        self.synced.append(item)
+        return f"wdeal-{item.source_shipment_id}"
+
+
+def _warehouse_engine(repo, synced_ids_file, adapter, service, order_adapters=None):
+    return SyncEngine(
+        adapters=order_adapters or [],
+        repository=repo,
+        didar_service=FakeDidarService(),
+        synced_ids_file_path=str(synced_ids_file),
+        warehouse_adapters=[adapter],
+        warehouse_service=service,
+    )
+
+
+def test_warehouse_items_are_synced_and_marked(repo, synced_ids_file):
+    adapter = FakeWarehouseAdapter(items=[_warehouse_item("1"), _warehouse_item("2")])
+    service = FakeWarehouseService()
+
+    _warehouse_engine(repo, synced_ids_file, adapter, service).run_once()
+
+    assert len(service.synced) == 2
+    assert repo.is_warehouse_shipment_synced("digikala_warehouse", "1")
+    assert repo.is_warehouse_shipment_synced("digikala_warehouse", "2")
+
+
+def test_an_already_synced_warehouse_item_is_not_re_synced(repo, synced_ids_file):
+    """The endpoint keeps returning an item for as long as it is active,
+    so the dedupe table is the only thing standing between it and a
+    duplicate Deal on every poll."""
+    repo.mark_warehouse_shipment_synced("digikala_warehouse", "1", "wdeal-1")
+    adapter = FakeWarehouseAdapter(items=[_warehouse_item("1")])
+    service = FakeWarehouseService()
+
+    _warehouse_engine(repo, synced_ids_file, adapter, service).run_once()
+
+    assert service.synced == []
+
+
+def test_a_failed_warehouse_item_is_not_marked_synced(repo, synced_ids_file):
+    """No retry queue for this source by design - not marking it is what
+    makes the next poll retry it."""
+    adapter = FakeWarehouseAdapter(items=[_warehouse_item("1"), _warehouse_item("2")])
+    service = FakeWarehouseService(fail_for={"1"})
+
+    _warehouse_engine(repo, synced_ids_file, adapter, service).run_once()
+
+    assert repo.is_warehouse_shipment_synced("digikala_warehouse", "1") is False
+    # ...and one failure must not stop the next item.
+    assert repo.is_warehouse_shipment_synced("digikala_warehouse", "2") is True
+    assert repo.count_pending_failures("digikala_warehouse") == 0
+
+
+def test_a_failed_warehouse_fetch_does_not_break_the_poll(repo, synced_ids_file):
+    order_adapter = FakeAdapter("fake1", list_orders=[_order("fake1", "1", with_items=True)])
+    engine = SyncEngine(
+        adapters=[order_adapter],
+        repository=repo,
+        didar_service=FakeDidarService(),
+        synced_ids_file_path=str(synced_ids_file),
+        warehouse_adapters=[FakeWarehouseAdapter(fail_fetch=True)],
+        warehouse_service=FakeWarehouseService(),
+    )
+
+    engine.run_once()
+
+    assert repo.is_already_synced("fake1", "1") is True
+
+
+def test_warehouse_items_never_go_through_the_customer_order_pipeline(repo, synced_ids_file):
+    """No NormalizedOrder, no synced_orders row, no Telegram/SMS
+    notification path - _sync_source() is never involved."""
+    adapter = FakeWarehouseAdapter(items=[_warehouse_item("1")])
+    didar = FakeDidarService()
+    engine = SyncEngine(
+        adapters=[],
+        repository=repo,
+        didar_service=didar,
+        synced_ids_file_path=str(synced_ids_file),
+        warehouse_adapters=[adapter],
+        warehouse_service=FakeWarehouseService(),
+    )
+
+    engine.run_once()
+
+    assert didar.synced_orders == []
+    assert repo.is_already_synced("digikala_warehouse", "1") is False
+
+
+def test_warehouse_deals_are_left_for_the_generic_deal_poller(repo, synced_ids_file):
+    """Client decision: FBD deals DO get a Telegram message, but the
+    generic "a new deal was registered" one from DidarDealPoller - so
+    mark_deal_notified() must NOT be called for them (unlike
+    _sync_one_order, which does call it)."""
+    adapter = FakeWarehouseAdapter(items=[_warehouse_item("1")])
+
+    _warehouse_engine(repo, synced_ids_file, adapter, FakeWarehouseService()).run_once()
+
+    assert repo.is_deal_notified("wdeal-1") is False
+
+
+def test_warehouse_source_stays_out_of_adapter_names(repo, synced_ids_file):
+    """adapter_names feeds check_health() and the Telegram reports, both
+    of which read synced_orders/sync_state - a source that writes to
+    neither would show up permanently "stale"."""
+    order_adapter = FakeAdapter("fake1")
+    engine = SyncEngine(
+        adapters=[order_adapter],
+        repository=repo,
+        didar_service=FakeDidarService(),
+        synced_ids_file_path=str(synced_ids_file),
+        warehouse_adapters=[FakeWarehouseAdapter()],
+        warehouse_service=FakeWarehouseService(),
+    )
+
+    assert engine.adapter_names == ["fake1"]
+    assert engine.warehouse_adapter_names == ["digikala_warehouse"]
+
+
+def test_no_warehouse_adapters_means_nothing_changes(repo, synced_ids_file):
+    """The feature is opt-in: with no warehouse adapter configured the
+    engine behaves exactly as before, and never constructs a Didar
+    warehouse service."""
+    adapter = FakeAdapter("fake1", list_orders=[_order("fake1", "1", with_items=True)])
+    engine = SyncEngine(
+        adapters=[adapter],
+        repository=repo,
+        didar_service=FakeDidarService(),
+        synced_ids_file_path=str(synced_ids_file),
+    )
+
+    engine.run_once()
+
+    assert engine.warehouse_adapter_names == []
+    assert engine._warehouse_service is None
+    assert repo.is_already_synced("fake1", "1") is True

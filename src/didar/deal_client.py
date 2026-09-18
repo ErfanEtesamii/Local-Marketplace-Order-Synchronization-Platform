@@ -56,6 +56,7 @@ from src.didar.product_client import DidarProductClient
 from src.http_utils import default_retry, raise_for_status_with_body
 from src.logger import get_logger
 from src.marketplaces.base import NormalizedOrder
+from src.marketplaces.warehouse_base import WarehouseShipmentItem
 from src.shipping_fees import format_toman, shipping_fee_toman
 
 if TYPE_CHECKING:
@@ -102,7 +103,29 @@ _SOURCE_DISPLAY_NAMES = {
     "basalam": "باسلام",
     "snappshop": "اسنپ‌شاپ",
     "farazhonar": "فرازهنر",
+    # Digikala FBD - "ارسال به انبار دیجی‌کالا" (src/marketplaces/
+    # digikala_warehouse.py). Not a customer-order source; listed here
+    # only so _build_warehouse_description() reads from the same one
+    # place every other source's Persian label does.
+    "digikala_warehouse": "دیجی‌کالا (ارسال به انبار)",
 }
+
+# Fixed Deal Title for every FBD deal - there is no customer name to put
+# in it (this endpoint exposes no customer at all), so unlike
+# create_deal()'s "معامله {display_name}" this is a constant. Client's
+# own wording.
+WAREHOUSE_DEAL_TITLE = "معامله ارسال به انبار دیجی کالا"
+
+# Which source's Deal Label an FBD deal carries. CLIENT DECISION
+# (2026-09): FBD deals get the SAME "دیجی کالا" label the first store's
+# customer orders already use, rather than a new label of their own - so
+# this deliberately resolves through the existing
+# DidarConfig.deal_label_title_by_source["digikala"] entry instead of
+# adding a "digikala_warehouse" key to it. If the client later wants FBD
+# split out in Didar's own label-based reports, add that key (plus a
+# DIDAR_DEAL_LABEL_TITLE_DIGIKALA_WAREHOUSE env var) and point this
+# constant at it - nothing else here needs to change.
+_WAREHOUSE_DEAL_LABEL_SOURCE = "digikala"
 
 # Pagination knobs for list_current_deals_in_stage()'s live stage
 # snapshot - same values/reasoning as deal_poller.py's own
@@ -186,6 +209,83 @@ def _build_description(order: NormalizedOrder) -> str:
     if link:
         lines.append(f"مشاهده سفارش: {link}")
     return "\n".join(lines)
+
+
+def _warehouse_reference(item: WarehouseShipmentItem) -> str:
+    """
+    FBD twin of _order_reference(): the stable, globally-unique string
+    that identifies one "ارسال به انبار" item. Same
+    "{source}:{id}" shape, and for the same reason - it is what
+    find_existing_warehouse_deal_id() searches for and matches on,
+    exactly. `source` is always "digikala_warehouse" here, which is
+    what keeps an FBD reference from ever colliding with a customer
+    order's "digikala:..." one.
+    """
+    return f"{item.source}:{item.source_shipment_id}"
+
+
+def _build_warehouse_description(item: WarehouseShipmentItem) -> str:
+    """
+    Deal Description for one FBD item - same line style, and the same
+    "شناسه یکتای هماهنگ‌سازی: ..." anchor line, as _build_description()
+    writes for customer orders, because find_existing_warehouse_deal_id()
+    matches that exact line back.
+
+    No customer line of any kind: this endpoint returns none. No order
+    link either - Digikala has no confirmed per-item FBD panel URL, and
+    inventing one would be a broken link (same reasoning as the module
+    docstring's note about the four marketplaces' panel URLs); the panel
+    home page is linked instead, as elsewhere.
+
+    Every optional line is omitted when the API didn't return the value,
+    rather than printing a literal "None" into a real deal.
+    """
+    lines = [
+        f"منبع: {_SOURCE_DISPLAY_NAMES['digikala_warehouse']}",
+    ]
+    if item.order_id:
+        lines.append(f"شماره سفارش: {item.order_id}")
+    lines.append(f"شناسه قلم سفارش: {item.source_shipment_id}")
+    lines.append(f"شناسه یکتای هماهنگ‌سازی: {_warehouse_reference(item)}")
+    if item.supplier_code:
+        lines.append(f"کد فروشنده: {item.supplier_code}")
+    if item.commitment_date is not None:
+        lines.append(f"تاریخ تعهد: {_format_date(item.commitment_date)}")
+    link = _PANEL_URLS.get("digikala", "")
+    if link:
+        lines.append(f"پنل فروشنده: {link}")
+    return "\n".join(lines)
+
+
+def _build_warehouse_item_description(item: WarehouseShipmentItem) -> str:
+    """
+    Per-DealItem text for an FBD item - the counterpart of
+    _build_item_description(), NOT a reuse of it: that one reads
+    order_number / shipment_tracking_code / shipping_cost off a
+    NormalizedOrder, none of which exist on this source (there is no
+    parcel and no shipping fee - Digikala collects the goods itself).
+
+    Only lines the API actually provided are written.
+    """
+    lines: list[str] = []
+    if item.order_id:
+        lines.append(f"شماره سفارش: {item.order_id}")
+    if item.supplier_code:
+        lines.append(f"کد فروشنده: {item.supplier_code}")
+    if item.commitment_date is not None:
+        lines.append(f"تاریخ تعهد: {_format_date(item.commitment_date)}")
+    return "\n".join(lines)
+
+
+def _format_date(dt: datetime) -> str:
+    """Date-only, Gregorian, as returned by the API (this endpoint's
+    dates are confirmed ISO-8601, see digikala_warehouse.py). Not
+    converted to Jalali here on purpose: this string is written into
+    Didar alongside the raw ids above, where matching what the seller
+    panel/API itself shows is more useful than a prettier calendar, and
+    a conversion would add a jdatetime dependency to this module for one
+    line of text."""
+    return dt.strftime("%Y-%m-%d")
 
 
 def _iso(dt: datetime) -> str:
@@ -1197,6 +1297,172 @@ class DidarDealClient:
             # feedback, 2026-09) for the case where a single shipment
             # covers the whole order.
             "Description": _build_item_description(order),
+        }
+
+    # ------------------------------------------------------------------
+    # Digikala FBD - "ارسال به انبار دیجی‌کالا" (2026-09, stage 4 of the
+    # FBD feature). Deliberately NEW methods rather than changes to
+    # create_deal()/find_existing_deal_id()/_build_deal_item() above:
+    # all three take a NormalizedOrder, this source has none (see
+    # src/marketplaces/warehouse_base.py), and every existing test in
+    # tests/test_didar_deal_and_service.py is written against their
+    # current signatures.
+
+    def find_existing_warehouse_deal_id(
+        self, item: WarehouseShipmentItem
+    ) -> str | None:
+        """
+        FBD twin of find_existing_deal_id() - same endpoint, same
+        matching rule, same safe default. Copied rather than shared
+        because that method's parameter is a NormalizedOrder.
+
+        Why this exists on top of
+        Repository.is_warehouse_shipment_synced(): the local table only
+        knows about deals whose creation we actually saw succeed. A
+        /deal/save_v2 that succeeds on Didar's side but whose response
+        never reaches us (timeout/connection drop) is retried
+        automatically by http_utils' default_retry - creating a SECOND
+        real Deal - with nothing recorded locally either time. Only
+        Didar can answer that.
+
+        MATCHING is an exact-LINE check of the unique reference against
+        each result's Description, never a substring `in` on the whole
+        text: POST /search/search is fuzzy, and
+        "digikala_warehouse:999" is a plain substring of
+        "digikala_warehouse:9999" - a different item. A false match
+        would silently skip an item that was never synced, which is
+        worse than the duplicate this prevents, so "not found" is the
+        safe default whenever we can't be certain.
+        """
+        reference = _warehouse_reference(item)
+        reference_line = f"شناسه یکتای هماهنگ‌سازی: {reference}"
+        payload = self._post("/search/search", json={"Keyword": reference, "Types": ["deal"]})
+        results = payload.get("Response", {}).get("List", [])
+        for result in results:
+            if not isinstance(result, dict) or result.get("_tp") != "deal":
+                continue
+            description_lines = (result.get("Description") or "").splitlines()
+            if reference_line in description_lines:
+                deal_id = result.get("Id")
+                if deal_id:
+                    log.info(
+                        "didar: found existing warehouse deal for FBD item %s -> Id=%s "
+                        "(skipping create - already in Didar)",
+                        item.source_shipment_id, deal_id,
+                    )
+                    return str(deal_id)
+        return None
+
+    def create_warehouse_shipment_deal(self, item: WarehouseShipmentItem) -> str:
+        """
+        One Deal for one FBD item. Differences from create_deal(), all
+        deliberate:
+
+          - NO PersonId key at all. This endpoint exposes no customer,
+            so there is nobody to link; a placeholder Contact was
+            considered and rejected by the client (it would pollute the
+            CRM's contact list with a fake person). If Didar ever
+            rejects a Deal without PersonId, the fix is a single
+            configured placeholder Contact Id - never a Contact created
+            per item.
+          - Fixed Title (WAREHOUSE_DEAL_TITLE) - there is no customer
+            name to build one from.
+          - The same pipeline/stage as customer orders
+            (DIDAR_PIPELINE_ID / DIDAR_PIPELINE_STAGE_ID) - CLIENT
+            DECISION, 2026-09: FBD deals live in the existing pipeline,
+            so no new config was added for this.
+          - The "دیجی کالا" Deal Label, via
+            _WAREHOUSE_DEAL_LABEL_SOURCE - see that constant.
+          - Exactly one DealItem (this source is one item per row).
+
+        TaxPercent is sent at BOTH Deal and DealItem level for the same
+        unresolved reason documented at length in create_deal() - it is
+        not confirmed which level Didar honours, and "0" at both is
+        harmless either way.
+
+        Raises on failure (no fire-and-forget wrapper): the caller must
+        NOT mark this item as synced if no Deal was created.
+        """
+        deal_body: dict = {
+            "Title": WAREHOUSE_DEAL_TITLE,
+            "PipelineId": self._config.pipeline_id,
+            "PipelineStageId": self._config.pipeline_stage_id,
+            "Description": _build_warehouse_description(item),
+            "TaxPercent": "0",
+        }
+        label_id = self._label_id_for_source(_WAREHOUSE_DEAL_LABEL_SOURCE)
+        if label_id:
+            deal_body["LabelIds"] = [label_id]
+
+        body = {
+            "Deal": deal_body,
+            "DealItems": [self._build_warehouse_deal_item(item)],
+        }
+        payload = self._post("/deal/save_v2", json=body)
+        deal_id = _extract_deal_id(payload)
+        log.info(
+            "didar: created warehouse deal for FBD item %s (order %s) -> Id=%s",
+            item.source_shipment_id, item.order_id, deal_id,
+        )
+        log.debug("didar: deal/save_v2 raw response for Id=%s: %r", deal_id, payload)
+        return deal_id
+
+    def _build_warehouse_deal_item(self, item: WarehouseShipmentItem) -> dict:
+        """
+        The single DealItem of an FBD deal.
+
+        NOT a call into _build_deal_item(): that one needs an OrderItem
+        plus a NormalizedOrder (it builds its description from
+        order_number/tracking code/shipping cost). Only the product
+        resolution itself is reused, through the same self._products
+        client.
+
+        PRODUCT CODE - the important part. `supplier_code` on this
+        endpoint is the same kind of value as SBS's `sellerCode`: a
+        short number the seller typed for their own use, not a real
+        unique SKU. Feeding it to upsert_product() as a Code is exactly
+        what caused the 2026-09 wrong-product incident (Digikala order
+        382920341: sellerCode "25" attached the order to the client's
+        unrelated catalog product 25, "نبات 6", with no error
+        anywhere). So supplier_code is NEVER used as a Code here, not
+        even when it looks non-numeric - it is Description text only.
+        The Code is the catalog match if the Excel catalog has a
+        confident one, and the full product title otherwise (the same
+        last-resort branch _build_deal_item() falls back to).
+
+        DISCOUNT is 0 because this endpoint HAS NO DISCOUNT FIELD AT
+        ALL - not because a discount of zero was observed. If Digikala
+        ever exposes one, it belongs here as a per-unit currency amount
+        (see _build_deal_item()'s note on Didar's Discount semantics).
+        """
+        catalog_match = self._products.resolve_catalog_code(item.product_title)
+        if catalog_match:
+            code, title = catalog_match
+        else:
+            code, title = item.product_title, item.product_title
+
+        quantity = item.quantity or 1
+        product_id = self._products.upsert_product(
+            code=code,
+            title=title,
+            # No category on this endpoint - upsert_product falls back to
+            # title-keyword matching and then
+            # DIDAR_DEFAULT_PRODUCT_CATEGORY_ID, same as any source whose
+            # API doesn't report one.
+            category=None,
+            unit_price=item.unit_price,
+            # unit_price is CONFIRMED per-unit (see warehouse_base.py), so
+            # the line total is derived here rather than stored twice.
+            final_price=item.unit_price * Decimal(quantity),
+        )
+
+        return {
+            "ProductId": product_id,
+            "Quantity": item.quantity,
+            "UnitPrice": int(item.unit_price),
+            "Discount": 0,
+            "TaxPercent": "0",
+            "Description": _build_warehouse_item_description(item),
         }
 
 

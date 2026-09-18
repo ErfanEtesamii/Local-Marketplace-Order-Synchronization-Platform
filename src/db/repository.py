@@ -93,6 +93,31 @@ Five responsibilities:
      two notifiers' retry_pending_notifications() loops pick up each
      other's rows, since neither filters by ref_id prefix.
 
+ 12. Digikala "ارسال به انبار دیجی‌کالا" (FBD) dedup guard
+     (synced_warehouse_shipments table, 2026-09 - see
+     src/marketplaces/digikala_warehouse.py). Deliberately NOT stored in
+     synced_orders (item 1): an FBD item is not a customer order, it has
+     no NormalizedOrder, and mixing the two would silently change every
+     report and health check that aggregates over synced_orders by
+     platform (src/reporting.py, src/telegram.py) - none of which this
+     source is meant to appear in. Keeping it in its own table is what
+     makes "FBD stays out of the customer-order reports" the default
+     rather than something each reader has to remember to filter for.
+     Columns mirror synced_orders minus the products/shipping split,
+     which does not exist on this endpoint (only a per-unit
+     selling_price - see WarehouseShipmentItem).
+
+     NO RETRY QUEUE ON PURPOSE: there is deliberately no
+     warehouse_sync_failures twin of sync_failures (item 2). The
+     existing retry path rebuilds an order via
+     adapter.fetch_order_detail(source_order_id), and this endpoint has
+     no per-item detail call to rebuild from - a shared queue would
+     crash or, worse, retry against the wrong adapter. It also isn't
+     needed: an item that fails mid-sync is never written here, and
+     GET /open-api/v1/orders keeps returning it for as long as it is
+     active, so the very next poll retries it naturally. The cost of a
+     failure is a delay of one poll interval, not a lost item.
+
 Kept deliberately simple - one file, no ORM - matching the scale of a
 single-server background service.
 """
@@ -193,6 +218,15 @@ CREATE TABLE IF NOT EXISTS new_customer_stage_deals (
 
 CREATE INDEX IF NOT EXISTS idx_new_customer_stage_deals_entered_at
     ON new_customer_stage_deals (entered_at);
+
+CREATE TABLE IF NOT EXISTS synced_warehouse_shipments (
+    source             TEXT NOT NULL,
+    source_shipment_id TEXT NOT NULL,
+    didar_deal_id      TEXT,
+    synced_at          TEXT NOT NULL,
+    total_amount       INTEGER,
+    PRIMARY KEY (source, source_shipment_id)
+);
 """
 
 
@@ -445,6 +479,80 @@ class Repository:
                 VALUES (?, ?, ?)
                 """,
                 (platform, source_order_id, datetime.now(timezone.utc).isoformat()),
+            )
+
+    # --- Digikala FBD ("ارسال به انبار") dedup guard (2026-09) ------------
+    # See synced_warehouse_shipments in the schema docstring above (item
+    # 12) and src/marketplaces/digikala_warehouse.py. Same
+    # question/shape as has_express_alert_been_sent/mark_express_alert_sent
+    # right above - "have we already committed this side effect for this
+    # (source, id)?" - against its own table, because an FBD item is a
+    # different kind of thing from a customer order and must never be
+    # counted, reported on, or retried as one.
+
+    def is_warehouse_shipment_synced(self, source: str, source_shipment_id: str) -> bool:
+        """True iff a Didar Deal has already been committed for this FBD
+        item. This is the ONLY "already seen" guard on this source
+        besides the adapter's created-at floor: GET /open-api/v1/orders
+        keeps returning an item for as long as it is active, so without
+        this check every poll cycle would create another Deal for the
+        same item.
+
+        Like has_express_alert_been_sent(), "committed" - not
+        "delivered": see mark_warehouse_shipment_synced() below for what
+        is (and isn't) guaranteed to have happened by the time a row
+        exists here.
+        """
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT 1 FROM synced_warehouse_shipments "
+                "WHERE source = ? AND source_shipment_id = ?",
+                (source, source_shipment_id),
+            ).fetchone()
+        return row is not None
+
+    def mark_warehouse_shipment_synced(
+        self,
+        source: str,
+        source_shipment_id: str,
+        didar_deal_id: str,
+        total_amount=None,
+    ) -> None:
+        """Record that this FBD item now has a Didar Deal.
+
+        Written only AFTER the Deal itself was created successfully - the
+        ship Activity and its photo upload are fire-and-forget and may
+        still fail afterwards (see stage 5), so a row here means "the
+        Deal exists", not "everything downstream of it succeeded". That
+        is the right trade-off in this direction: re-running the Deal
+        creation would produce a duplicate deal, while a missing
+        Activity is visible and fixable by hand in Didar.
+
+        INSERT OR IGNORE (same pattern as mark_express_alert_sent()
+        above) so a repeated call for the same item - two poll cycles
+        racing - is a harmless no-op that keeps the FIRST synced_at and
+        deal id rather than overwriting it with a second, later one.
+
+        `total_amount` is this item's Rial line total (unit_price *
+        quantity) purely for local traceability; nothing reads it yet -
+        this source is deliberately kept out of the daily/weekly reports
+        (see item 12 of the module docstring).
+        """
+        def _to_int(value):
+            return int(round(float(value))) if value is not None else None
+
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT OR IGNORE INTO synced_warehouse_shipments
+                    (source, source_shipment_id, didar_deal_id, synced_at, total_amount)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (
+                    source, source_shipment_id, didar_deal_id,
+                    datetime.now(timezone.utc).isoformat(),
+                    _to_int(total_amount),
+                ),
             )
 
     # --- Modir Payamak SMS retry queue (2026-09) --------------------------
