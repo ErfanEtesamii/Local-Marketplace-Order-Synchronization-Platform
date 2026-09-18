@@ -55,6 +55,7 @@ from src.db.repository import Repository
 from src.didar.service import DidarSyncService
 from src.logger import get_logger
 from src.marketplaces.base import MarketplaceAdapter, NormalizedOrder
+from src.modir_payamak import ModirPayamakNotifier
 from src.telegram import TelegramNotifier
 
 log = get_logger(__name__)
@@ -74,6 +75,7 @@ class SyncEngine:
         repository: Repository | None = None,
         didar_service: DidarSyncService | None = None,
         synced_ids_file_path: str | None = None,
+        sms_notifier: ModirPayamakNotifier | None = None,
     ) -> None:
         self._adapters = {a.name: a for a in adapters}
         self._repo = repository or Repository()
@@ -81,6 +83,12 @@ class SyncEngine:
         self._synced_ids_file_path = synced_ids_file_path
         self._synced_ids = self._load_synced_ids()
         self._telegram = TelegramNotifier()
+        # Express-order SMS alert (2026-09 - see src/modir_payamak.py).
+        # Injectable, unlike self._telegram above, purely so tests can
+        # pass a fake without touching env vars or the network; the
+        # default is the same "construct our own, it's cheap and
+        # config-gated" pattern the Telegram notifier uses.
+        self._sms_notifier = sms_notifier or ModirPayamakNotifier()
 
     @property
     def adapter_names(self) -> list[str]:
@@ -342,6 +350,14 @@ class SyncEngine:
             # docstring), so a Telegram outage can never break the sync
             # itself.
             self._telegram.notify_new_order(order, deal_id, self._repo)
+            # Same fire-and-forget contract (notify_if_express catches,
+            # logs and queues its own failures - see
+            # src/modir_payamak.py's module docstring), and a no-op for
+            # any order that isn't express or has already been alerted
+            # about. Placed after the Telegram send, not before it, so
+            # an SMS-provider problem can never delay the message every
+            # order gets.
+            self._sms_notifier.notify_if_express(order, self._repo)
         except Exception as exc:
             log.exception(
                 "sync_engine: failed to sync %s order %s", order.source, order.source_order_id
@@ -591,6 +607,15 @@ class SyncEngine:
                 # same reasoning applies to the retry path.
                 self._repo.mark_deal_notified(deal_id)
                 self._telegram.notify_new_order(order, deal_id, self._repo)
+                # Deliberately called on the retry path too: an order
+                # whose FIRST sync attempt failed is exactly the one
+                # most likely to be running late, so it must not lose
+                # its express alert. Safe to repeat - the
+                # (source, source_order_id) guard in
+                # Repository.has_express_alert_been_sent() is what stops
+                # an order that reaches this method twice from paging
+                # the warehouse twice.
+                self._sms_notifier.notify_if_express(order, self._repo)
                 log.info(
                     "sync_engine: retry succeeded for %s order %s",
                     failure.platform, failure.source_order_id,

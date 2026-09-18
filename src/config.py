@@ -277,6 +277,52 @@ class DidarConfig:
         }
 
 
+@dataclass(frozen=True)
+class ModirPayamakConfig:
+    """Express-order warehouse SMS, via Modir Payamak's IPPanel Edge API
+    (see src/modir_payamak.py).
+
+    NOTE: src/modir_payamak.py reads these same five env vars directly
+    with os.getenv rather than through this object. That is the existing
+    notifier-module exception to this file's "nothing outside here calls
+    os.getenv" rule - src/telegram.py already does exactly the same with
+    TELEGRAM_BOT_TOKEN/TELEGRAM_CHAT_ID* - and it is kept that way here
+    deliberately, because ModirPayamakNotifier is constructed once per
+    process and must be able to notice credentials that appeared AFTER
+    import time (this module's `settings` is a module-level singleton
+    built at import). This dataclass is the declarative record of what
+    the service depends on, and gives operators/scripts one place to ask
+    "is the SMS alert actually configured?" without importing the
+    notifier and its httpx client.
+
+    `recipients` drops blank entries, matching the notifier's own rule
+    that only non-empty EXPRESS_ALERT_SMS_RECIPIENT_{1,2,3} values are
+    sent to - so one or two configured numbers is valid; zero is not.
+    """
+
+    token: str = field(default_factory=lambda: _get("MODIR_PAYAMAK_TOKEN"))
+    from_number: str = field(default_factory=lambda: _get("MODIR_PAYAMAK_FROM_NUMBER"))
+    recipients: tuple[str, ...] = field(
+        default_factory=lambda: tuple(
+            value
+            for key in (
+                "EXPRESS_ALERT_SMS_RECIPIENT_1",
+                "EXPRESS_ALERT_SMS_RECIPIENT_2",
+                "EXPRESS_ALERT_SMS_RECIPIENT_3",
+            )
+            if (value := _get(key).strip())
+        )
+    )
+
+    @property
+    def enabled(self) -> bool:
+        """Same three-part check as ModirPayamakNotifier.is_configured(),
+        minus its caching/client setup - a token, a sender line, and at
+        least one recipient. Never raises; a missing value just means
+        False (express alerts stay queued rather than sent)."""
+        return bool(self.token.strip() and self.from_number.strip() and self.recipients)
+
+
 def _get_or(key: str, fallback: str) -> str:
     """Like _get, but also falls back when the env var is PRESENT but
     blank (e.g. `DIGIKALA2_BASE_URL=` in .env.example) - plain _get()'s
@@ -363,6 +409,10 @@ class Settings:
     basalam: BasalamConfig = field(default_factory=BasalamConfig)
     farazhonar: FarazHonarConfig = field(default_factory=FarazHonarConfig)
     didar: DidarConfig = field(default_factory=DidarConfig)
+    # Express-order warehouse SMS (2026-09) - see ModirPayamakConfig's
+    # docstring for why src/modir_payamak.py still reads these env vars
+    # itself instead of going through this field.
+    modir_payamak: ModirPayamakConfig = field(default_factory=ModirPayamakConfig)
 
 
 settings = Settings()

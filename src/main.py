@@ -21,6 +21,7 @@ from src.marketplaces.digikala2 import Digikala2Adapter
 from src.marketplaces.farazhonar import FarazHonarAdapter
 from src.marketplaces.snappshop import SnappShopAdapter
 from src.marketplaces.tapsishop import TapsiShopAdapter
+from src.modir_payamak import ModirPayamakNotifier
 from src.reporting import check_health, generate_daily_report
 from src.sync_engine import SyncEngine
 from src.telegram import TelegramNotifier
@@ -69,6 +70,7 @@ def _poll_cycle(
     engine: SyncEngine,
     repository: Repository,
     telegram: TelegramNotifier,
+    sms_notifier: ModirPayamakNotifier,
     deal_poller: DidarDealPoller | None,
     stage_snapshot_client: DidarDealClient,
 ) -> None:
@@ -88,6 +90,13 @@ def _poll_cycle(
     # "orders sync but Telegram never fires" incident this closes).
     # Best-effort like every other telegram.* call here.
     telegram.retry_pending_notifications(repository)
+    # The SMS-side counterpart of the line above: re-attempt every
+    # express-order alert that failed to send on a previous cycle
+    # (2026-09 - see src/modir_payamak.py's module docstring). Its own
+    # queue and its own table, so a Telegram outage and a Modir Payamak
+    # outage never drain each other. Best-effort and no-ops entirely
+    # when MODIR_PAYAMAK_* isn't configured.
+    sms_notifier.retry_pending_notifications(repository)
     # "Any deal" Telegram notification (client request, 2026-09): every
     # Deal registered in Didar, manual or automatic, not just the ones
     # this program itself creates from a marketplace order - see
@@ -143,6 +152,12 @@ def run_forever() -> None:
     engine, repository = build_engine()
     scheduler = BlockingScheduler(timezone="UTC")
     telegram = TelegramNotifier()
+    # Separate instance from the one SyncEngine builds for itself -
+    # same tradeoff (and same reason) as `telegram` above: the object
+    # holds nothing but an httpx.Client, all real state lives in the
+    # repository, and this one is only ever used for the per-cycle
+    # retry drain below.
+    sms_notifier = ModirPayamakNotifier()
     # Separate instance from DidarSyncService's own internal deal
     # client, same tradeoff as deal_poller below - this one is only
     # ever used for the read-only stage-snapshot call.
@@ -161,7 +176,10 @@ def run_forever() -> None:
         _poll_cycle,
         "interval",
         seconds=settings.poll_interval_seconds,
-        args=[engine, repository, telegram, deal_poller, stage_snapshot_client],
+        args=[
+            engine, repository, telegram, sms_notifier, deal_poller,
+            stage_snapshot_client,
+        ],
         # NOTE: do NOT pass next_run_time=None here - in APScheduler that
         # means "add this job paused", not "run immediately". It was
         # silently preventing the interval job from ever firing after the
@@ -199,7 +217,10 @@ def run_forever() -> None:
 
     # Run once immediately on startup rather than waiting a full interval.
     try:
-        _poll_cycle(engine, repository, telegram, deal_poller, stage_snapshot_client)
+        _poll_cycle(
+            engine, repository, telegram, sms_notifier, deal_poller,
+            stage_snapshot_client,
+        )
     except Exception:
         log.exception("sync_engine: initial run_once failed - will retry on schedule")
 

@@ -65,6 +65,33 @@ Five responsibilities:
      six-month/year) is just a since/until filter over this one
      ever-growing table, the same pattern get_amount_stats_since()
      already uses over synced_orders above.
+ 10. Express-order SMS dedup guard (express_alerts_sent table, 2026-09 -
+     see src/modir_payamak.py's module docstring). Deliberately NOT
+     folded into synced_orders (e.g. as an `sms_sent_at` column): an
+     SMS alert is not a property of "this order was synced to Didar",
+     it is a separate commitment made later in the same lifecycle, and
+     the two must be able to fail independently. It is also
+     deliberately separate from notified_deals (item 6): that table is
+     keyed by Didar Deal Id, while this one is keyed by
+     (platform, source_order_id) - the only identity
+     ModirPayamakNotifier.notify_if_express() has at its call sites.
+     The row is written BEFORE the send is attempted, because
+     sync_engine.py calls notify_if_express() from BOTH
+     _sync_one_order() and retry_pending_failures(), and this SMS pages
+     three real people: a duplicate send is a worse outcome than a send
+     that has to be retried from the queue below. Rows are never
+     deleted.
+ 11. Modir Payamak SMS retry queue (sms_notification_failures table,
+     2026-09). Same shape, and the same NotificationFailure dataclass,
+     as notification_failures (item 8), for the same reason - a send
+     that fails after mark_express_alert_sent() has already run has no
+     other retry path in the system - but a SEPARATE table on purpose:
+     the two notifiers have different providers, different outage
+     windows and their own attempt budgets, so a Telegram outage must
+     never queue into, drain from, or burn the attempt counter of the
+     SMS queue (or vice versa). Sharing one table would also make the
+     two notifiers' retry_pending_notifications() loops pick up each
+     other's rows, since neither filters by ref_id prefix.
 
 Kept deliberately simple - one file, no ORM - matching the scale of a
 single-server background service.
@@ -134,6 +161,21 @@ CREATE TABLE IF NOT EXISTS ignored_orders (
 );
 
 CREATE TABLE IF NOT EXISTS notification_failures (
+    ref_id          TEXT NOT NULL PRIMARY KEY,
+    message_text    TEXT NOT NULL,
+    error_message   TEXT,
+    attempt_count   INTEGER NOT NULL DEFAULT 1,
+    last_attempt_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS express_alerts_sent (
+    platform        TEXT NOT NULL,
+    source_order_id TEXT NOT NULL,
+    sent_at         TEXT NOT NULL,
+    PRIMARY KEY (platform, source_order_id)
+);
+
+CREATE TABLE IF NOT EXISTS sms_notification_failures (
     ref_id          TEXT NOT NULL PRIMARY KEY,
     message_text    TEXT NOT NULL,
     error_message   TEXT,
@@ -354,6 +396,114 @@ class Repository:
     def clear_notification_failure(self, ref_id: str) -> None:
         with self._connect() as conn:
             conn.execute("DELETE FROM notification_failures WHERE ref_id = ?", (ref_id,))
+
+    # --- express-order SMS dedup guard (2026-09) --------------------------
+    # See express_alerts_sent in the schema docstring above and
+    # src/modir_payamak.py's module docstring. Same is_already_synced() /
+    # mark_synced() shape as the Didar dedup at the top of this file, and
+    # for the same reason - "have we already committed to this side
+    # effect for this (platform, source_order_id)?" - but against its own
+    # table, because the SMS commitment and the Didar sync commitment are
+    # made at different points in the lifecycle and must be able to fail
+    # independently of each other.
+
+    def has_express_alert_been_sent(self, platform: str, source_order_id: str) -> bool:
+        """True iff an express-alert SMS has already been committed for
+        this order. Called by ModirPayamakNotifier.notify_if_express()
+        before every send - which sync_engine.py invokes from BOTH
+        _sync_one_order() and retry_pending_failures(), so this method
+        is the only thing standing between a re-processed order and a
+        second SMS to the warehouse staff.
+
+        Note "committed", not "delivered": a row exists here as soon as
+        the send was decided on, even if that particular send then
+        failed and is sitting in sms_notification_failures awaiting
+        retry. That is intentional - the retry queue owns delivery, this
+        table owns the decision - and it mirrors mark_synced() running
+        before the Telegram send attempt in the existing flow.
+        """
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT 1 FROM express_alerts_sent WHERE platform = ? AND source_order_id = ?",
+                (platform, source_order_id),
+            ).fetchone()
+        return row is not None
+
+    def mark_express_alert_sent(self, platform: str, source_order_id: str) -> None:
+        """Record that this order's express alert has been committed.
+
+        INSERT OR IGNORE (same pattern as mark_deal_notified() below) so
+        a repeated call for the same order - two poll cycles racing, or
+        the same order arriving through both sync_engine.py call sites -
+        is a harmless no-op that keeps the FIRST sent_at rather than an
+        error or an overwrite.
+        """
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT OR IGNORE INTO express_alerts_sent (platform, source_order_id, sent_at)
+                VALUES (?, ?, ?)
+                """,
+                (platform, source_order_id, datetime.now(timezone.utc).isoformat()),
+            )
+
+    # --- Modir Payamak SMS retry queue (2026-09) --------------------------
+    # The SMS-side twin of record_notification_failure() /
+    # get_pending_notification_failures() / clear_notification_failure()
+    # above: identical shape, identical NotificationFailure rows, but a
+    # separate table so the Telegram and Modir Payamak queues can never
+    # drain or exhaust each other (see item 11 of the schema docstring).
+    # Reusing NotificationFailure rather than declaring an
+    # SmsNotificationFailure dataclass is deliberate: the columns are the
+    # same five, and src/modir_payamak.py's retry loop reads exactly the
+    # fields (ref_id, message_text) TelegramNotifier's does.
+
+    def record_sms_failure(self, ref_id: str, message_text: str, error_message: str) -> None:
+        """Queue (or re-queue) a failed express-alert SMS under a stable
+        `ref_id` - "express_sms:<platform>:<source_order_id>", built by
+        ModirPayamakNotifier. ON CONFLICT DO UPDATE (not INSERT OR
+        IGNORE) so a repeated failure for the same logical message bumps
+        attempt_count on the one row instead of piling up duplicates,
+        which is what lets get_pending_sms_failures()'s max_attempts
+        eventually give up.
+        """
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO sms_notification_failures
+                    (ref_id, message_text, error_message, attempt_count, last_attempt_at)
+                VALUES (?, ?, ?, 1, ?)
+                ON CONFLICT(ref_id) DO UPDATE SET
+                    message_text    = excluded.message_text,
+                    error_message   = excluded.error_message,
+                    attempt_count   = attempt_count + 1,
+                    last_attempt_at = excluded.last_attempt_at
+                """,
+                (ref_id, message_text, error_message, datetime.now(timezone.utc).isoformat()),
+            )
+
+    def get_pending_sms_failures(self, max_attempts: int = 5) -> list[NotificationFailure]:
+        """Every queued SMS still under its attempt budget. Rows at or
+        over `max_attempts` are left in the table (not deleted) so they
+        remain inspectable after the retry loop has given up on them -
+        same policy as get_pending_notification_failures().
+        """
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT ref_id, message_text, error_message, attempt_count, last_attempt_at "
+                "FROM sms_notification_failures WHERE attempt_count < ?",
+                (max_attempts,),
+            ).fetchall()
+        return [NotificationFailure(*row) for row in rows]
+
+    def clear_sms_failure(self, ref_id: str) -> None:
+        """Drop a queued SMS after it finally sent. Note there is no
+        corresponding un-mark on express_alerts_sent: the alert was
+        committed once and has now been delivered once, which is exactly
+        the intended end state.
+        """
+        with self._connect() as conn:
+            conn.execute("DELETE FROM sms_notification_failures WHERE ref_id = ?", (ref_id,))
 
     # --- permanent skip-list (out-of-window / never-again orders) ---------
 

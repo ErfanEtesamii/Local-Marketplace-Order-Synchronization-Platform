@@ -154,6 +154,37 @@ def _to_int_or_none(value) -> int | None:
         return None
 
 
+def _digikala_shipping_method(row: dict) -> str | None:
+    """NormalizedOrder.shipping_method for one /ship-by-seller-orders row.
+
+    `isDigiExpress` lives on every item of BOTH SBS responses this
+    adapter already consumes - GET /open-api/v1/ship-by-seller-orders
+    (list) and GET /open-api/v1/ship-by-seller-orders/{shipment_id}
+    (detail) - i.e. on exactly the same `row` that _normalize_sbs_row
+    receives, so no extra request is needed to learn whether a shipment
+    is DigiExpress.
+
+    Mapped to the sentinel strings "EXPRESS"/"NORMAL" rather than passed
+    through as a bool because shipping_method is a `str | None`
+    free-text field on NormalizedOrder (see base.py) that downstream
+    consumers keyword-match on: src/express_alert.py's is_express_order()
+    looks for "EXPRESS", and src/shipping_fees.py only ever reads this
+    field when order.source == "farazhonar", so Digikala starting to
+    populate it changes nothing for any other source (source isolation).
+
+    A MISSING key is not a "not express" signal - it means the API
+    didn't report it for this row - so that case returns None instead of
+    "NORMAL" (project rule: never guess, no throw). The neighbouring
+    `digiexpress_ability` / `digiexpressData` /
+    `isDigiexpressShippingServiceActive` fields are deliberately left
+    unparsed: they describe seller capability/config, not this shipment.
+    """
+    value = row.get("isDigiExpress")
+    if value is None:
+        return None
+    return "EXPRESS" if value else "NORMAL"
+
+
 def _fmt_history_date(dt: datetime) -> str:
     """Digikala's documented /orders/history date format: Y-m-d\\TH:i:s.v\\Z
     - same format the pre-migration adapter used for this endpoint."""
@@ -955,6 +986,12 @@ class DigikalaAdapter(MarketplaceAdapter):
             product_image_url=product_image_url,
             shipping_cost=shipping_cost,
             shipment_tracking_code=tracking_code,
+            # isDigiExpress -> "EXPRESS" / "NORMAL" / None: see
+            # _digikala_shipping_method above. Read by
+            # src/express_alert.py's is_express_order() for the express
+            # SMS alert; nothing else on this adapter behaves
+            # differently because of it.
+            shipping_method=_digikala_shipping_method(row),
         )
 
     def _seed_watermark_from_latest(self) -> int:

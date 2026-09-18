@@ -152,6 +152,24 @@ def _first_item_photo_url(raw_items: list[dict]) -> str | None:
     return None
 
 
+def _basalam_shipping_method(raw: dict) -> str | None:
+    """NormalizedOrder.shipping_method for a Basalam parcel row (used by
+    both _normalize_list_item and _normalize_detail, whose "raw" shape
+    is identical here). shipping_method.default.title is the primary,
+    documented field; shipping_method.current.title is used as a
+    fallback for the case where "default" itself is absent. Nothing is
+    guessed beyond that - a missing/empty title on both leaves this
+    None rather than inventing a value, same convention as every other
+    optional field on this adapter."""
+    shipping_method = raw.get("shipping_method") or {}
+    default = shipping_method.get("default") or {}
+    title = default.get("title")
+    if not title:
+        current = shipping_method.get("current") or {}
+        title = current.get("title")
+    return str(title) if title else None
+
+
 class BasalamAuthError(RuntimeError):
     """Raised when the access token is rejected (expired/revoked).
 
@@ -252,6 +270,7 @@ class BasalamAdapter(MarketplaceAdapter):
             # filter documented for orders/parcels respectively. This is
             # the ship-time anchor for src/didar/scheduling.py.
             ship_time=_parse_date_or_none(raw.get("estimate_send_at")),
+            shipping_method=_basalam_shipping_method(raw),
         )
 
     def _normalize_detail(self, raw: dict) -> NormalizedOrder:
@@ -327,6 +346,7 @@ class BasalamAdapter(MarketplaceAdapter):
             customer_city=city.get("title") or None,
             # Same confirmed field as _normalize_list_item - see its comment.
             ship_time=_parse_date_or_none(raw.get("estimate_send_at")),
+            shipping_method=_basalam_shipping_method(raw),
             # CONFIRMED via docs/document.json (Basalam's own OpenAPI spec):
             # each vendor-parcel item embeds a nested "product" object with
             # a "photos" array - see _first_item_photo_url's docstring for
