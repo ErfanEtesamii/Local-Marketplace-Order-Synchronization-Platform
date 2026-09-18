@@ -1,6 +1,6 @@
 from openpyxl import Workbook
 
-from src.didar.product_catalog import ProductCatalog
+from src.didar.product_catalog import ProductCatalog, _tokenize
 
 _HEADER = [
     "_type", "عنوان محصول", "دسته بندی محصول", "کد دیدار محصول", "کد محصول",
@@ -153,3 +153,25 @@ def test_missing_file_raises_clear_error(tmp_path):
         assert False, "expected FileNotFoundError"
     except FileNotFoundError as exc:
         assert "DIDAR_PRODUCT_CATALOG_XLSX" in str(exc)
+
+
+def test_glued_craft_suffix_matches_catalog_entry_without_it(tmp_path):
+    """Regression test for the real production incident (Digikala order
+    382920341): the catalog spells the craft as its own word ("مينا"),
+    while the marketplace title glues the "-work" suffix directly onto
+    it ("میناکاری", with no space) - these must still match, or
+    containment fails outright and the caller falls back to an unsafe
+    SKU-based Code (see deal_client.py's _build_deal_item /
+    _is_collision_prone_sku)."""
+    catalog = _make_catalog(tmp_path, [("قاب بشقاب 25 مينا", "2270003")])
+    match = catalog.match("قاب بشقاب 25 میناکاری")
+    assert match is not None
+    assert match.code == "2270003"
+    assert match.title == "قاب بشقاب 25 مينا"
+
+
+def test_standalone_kari_word_is_not_split_into_empty_base_token():
+    """The standalone word "کاری" ("job"/generic, unrelated to the
+    craft-suffix case above) must tokenize to itself, not to an empty
+    base token plus "کاری" - see _split_craft_suffix's length guard."""
+    assert _tokenize("یک کاری برای انجام") == frozenset({"یک", "کاری", "برای", "انجام"})

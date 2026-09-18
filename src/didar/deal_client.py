@@ -134,6 +134,23 @@ _PANEL_URLS = {
 }
 
 
+def _is_collision_prone_sku(sku: str) -> bool:
+    """True for a marketplace-supplied SKU that's just a bare number -
+    e.g. Digikala's item.sku, which comes straight from the seller's own
+    freeform `sellerCode` field (see marketplaces/digikala.py), not a
+    real globally-unique SKU. The client's own Didar product catalog
+    (see product_catalog.py) ALSO uses small, manually-assigned numeric
+    Codes for unrelated products, so a bare-number SKU is
+    indistinguishable from one of those Codes and risks silently
+    attaching an order to the wrong, unrelated existing product (real
+    incident, 2026-09: Digikala order 382920341's sellerCode "25"
+    collided with the client's own unrelated catalog product 25 =
+    "نبات 6") - see _build_deal_item()'s caller for how this is used
+    (only once catalog-based title matching has already failed, so
+    there's no confirmed catalog Code to trust instead)."""
+    return sku.isdigit()
+
+
 def _order_link(order: NormalizedOrder) -> str:
     if order.source == "farazhonar":
         # Confirmed real WooCommerce admin URL pattern - opens this
@@ -1089,12 +1106,33 @@ class DidarDealClient:
         catalog_match = self._products.resolve_catalog_code(item.title)
         if catalog_match:
             code, title = catalog_match
+        elif item.sku and not _is_collision_prone_sku(item.sku):
+            # SKU is the natural upsert key when catalog matching didn't
+            # find a confident hit.
+            code, title = item.sku, item.title
         else:
-            # SKU is the natural upsert key; falls back to the item
-            # title for the (rare) case a source provides no SKU, so at
-            # least same-titled items resolve to the same product
-            # within a run.
-            code, title = item.sku or item.title, item.title
+            # BUGFIX (production incident, 2026-09 - Digikala order
+            # 382920341): a bare numeric SKU here used to be trusted
+            # as-is. For Digikala, item.sku comes from the seller's own
+            # freeform `sellerCode` (see marketplaces/digikala.py) - a
+            # small plain number the seller typed for their own use
+            # (e.g. "25" for a product's size), NOT a real unique SKU.
+            # upsert_product() searches Didar for an EXISTING product
+            # with that exact Code before creating a new one - and the
+            # client's own catalog also uses small manually-assigned
+            # numbers for completely unrelated products (Code "25" was
+            # "نبات 6", an unrelated item). The result: this order's
+            # real product ("قاب بشقاب 25 میناکاری") got silently
+            # attached to "نبات 6" in Didar - a wrong-product incident
+            # that produced no error/warning anywhere, since Didar
+            # genuinely did have *a* product under that Code, just not
+            # the right one. A bare number offers no context to tell
+            # the two apart, so it's never trusted as a Code by itself
+            # - the full marketplace title is used instead, same as the
+            # existing no-SKU-at-all fallback, making an accidental
+            # collision with some unrelated existing product
+            # astronomically less likely.
+            code, title = item.title, item.title
 
         product_id = self._products.upsert_product(
             code=code,

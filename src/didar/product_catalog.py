@@ -132,6 +132,30 @@ _PERSIAN_DIGIT_BOUNDARY = re.compile(
     r"(?<=[\u0600-\u06FF])(?=[0-9])|(?<=[0-9])(?=[\u0600-\u06FF])"
 )
 
+# BUGFIX (production incident, 2026-09 - Digikala order 382920341): a
+# craft base-name glued directly to the "کاری" ("-work"/craftsmanship)
+# suffix with no space - e.g. "میناکاری" (enamel-work) - failed to match
+# an existing, correctly-named catalog entry ("قاب بشقاب 25 مينا",
+# Code=2270003) because the catalog spells the craft as its own separate
+# word ("مينا") with no "کاری" attached at all. "میناکاری" tokenizes as
+# ONE token that is never a superset of the catalog's separate "مينا"
+# token, so containment matching failed outright and silently fell back
+# to the marketplace's own SKU as the Didar Code (see deal_client.py's
+# _build_deal_item) - which for Digikala is the seller's own
+# freeform internal code (sellerCode), in this case just "25". That bare
+# number collided with an entirely unrelated, pre-existing catalog
+# product that also happens to use small manually-assigned numbers
+# ("25" = "نبات 6"), so the order's real product ("قاب بشقاب 25
+# میناکاری") got silently attached to "نبات 6" in Didar instead - while
+# Telegram, which shows the marketplace's raw title untouched, displayed
+# the correct name the whole time. Splitting the "کاری" suffix into its
+# own token (same "glued compound -> separate tokens" idea as the digit
+# splitting above) makes "میناکاری" tokenize as "مینا" + "کاری", so it
+# becomes a proper superset of the catalog's "مينا" token again.
+# Scoped to a >=2-character Persian prefix so the standalone word "کاری"
+# itself is never split into "" + "کاری".
+_CRAFT_SUFFIX_BOUNDARY = re.compile(r"(?<=[\u0600-\u06FF]{2})کاری$")
+
 
 @dataclass(frozen=True)
 class CatalogMatch:
@@ -145,6 +169,18 @@ def _split_glued_persian_digits(token: str) -> list[str]:
     """Split a token where a Persian model name is glued directly to a
     digit run with no separator - see _PERSIAN_DIGIT_BOUNDARY above."""
     return [part for part in _PERSIAN_DIGIT_BOUNDARY.sub(" ", token).split() if part]
+
+
+def _split_craft_suffix(token: str) -> list[str]:
+    """Split a token where a Persian craft base-name is glued directly
+    to the "کاری" suffix with no space - see _CRAFT_SUFFIX_BOUNDARY
+    above for why this is needed and the real incident that prompted
+    it."""
+    match = _CRAFT_SUFFIX_BOUNDARY.search(token)
+    if match:
+        base = token[: match.start()]
+        return [base, token[match.start() :]]
+    return [token]
 
 
 def _strip_leading_zeros(token: str) -> str:
@@ -163,10 +199,11 @@ def _tokenize(text: str) -> frozenset[str]:
     normalized = _normalize_fa(text).translate(_DIGIT_TABLE).translate(_SEPARATOR_TABLE)
     tokens: list[str] = []
     for raw in normalized.split():
-        for part in _split_glued_persian_digits(raw):
-            normalized_part = _strip_leading_zeros(part)
-            if normalized_part and normalized_part not in _STOPWORDS:
-                tokens.append(normalized_part)
+        for digit_part in _split_glued_persian_digits(raw):
+            for part in _split_craft_suffix(digit_part):
+                normalized_part = _strip_leading_zeros(part)
+                if normalized_part and normalized_part not in _STOPWORDS:
+                    tokens.append(normalized_part)
     return frozenset(tokens)
 
 

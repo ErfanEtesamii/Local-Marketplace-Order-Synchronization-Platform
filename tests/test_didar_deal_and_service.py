@@ -439,6 +439,90 @@ def test_deal_item_uses_catalog_code_and_title_when_excel_match_found(tmp_path):
 
 
 @respx.mock
+def test_deal_item_falls_back_to_title_not_sku_when_sku_is_a_bare_number():
+    """Regression test for a real production incident (Digikala order
+    382920341): when the Excel catalog has no confident match for the
+    item's title, a bare-numeric SKU (Digikala's item.sku is the
+    seller's own freeform sellerCode, e.g. "25") must NOT be used as the
+    Didar product Code - it's indistinguishable from one of the client's
+    own manually-assigned catalog Codes and can silently attach the
+    order to a wrong, unrelated existing product. The full marketplace
+    title should be used as the Code instead, same as the existing
+    no-SKU-at-all fallback."""
+    # Explicit blank product_catalog_xlsx (unlike _CFG, which - via
+    # DidarConfig's default_factory - actually picks up this project's
+    # real .env DIDAR_PRODUCT_CATALOG_XLSX) so this test exercises the
+    # "no confident catalog match" path deterministically, the same way
+    # the item's real title genuinely had no match at the time of the
+    # incident this test guards against.
+    cfg = replace(_CFG, product_catalog_xlsx="")
+    order = NormalizedOrder(
+        source="digikala", source_order_id="382920341", order_number="382920341",
+        created_at=datetime.now(timezone.utc), total_price=Decimal("100000"), status="new",
+        items=[OrderItem(
+            sku="25", quantity=1, unit_price=Decimal("100000"), final_price=Decimal("100000"),
+            title="قاب بشقاب 25 میناکاری",
+        )],
+    )
+
+    _mock_categories()
+    search_route = respx.post("https://app.didar.me/api/product/search").mock(
+        return_value=httpx.Response(200, json={"Response": []})
+    )
+    save_route = respx.post("https://app.didar.me/api/product/save").mock(
+        return_value=httpx.Response(200, json={"Response": {"Product": {"Id": "p-new"}}})
+    )
+    deal_route = respx.post("https://app.didar.me/api/deal/save_v2").mock(
+        return_value=httpx.Response(200, json={"Response": {"Deal": {"Id": "d-1"}}})
+    )
+
+    client = DidarDealClient(config=cfg)
+    client.create_deal(contact_id="c-1", display_name="Someone", order=order)
+
+    search_body = search_route.calls[0].request.content.decode()
+    assert '"Keywords":"25"' not in search_body
+    assert "قاب بشقاب 25 میناکاری" in search_body
+
+    save_body = save_route.calls[0].request.content.decode()
+    assert '"Code":"25"' not in save_body
+
+    assert deal_route.calls[0].request.content  # sanity: deal creation still proceeds
+
+
+@respx.mock
+def test_deal_item_uses_real_sku_when_catalog_has_no_match():
+    """A non-numeric, real-looking SKU is still trusted as the Code when
+    the catalog has no confident match - only bare numeric SKUs are
+    treated as unsafe (see the test above)."""
+    cfg = replace(_CFG, product_catalog_xlsx="")
+    order = NormalizedOrder(
+        source="farazhonar", source_order_id="1", order_number="1",
+        created_at=datetime.now(timezone.utc), total_price=Decimal("100000"), status="new",
+        items=[OrderItem(
+            sku="WC-ABC-123", quantity=1, unit_price=Decimal("100000"), final_price=Decimal("100000"),
+            title="یک محصول عادی",
+        )],
+    )
+
+    _mock_categories()
+    respx.post("https://app.didar.me/api/product/search").mock(
+        return_value=httpx.Response(200, json={"Response": []})
+    )
+    save_route = respx.post("https://app.didar.me/api/product/save").mock(
+        return_value=httpx.Response(200, json={"Response": {"Product": {"Id": "p-new"}}})
+    )
+    respx.post("https://app.didar.me/api/deal/save_v2").mock(
+        return_value=httpx.Response(200, json={"Response": {"Deal": {"Id": "d-1"}}})
+    )
+
+    client = DidarDealClient(config=cfg)
+    client.create_deal(contact_id="c-1", display_name="Someone", order=order)
+
+    save_body = save_route.calls[0].request.content
+    assert b'"Code":"WC-ABC-123"' in save_body
+
+
+@respx.mock
 def test_deal_item_description_includes_order_number():
     """Regression test (client feedback, 2026-08): manually-entered deals
     have the order number typed into each item's توضیحات; auto-created
