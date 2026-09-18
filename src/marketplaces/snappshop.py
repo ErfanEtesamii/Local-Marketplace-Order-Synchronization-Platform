@@ -303,6 +303,14 @@ class SnappShopAdapter(MarketplaceAdapter):
             customer_mobile=customer.get("phone"),
             customer_address=customer_address,
             ship_time=_parse_date(pickup_start) if pickup_start else None,
+            # Confirmed on both callers of _normalize_order (order-detail
+            # and order-history - see their docstrings above): `delivery_type`
+            # is documented only for these two endpoints, NOT for
+            # GET /orders/events (unused by this adapter - see
+            # fetch_new_orders, which polls /orders, not /orders/events).
+            # Nothing is guessed when it's absent - same None-means-
+            # "don't touch it" convention as customer_address above.
+            shipping_method=raw.get("delivery_type") or None,
         )
 
     def _normalize_items(self, raw_items: list[dict]) -> list[OrderItem]:
