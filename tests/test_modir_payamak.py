@@ -2,20 +2,32 @@
 Tests for src/modir_payamak.py, in two halves.
 
 PART 1 (first half of this file) - everything below the express-alert
-business logic: the configuration gate, the warehouse message text, the
-exact HTTP request sent to Modir Payamak's IPPanel Edge API
+business logic: the configuration gate, the per-recipient message text,
+the exact HTTP request sent to Modir Payamak's IPPanel Edge API
 (POST https://edge.ippanel.com/v1/api/send), and the conversion of every
 failure shape into ModirPayamakError.
 
 PART 2 (second half, from the "notify_if_express" banner onwards) - the
 behaviour built on top of those primitives: notify_if_express's dedup
-guard against a duplicate SMS for the same (source, source_order_id),
-the record_sms_failure() retry queue, retry_pending_notifications(), and
-a small set of wiring tests against src/sync_engine.py. Those use a real
-Repository against a tmp_path sqlite file rather than a mock, because
-the dedup guard IS a database fact (express_alerts_sent) - a fake
-repository would be asserting on the test's own bookkeeping instead of
-on the thing that actually stops three people being paged twice.
+guard against a duplicate SMS batch for the same (source,
+source_order_id), the record_sms_failure() retry queue,
+retry_pending_notifications(), and a small set of wiring tests against
+src/sync_engine.py. Those use a real Repository against a tmp_path
+sqlite file rather than a mock, because the dedup guard IS a database
+fact (express_alerts_sent) - a fake repository would be asserting on
+the test's own bookkeeping instead of on the thing that actually stops
+three people being paged twice.
+
+EACH RECIPIENT GETS THEIR OWN TEXT (see module docstring's "EACH
+RECIPIENT GETS THEIR OWN TEXT" banner) - so notify_if_express sends one
+personalized message per configured recipient, not one batch call. The
+retry queue's ref_id therefore carries the phone number too
+(`express_sms:{source}:{order_id}:{phone}`), except for the one
+"couldn't even build a recipient list" failure shape recorded when
+is_configured() itself fails, which stays 3-part
+(`express_sms:{source}:{order_id}`) since there is no phone to target -
+retry_pending_notifications() must skip that shape rather than crash on
+a missing ref_id segment.
 
 Two conventions inherited from tests/test_telegram.py, both deliberate:
 
@@ -34,9 +46,10 @@ NOTE ON ENV ISOLATION: tests/conftest.py's autouse fixture strips
 TELEGRAM_* only, and src/config.py calls load_dotenv() at import time, so
 a developer machine with real MODIR_PAYAMAK_* / EXPRESS_ALERT_SMS_*
 values in its .env would otherwise leak live credentials and real phone
-numbers into this suite (and, worse, into a test that reaches the send
-path). _isolate_sms_env below clears all five vars before every test in
-this file; each test then sets only what it means to exercise.
+numbers/names into this suite (and, worse, into a test that reaches the
+send path). _isolate_sms_env below clears every phone AND name var
+before every test in this file; each test then sets only what it means
+to exercise.
 """
 from __future__ import annotations
 
@@ -56,10 +69,15 @@ from src.sync_engine import SyncEngine
 
 # Real-looking but fake credentials - never a live token, and the
 # recipient numbers are the documented +98 E.164 shape from the API
-# reference, not anyone's real line.
+# reference, not anyone's real line. Names are ordinary Persian first
+# names, not anyone real either.
 _TOKEN = "OTUyM2E1ZmItZmFrZS10b2tlbi1mb3ItdGVzdHM"
 _FROM = "+983000505"
-_RECIPIENTS = ["+989121111111", "+989122222222", "+989123333333"]
+_RECIPIENTS = [
+    ("+989121111111", "علی"),
+    ("+989122222222", "رضا"),
+    ("+989123333333", "سارا"),
+]
 
 _API = "https://edge.ippanel.com/v1/api"
 _SEND_URL = f"{_API}/send"
@@ -68,10 +86,15 @@ _ENV_VARS = (
     "MODIR_PAYAMAK_TOKEN",
     "MODIR_PAYAMAK_FROM_NUMBER",
     "EXPRESS_ALERT_SMS_RECIPIENT_1",
+    "EXPRESS_ALERT_SMS_RECIPIENT_1_NAME",
     "EXPRESS_ALERT_SMS_RECIPIENT_2",
+    "EXPRESS_ALERT_SMS_RECIPIENT_2_NAME",
     "EXPRESS_ALERT_SMS_RECIPIENT_3",
+    "EXPRESS_ALERT_SMS_RECIPIENT_3_NAME",
     "EXPRESS_ALERT_SMS_RECIPIENT_4",
+    "EXPRESS_ALERT_SMS_RECIPIENT_4_NAME",
     "EXPRESS_ALERT_SMS_RECIPIENT_5",
+    "EXPRESS_ALERT_SMS_RECIPIENT_5_NAME",
 )
 
 
@@ -105,8 +128,9 @@ def _no_retry_sleep(monkeypatch):
 def _set_full_config(monkeypatch, recipients=_RECIPIENTS):
     monkeypatch.setenv("MODIR_PAYAMAK_TOKEN", _TOKEN)
     monkeypatch.setenv("MODIR_PAYAMAK_FROM_NUMBER", _FROM)
-    for index, value in enumerate(recipients, start=1):
-        monkeypatch.setenv(f"EXPRESS_ALERT_SMS_RECIPIENT_{index}", value)
+    for index, (phone, name) in enumerate(recipients, start=1):
+        monkeypatch.setenv(f"EXPRESS_ALERT_SMS_RECIPIENT_{index}", phone)
+        monkeypatch.setenv(f"EXPRESS_ALERT_SMS_RECIPIENT_{index}_NAME", name)
 
 
 def _configured_notifier(monkeypatch, **kwargs) -> ModirPayamakNotifier:
@@ -181,24 +205,50 @@ def test_is_configured_true_and_makes_no_network_call(monkeypatch):
     assert len(respx.calls) == 0
 
 
-def test_is_configured_collects_all_three_recipients(monkeypatch):
+def test_is_configured_collects_all_three_recipients_with_their_names(monkeypatch):
     notifier = _configured_notifier(monkeypatch)
     assert notifier._recipients == _RECIPIENTS
 
 
 def test_is_configured_skips_empty_recipient_slots(monkeypatch):
-    """Only non-empty values are used, and the configured ones keep their
-    order - a site with a single warehouse number must not end up sending
-    to an empty string."""
+    """Only non-empty phone values are used, and the configured ones keep
+    their order - a site with a single warehouse number must not end up
+    sending to an empty string."""
     _set_full_config(monkeypatch, recipients=[])
-    monkeypatch.setenv("EXPRESS_ALERT_SMS_RECIPIENT_1", _RECIPIENTS[0])
+    monkeypatch.setenv("EXPRESS_ALERT_SMS_RECIPIENT_1", _RECIPIENTS[0][0])
+    monkeypatch.setenv("EXPRESS_ALERT_SMS_RECIPIENT_1_NAME", _RECIPIENTS[0][1])
     monkeypatch.setenv("EXPRESS_ALERT_SMS_RECIPIENT_2", "   ")
-    monkeypatch.setenv("EXPRESS_ALERT_SMS_RECIPIENT_3", _RECIPIENTS[2])
+    monkeypatch.setenv("EXPRESS_ALERT_SMS_RECIPIENT_3", _RECIPIENTS[2][0])
+    monkeypatch.setenv("EXPRESS_ALERT_SMS_RECIPIENT_3_NAME", _RECIPIENTS[2][1])
 
     notifier = ModirPayamakNotifier()
 
     assert notifier.is_configured() is True
     assert notifier._recipients == [_RECIPIENTS[0], _RECIPIENTS[2]]
+
+
+def test_is_configured_defaults_an_unnamed_recipient_to_hamkar(monkeypatch):
+    """A phone number with no matching _NAME var still gets a
+    (generic-but-polite) name in its message, rather than the send
+    failing or the name coming out blank."""
+    _set_full_config(monkeypatch, recipients=[])
+    monkeypatch.setenv("EXPRESS_ALERT_SMS_RECIPIENT_1", _RECIPIENTS[0][0])
+
+    notifier = ModirPayamakNotifier()
+
+    assert notifier.is_configured() is True
+    assert notifier._recipients == [(_RECIPIENTS[0][0], "همکار")]
+
+
+def test_is_configured_treats_a_whitespace_only_name_as_missing(monkeypatch):
+    _set_full_config(monkeypatch, recipients=[])
+    monkeypatch.setenv("EXPRESS_ALERT_SMS_RECIPIENT_1", _RECIPIENTS[0][0])
+    monkeypatch.setenv("EXPRESS_ALERT_SMS_RECIPIENT_1_NAME", "   ")
+
+    notifier = ModirPayamakNotifier()
+
+    assert notifier.is_configured() is True
+    assert notifier._recipients == [(_RECIPIENTS[0][0], "همکار")]
 
 
 def test_is_configured_false_without_token(monkeypatch):
@@ -255,20 +305,38 @@ def test_close_releases_the_client(monkeypatch):
 # Message text
 # ---------------------------------------------------------------------
 
-def test_format_message_names_the_platform_and_order_number(monkeypatch):
+def test_format_message_addresses_the_recipient_by_name(monkeypatch):
     notifier = ModirPayamakNotifier()
-    text = notifier._format_message(_order(source="basalam", order_number="98765"))
+    text = notifier._format_message("علی", _order())
+
+    assert text.startswith("علی عزیز")
+
+
+def test_format_message_names_the_platform_in_farsi_and_the_order_number(monkeypatch):
+    """basalam's internal source key must never leak into a message a
+    non-technical warehouse recipient reads - the Farsi display name
+    from src.telegram._PLATFORM_DISPLAY is used instead."""
+    notifier = ModirPayamakNotifier()
+    text = notifier._format_message("علی", _order(source="basalam", order_number="98765"))
 
     assert "سفارش اکسپرس" in text
-    assert "basalam" in text
+    assert "باسلام" in text
+    assert "basalam" not in text
     assert "98765" in text
+
+
+def test_format_message_falls_back_to_the_raw_source_for_an_unmapped_platform(monkeypatch):
+    notifier = ModirPayamakNotifier()
+    text = notifier._format_message("علی", _order(source="an_unmapped_platform"))
+
+    assert "an_unmapped_platform" in text
 
 
 def test_format_message_falls_back_to_source_order_id(monkeypatch):
     """order_number is optional on NormalizedOrder; the warehouse still
     needs an identifier they can look the shipment up by."""
     notifier = ModirPayamakNotifier()
-    text = notifier._format_message(_order(order_id="777", order_number=None))
+    text = notifier._format_message("علی", _order(order_id="777", order_number=None))
 
     assert "777" in text
 
@@ -285,8 +353,9 @@ def test_send_posts_the_documented_body_to_the_send_endpoint(monkeypatch):
     catches it."""
     route = respx.post(_SEND_URL).mock(return_value=_ok_send_response())
     notifier = _configured_notifier(monkeypatch)
+    phone, _name = _RECIPIENTS[0]
 
-    notifier._send("متن تست")
+    notifier._send(phone, "متن تست")
 
     assert route.called
     body = json.loads(route.calls[0].request.content)
@@ -294,7 +363,7 @@ def test_send_posts_the_documented_body_to_the_send_endpoint(monkeypatch):
         "sending_type": "webservice",
         "from_number": _FROM,
         "message": "متن تست",
-        "params": {"recipients": _RECIPIENTS},
+        "params": {"recipients": [phone]},
     }
 
 
@@ -305,7 +374,7 @@ def test_send_sets_the_authorization_and_content_type_headers(monkeypatch):
     route = respx.post(_SEND_URL).mock(return_value=_ok_send_response())
     notifier = _configured_notifier(monkeypatch)
 
-    notifier._send("متن تست")
+    notifier._send(_RECIPIENTS[0][0], "متن تست")
 
     request = route.calls[0].request
     assert request.headers["Authorization"] == _TOKEN
@@ -313,18 +382,20 @@ def test_send_sets_the_authorization_and_content_type_headers(monkeypatch):
 
 
 @respx.mock
-def test_send_fans_out_to_all_recipients_in_one_request(monkeypatch):
-    """Unlike Telegram (one call per chat id), IPPanel takes the whole
-    recipient list itself - three numbers must mean one HTTP call, not
-    three."""
+def test_send_targets_exactly_the_one_recipient_passed_in(monkeypatch):
+    """Unlike Telegram's single getMe()-style call, and unlike an
+    earlier batch design, each _send() call is scoped to ONE phone
+    number - IPPanel's `params.recipients` here is a single-element
+    list, never the whole configured list."""
     route = respx.post(_SEND_URL).mock(return_value=_ok_send_response())
     notifier = _configured_notifier(monkeypatch)
+    phone, _name = _RECIPIENTS[1]
 
-    notifier._send("متن تست")
+    notifier._send(phone, "متن تست")
 
     assert route.call_count == 1
     body = json.loads(route.calls[0].request.content)
-    assert body["params"]["recipients"] == _RECIPIENTS
+    assert body["params"]["recipients"] == [phone]
 
 
 @respx.mock
@@ -332,7 +403,7 @@ def test_send_succeeds_quietly_on_meta_status_true(monkeypatch):
     respx.post(_SEND_URL).mock(return_value=_ok_send_response())
     notifier = _configured_notifier(monkeypatch)
 
-    assert notifier._send("متن تست") is None
+    assert notifier._send(_RECIPIENTS[0][0], "متن تست") is None
 
 
 # ---------------------------------------------------------------------
@@ -356,7 +427,7 @@ def test_meta_status_false_raises_with_message_and_code(monkeypatch):
     notifier = _configured_notifier(monkeypatch)
 
     with pytest.raises(ModirPayamakError) as exc_info:
-        notifier._send("متن تست")
+        notifier._send(_RECIPIENTS[0][0], "متن تست")
 
     assert "invalid token" in str(exc_info.value)
     assert "ErrInvalidToken" in str(exc_info.value)
@@ -370,7 +441,7 @@ def test_missing_meta_block_is_treated_as_failure(monkeypatch):
     notifier = _configured_notifier(monkeypatch)
 
     with pytest.raises(ModirPayamakError):
-        notifier._send("متن تست")
+        notifier._send(_RECIPIENTS[0][0], "متن تست")
 
 
 @respx.mock
@@ -384,7 +455,7 @@ def test_http_4xx_raises_and_is_not_retried(monkeypatch):
     notifier = _configured_notifier(monkeypatch)
 
     with pytest.raises(ModirPayamakError):
-        notifier._send("متن تست")
+        notifier._send(_RECIPIENTS[0][0], "متن تست")
 
     assert route.call_count == 1
 
@@ -397,7 +468,7 @@ def test_network_error_raises_modir_payamak_error(monkeypatch):
     notifier = _configured_notifier(monkeypatch)
 
     with pytest.raises(ModirPayamakError) as exc_info:
-        notifier._send("متن تست")
+        notifier._send(_RECIPIENTS[0][0], "متن تست")
 
     assert "network error" in str(exc_info.value)
 
@@ -413,7 +484,7 @@ def test_non_json_response_raises_modir_payamak_error(monkeypatch):
     notifier = _configured_notifier(monkeypatch)
 
     with pytest.raises(ModirPayamakError) as exc_info:
-        notifier._send("متن تست")
+        notifier._send(_RECIPIENTS[0][0], "متن تست")
 
     assert "non-JSON" in str(exc_info.value)
 
@@ -427,7 +498,7 @@ def test_server_error_is_retried_then_raises(monkeypatch, _no_retry_sleep):
     notifier = _configured_notifier(monkeypatch)
 
     with pytest.raises(ModirPayamakError):
-        notifier._send("متن تست")
+        notifier._send(_RECIPIENTS[0][0], "متن تست")
 
     assert route.call_count == 3
 
@@ -441,7 +512,7 @@ def test_server_error_that_recovers_mid_retry_succeeds(monkeypatch, _no_retry_sl
     )
     notifier = _configured_notifier(monkeypatch)
 
-    notifier._send("متن تست")
+    notifier._send(_RECIPIENTS[0][0], "متن تست")
 
     assert route.call_count == 2
 
@@ -451,8 +522,8 @@ def test_server_error_that_recovers_mid_retry_succeeds(monkeypatch, _no_retry_sl
 #
 # Everything below uses the real Repository (the `repo` fixture above)
 # and the real _send() path mocked at the HTTP layer with respx, so a
-# test that says "no second SMS went out" is asserting on outbound HTTP
-# calls, not on a stubbed method having been called.
+# test that says "no second SMS batch went out" is asserting on outbound
+# HTTP calls, not on a stubbed method having been called.
 # =====================================================================
 
 def _express_order(source="basalam", order_id="555", method="پست اکسپرس") -> NormalizedOrder:
@@ -472,11 +543,18 @@ def _non_express_order(source="basalam", order_id="556", method="پست پیشت
     return replace(_express_order(source=source, order_id=order_id), shipping_method=method)
 
 
-def _ref_id(order: NormalizedOrder) -> str:
-    """The queue key ModirPayamakNotifier builds - duplicated here on
-    purpose: these tests pin the ref_id format, because it is what makes
-    a re-queued failure bump the SAME sms_notification_failures row
-    (attempt_count) instead of piling up a new row per attempt."""
+def _ref_id(order: NormalizedOrder, phone: str) -> str:
+    """The per-recipient queue key ModirPayamakNotifier builds once it
+    has a phone to target - duplicated here on purpose: these tests pin
+    the ref_id format, because it is what makes a re-queued failure bump
+    the SAME sms_notification_failures row (attempt_count) instead of
+    piling up a new row per attempt."""
+    return f"express_sms:{order.source}:{order.source_order_id}:{phone}"
+
+
+def _unconfigured_ref_id(order: NormalizedOrder) -> str:
+    """The 3-part ref_id recorded when is_configured() itself fails -
+    there is no recipient list yet, so there is no phone to append."""
     return f"express_sms:{order.source}:{order.source_order_id}"
 
 
@@ -485,17 +563,18 @@ def _ref_id(order: NormalizedOrder) -> str:
 # ---------------------------------------------------------------------
 
 @respx.mock
-def test_notify_if_express_sends_the_alert_for_an_express_order(monkeypatch, repo):
+def test_notify_if_express_sends_one_personalized_sms_per_recipient(monkeypatch, repo):
     route = respx.post(_SEND_URL).mock(return_value=_ok_send_response())
     notifier = _configured_notifier(monkeypatch)
     order = _express_order()
 
     notifier.notify_if_express(order, repo)
 
-    assert route.call_count == 1
-    body = json.loads(route.calls[0].request.content)
-    assert body["message"] == notifier._format_message(order)
-    assert body["params"]["recipients"] == _RECIPIENTS
+    assert route.call_count == len(_RECIPIENTS)
+    bodies = [json.loads(call.request.content) for call in route.calls]
+    for body, (phone, name) in zip(bodies, _RECIPIENTS):
+        assert body["params"]["recipients"] == [phone]
+        assert body["message"] == notifier._format_message(name, order)
     # Sent cleanly, so nothing should be sitting in the retry queue.
     assert repo.get_pending_sms_failures() == []
 
@@ -552,11 +631,11 @@ def test_notify_if_express_never_guesses_from_a_missing_shipping_method(
 # all: sync_engine.py calls it from BOTH _sync_one_order() and
 # retry_pending_failures() (see src/modir_payamak.py's docstring). A
 # duplicate Telegram message is mildly annoying; a duplicate here is a
-# second page to three warehouse phones.
+# second page to every warehouse phone.
 # ---------------------------------------------------------------------
 
 @respx.mock
-def test_second_call_for_the_same_order_sends_nothing(monkeypatch, repo):
+def test_second_call_for_the_same_order_sends_nothing_more(monkeypatch, repo):
     route = respx.post(_SEND_URL).mock(return_value=_ok_send_response())
     notifier = _configured_notifier(monkeypatch)
     order = _express_order()
@@ -564,7 +643,7 @@ def test_second_call_for_the_same_order_sends_nothing(monkeypatch, repo):
     notifier.notify_if_express(order, repo)
     notifier.notify_if_express(order, repo)
 
-    assert route.call_count == 1
+    assert route.call_count == len(_RECIPIENTS)
 
 
 @respx.mock
@@ -578,15 +657,15 @@ def test_dedup_survives_a_fresh_notifier_instance(monkeypatch, repo):
     _configured_notifier(monkeypatch).notify_if_express(order, repo)
     _configured_notifier(monkeypatch).notify_if_express(order, repo)
 
-    assert route.call_count == 1
+    assert route.call_count == len(_RECIPIENTS)
 
 
 @respx.mock
 def test_dedup_is_keyed_on_source_and_order_id_together(monkeypatch, repo):
     """Order ids are only unique WITHIN a marketplace - two sources can
     legitimately both have an order "555", and each deserves its own
-    alert. Isolation between sources, same as everywhere else in this
-    project."""
+    alert batch. Isolation between sources, same as everywhere else in
+    this project."""
     route = respx.post(_SEND_URL).mock(return_value=_ok_send_response())
     notifier = _configured_notifier(monkeypatch)
 
@@ -594,7 +673,7 @@ def test_dedup_is_keyed_on_source_and_order_id_together(monkeypatch, repo):
     notifier.notify_if_express(_express_order(source="digikala", order_id="555"), repo)
     notifier.notify_if_express(_express_order(source="basalam", order_id="556"), repo)
 
-    assert route.call_count == 3
+    assert route.call_count == 3 * len(_RECIPIENTS)
 
 
 @respx.mock
@@ -602,8 +681,8 @@ def test_a_failed_send_still_blocks_a_second_send_attempt(monkeypatch, repo):
     """The documented split of responsibilities: the dedup row is
     written BEFORE the send, so a delivery failure is owned by the retry
     queue and never turns into "notify_if_express tries again from
-    scratch next cycle" (which would be a second SMS if the first one
-    had in fact gone out and only the response was lost)."""
+    scratch next cycle" (which would double-page recipients whose first
+    message had in fact gone out and only the response was lost)."""
     route = respx.post(_SEND_URL).mock(return_value=_error_send_response())
     notifier = _configured_notifier(monkeypatch)
     order = _express_order()
@@ -611,9 +690,9 @@ def test_a_failed_send_still_blocks_a_second_send_attempt(monkeypatch, repo):
     notifier.notify_if_express(order, repo)
     notifier.notify_if_express(order, repo)
 
-    assert route.call_count == 1
+    assert route.call_count == len(_RECIPIENTS)
     assert repo.has_express_alert_been_sent(order.source, order.source_order_id) is True
-    assert len(repo.get_pending_sms_failures()) == 1
+    assert len(repo.get_pending_sms_failures()) == len(_RECIPIENTS)
 
 
 # ---------------------------------------------------------------------
@@ -626,7 +705,7 @@ def test_a_failed_send_still_blocks_a_second_send_attempt(monkeypatch, repo):
 # ---------------------------------------------------------------------
 
 @respx.mock
-def test_api_error_queues_the_message_instead_of_raising(monkeypatch, repo):
+def test_api_error_queues_a_failure_per_recipient_instead_of_raising(monkeypatch, repo):
     respx.post(_SEND_URL).mock(
         return_value=_error_send_response(message="invalid token", code="ErrInvalidToken")
     )
@@ -636,14 +715,17 @@ def test_api_error_queues_the_message_instead_of_raising(monkeypatch, repo):
     notifier.notify_if_express(order, repo)  # must not raise
 
     pending = repo.get_pending_sms_failures()
-    assert len(pending) == 1
-    assert pending[0].ref_id == _ref_id(order)
-    assert pending[0].message_text == notifier._format_message(order)
-    assert "invalid token" in pending[0].error_message
+    assert len(pending) == len(_RECIPIENTS)
+    pending_by_ref = {p.ref_id: p for p in pending}
+    for phone, name in _RECIPIENTS:
+        ref_id = _ref_id(order, phone)
+        assert ref_id in pending_by_ref
+        assert pending_by_ref[ref_id].message_text == notifier._format_message(name, order)
+        assert "invalid token" in pending_by_ref[ref_id].error_message
 
 
 @respx.mock
-def test_network_error_queues_the_message_instead_of_raising(monkeypatch, repo):
+def test_network_error_queues_a_failure_per_recipient_instead_of_raising(monkeypatch, repo):
     respx.post(_SEND_URL).mock(side_effect=httpx.ConnectError("connection refused"))
     notifier = _configured_notifier(monkeypatch)
     order = _express_order()
@@ -651,8 +733,8 @@ def test_network_error_queues_the_message_instead_of_raising(monkeypatch, repo):
     notifier.notify_if_express(order, repo)
 
     pending = repo.get_pending_sms_failures()
-    assert len(pending) == 1
-    assert "network error" in pending[0].error_message
+    assert len(pending) == len(_RECIPIENTS)
+    assert all("network error" in p.error_message for p in pending)
 
 
 @respx.mock
@@ -661,25 +743,27 @@ def test_unexpected_error_is_queued_too(monkeypatch, repo):
     isn't a ModirPayamakError must not escape into the sync path."""
     notifier = _configured_notifier(monkeypatch)
     monkeypatch.setattr(
-        notifier, "_send", lambda text: (_ for _ in ()).throw(RuntimeError("boom"))
+        notifier, "_send", lambda phone, text: (_ for _ in ()).throw(RuntimeError("boom"))
     )
     order = _express_order()
 
     notifier.notify_if_express(order, repo)
 
     pending = repo.get_pending_sms_failures()
-    assert len(pending) == 1
-    assert "boom" in pending[0].error_message
+    assert len(pending) == len(_RECIPIENTS)
+    assert all("boom" in p.error_message for p in pending)
 
 
 @respx.mock
-def test_unconfigured_notifier_queues_the_message_without_any_http_call(repo):
+def test_unconfigured_notifier_queues_one_generic_message_without_any_http_call(repo):
     """Mirrors the 2026-09 Telegram gap documented in
     TelegramNotifier.notify_new_order: returning early when the
     notifier isn't configured would lose the message with nothing for
     retry_pending_notifications() to pick up once credentials are
     fixed. No env vars are set here (the autouse fixture stripped them),
-    so is_configured() is False.
+    so is_configured() is False - and with no recipient list at all yet,
+    there's no phone to build a per-recipient ref_id from, so this is
+    the one case that queues a single generic row instead.
 
     respx is active with no routes registered, so any outbound request
     would fail this test outright."""
@@ -692,7 +776,8 @@ def test_unconfigured_notifier_queues_the_message_without_any_http_call(repo):
 
     pending = repo.get_pending_sms_failures()
     assert len(pending) == 1
-    assert pending[0].message_text == notifier._format_message(order)
+    assert pending[0].ref_id == _unconfigured_ref_id(order)
+    assert pending[0].message_text == notifier._format_message("همکار", order)
     assert "not configured" in pending[0].error_message
     assert len(respx.calls) == 0
 
@@ -702,23 +787,27 @@ def test_unconfigured_notifier_queues_the_message_without_any_http_call(repo):
 # ---------------------------------------------------------------------
 
 @respx.mock
-def test_retry_sends_the_queued_message_and_clears_it(monkeypatch, repo):
-    """The full round trip this feature's retry story depends on: a send
-    that failed on one poll cycle goes out on the next one, with the
-    exact text that was queued, and then leaves the queue."""
+def test_retry_sends_each_queued_message_and_clears_them(monkeypatch, repo):
+    """The full round trip this feature's retry story depends on: every
+    send that failed on one poll cycle goes out on the next one, with
+    the exact text that was queued for its recipient, and then leaves
+    the queue."""
     route = respx.post(_SEND_URL).mock(return_value=_error_send_response())
     notifier = _configured_notifier(monkeypatch)
     order = _express_order()
 
     notifier.notify_if_express(order, repo)
-    assert len(repo.get_pending_sms_failures()) == 1
-    queued_text = repo.get_pending_sms_failures()[0].message_text
+    assert len(repo.get_pending_sms_failures()) == len(_RECIPIENTS)
 
     route.mock(return_value=_ok_send_response())
     notifier.retry_pending_notifications(repo)
 
     assert repo.get_pending_sms_failures() == []
-    assert json.loads(route.calls[-1].request.content)["message"] == queued_text
+    retried_messages = {
+        json.loads(call.request.content)["message"] for call in route.calls[-len(_RECIPIENTS):]
+    }
+    expected_messages = {notifier._format_message(name, order) for _, name in _RECIPIENTS}
+    assert retried_messages == expected_messages
 
 
 @respx.mock
@@ -730,13 +819,15 @@ def test_retry_requeues_and_bumps_attempt_count_on_repeated_failure(monkeypatch,
     respx.post(_SEND_URL).mock(return_value=_error_send_response())
     notifier = _configured_notifier(monkeypatch)
     order = _express_order()
+    phone, name = _RECIPIENTS[0]
+    ref_id = _ref_id(order, phone)
+    repo.record_sms_failure(ref_id, notifier._format_message(name, order), "previous failure")
 
-    notifier.notify_if_express(order, repo)          # attempt 1
-    notifier.retry_pending_notifications(repo)       # attempt 2
+    notifier.retry_pending_notifications(repo)  # attempt 2
 
     pending = repo.get_pending_sms_failures()
     assert len(pending) == 1
-    assert pending[0].ref_id == _ref_id(order)
+    assert pending[0].ref_id == ref_id
     assert pending[0].attempt_count == 2
 
 
@@ -748,8 +839,10 @@ def test_retry_gives_up_after_max_attempts(monkeypatch, repo):
     route = respx.post(_SEND_URL).mock(return_value=_ok_send_response())
     notifier = _configured_notifier(monkeypatch)
     order = _express_order()
+    phone, _name = _RECIPIENTS[0]
+    ref_id = _ref_id(order, phone)
     for _ in range(5):
-        repo.record_sms_failure(_ref_id(order), "متن تست", "previous failure")
+        repo.record_sms_failure(ref_id, "متن تست", "previous failure")
 
     notifier.retry_pending_notifications(repo, max_attempts=5)
 
@@ -761,12 +854,33 @@ def test_retry_is_a_no_op_when_the_notifier_is_not_configured(repo):
     """Credentials removed (or never set) must not drain the queue -
     the messages have to survive until the config is fixed."""
     order = _express_order()
-    repo.record_sms_failure(_ref_id(order), "متن تست", "previous failure")
+    phone, _name = _RECIPIENTS[0]
+    repo.record_sms_failure(_ref_id(order, phone), "متن تست", "previous failure")
 
     ModirPayamakNotifier().retry_pending_notifications(repo)
 
     assert len(repo.get_pending_sms_failures()) == 1
     assert len(respx.calls) == 0
+
+
+@respx.mock
+def test_retry_skips_a_legacy_three_part_ref_id_with_no_phone(monkeypatch, repo):
+    """A failure queued back when is_configured() itself failed (see
+    notify_if_express) has no phone to target - retry must skip it
+    (leaving it for manual follow-up, logged) rather than crash trying
+    to read a 4th ":"-separated segment that was never written."""
+    route = respx.post(_SEND_URL).mock(return_value=_ok_send_response())
+    notifier = _configured_notifier(monkeypatch)
+    order = _express_order()
+    legacy_ref_id = _unconfigured_ref_id(order)
+    repo.record_sms_failure(legacy_ref_id, "متن تست", "modir payamak not configured")
+
+    notifier.retry_pending_notifications(repo)
+
+    assert route.call_count == 0
+    pending = repo.get_pending_sms_failures()
+    assert len(pending) == 1
+    assert pending[0].ref_id == legacy_ref_id
 
 
 @respx.mock
@@ -792,9 +906,10 @@ def test_retry_does_not_reopen_the_dedup_guard(monkeypatch, repo):
 
 @respx.mock
 def test_retry_drains_each_queued_message_independently(monkeypatch, repo):
-    """One message still failing must not stop the others going out -
-    the loop catches per message, and (as elsewhere in this project) one
-    source's problem never breaks another's.
+    """One order's recipients still failing must not stop another
+    order's from going out - the loop catches per message, and (as
+    elsewhere in this project) one source's problem never breaks
+    another's.
 
     The mock keys off the message body rather than call order, because
     get_pending_sms_failures() makes no promise about row order.
@@ -813,12 +928,13 @@ def test_retry_drains_each_queued_message_independently(monkeypatch, repo):
 
     notifier.notify_if_express(stuck_order, repo)
     notifier.notify_if_express(other_order, repo)
-    assert len(repo.get_pending_sms_failures()) == 1
+    assert len(repo.get_pending_sms_failures()) == len(_RECIPIENTS)
 
     notifier.retry_pending_notifications(repo)
 
     pending = repo.get_pending_sms_failures()
-    assert [failure.ref_id for failure in pending] == [_ref_id(stuck_order)]
+    expected_ref_ids = {_ref_id(stuck_order, phone) for phone, _ in _RECIPIENTS}
+    assert {failure.ref_id for failure in pending} == expected_ref_ids
 
 
 # =====================================================================
@@ -923,11 +1039,11 @@ def test_sync_engine_notifies_on_the_retry_path(repo, tmp_path):
 
 
 @respx.mock
-def test_sync_engine_sends_exactly_one_sms_end_to_end(monkeypatch, repo, tmp_path):
+def test_sync_engine_sends_one_sms_per_recipient_end_to_end(monkeypatch, repo, tmp_path):
     """Real notifier, real repository, HTTP mocked at the edge: one
-    express order through the engine means one POST to Modir Payamak,
-    and the engine's second call site for the same order means no
-    second one."""
+    express order through the engine means one POST to Modir Payamak per
+    configured recipient, and the engine's second call site for the
+    same order means no additional ones."""
     route = respx.post(_SEND_URL).mock(return_value=_ok_send_response())
     notifier = _configured_notifier(monkeypatch)
     order = _express_order()
@@ -936,7 +1052,7 @@ def test_sync_engine_sends_exactly_one_sms_end_to_end(monkeypatch, repo, tmp_pat
     engine._sync_source(adapter)
     engine._sms_notifier.notify_if_express(order, repo)  # the retry-path call site
 
-    assert route.call_count == 1
+    assert route.call_count == len(_RECIPIENTS)
 
 
 @respx.mock
@@ -955,7 +1071,7 @@ def test_sms_failure_never_breaks_the_sync(monkeypatch, repo, tmp_path):
     """The point of the whole fire-and-forget contract: with the SMS API
     returning an error, the order is still synced and marked, NO sync
     failure is recorded (which would re-push the order to Didar on the
-    next cycle), and the SMS itself waits in its own queue."""
+    next cycle), and each recipient's SMS waits in its own queue row."""
     respx.post(_SEND_URL).mock(return_value=_error_send_response())
     notifier = _configured_notifier(monkeypatch)
     order = _express_order()
@@ -965,4 +1081,4 @@ def test_sms_failure_never_breaks_the_sync(monkeypatch, repo, tmp_path):
 
     assert repo.is_already_synced(order.source, order.source_order_id) is True
     assert repo.get_pending_failures() == []
-    assert len(repo.get_pending_sms_failures()) == 1
+    assert len(repo.get_pending_sms_failures()) == len(_RECIPIENTS)

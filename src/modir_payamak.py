@@ -63,12 +63,12 @@ sent" but whose delivery is still queued for retry is exactly the
 intended state, mirroring `mark_synced()` running before
 `notify_new_order()`'s own send attempt in the Telegram flow.
 
-ONE MESSAGE, ALL RECIPIENTS IN ONE CALL: unlike Telegram (one call per
-chat id), IPPanel's `params.recipients` takes the whole recipient list
-in a single `/send` request, so `notify_if_express()` builds one
-message and hands it to `_send()` once. The retry queue's `ref_id` is
-therefore just `express_sms:{source}:{order_id}` - one row per order,
-not one per recipient.
+EACH RECIPIENT GETS THEIR OWN TEXT, so (unlike the earlier 3-number
+"one batch call" design) a send is per-recipient, not a single
+`params.recipients` list. The retry queue's `ref_id` therefore carries
+the phone number too (`express_sms:{source}:{order_id}:{phone}`) so
+`retry_pending_notifications()` knows which one number a queued
+failure belongs to without Repository needing a new column.
 
 Env vars (added to config.py / .env in stage 8 of this feature):
     MODIR_PAYAMAK_TOKEN, MODIR_PAYAMAK_FROM_NUMBER,
@@ -103,6 +103,7 @@ import httpx
 from src.express_alert import is_express_order
 from src.http_utils import default_retry, raise_for_status_with_body
 from src.logger import get_logger
+from src.telegram import _PLATFORM_DISPLAY
 
 if TYPE_CHECKING:
     from src.db.repository import Repository
@@ -112,10 +113,11 @@ log = get_logger(__name__)
 
 _IPPANEL_API_BASE = "https://edge.ippanel.com/v1/api"
 
-# Up to 5 recipient phone numbers - IPPanel's `params.recipients` takes
-# the whole list in one call (see _send below), so unlike the earlier
-# per-recipient-name design there is nothing else to pair each number
-# with.
+# Recipient number N and the name used in N's own message text
+# ("{name} عزیز ...") are two separate env vars so a phone number is
+# never parsed out of a free-text name field (Persian names can contain
+# almost anything, including digits/punctuation that would make a
+# packed "name|phone" var ambiguous to split).
 _RECIPIENT_ENV_VARS = (
     "EXPRESS_ALERT_SMS_RECIPIENT_1",
     "EXPRESS_ALERT_SMS_RECIPIENT_2",
@@ -143,7 +145,7 @@ class ModirPayamakNotifier:
 
     def __init__(self) -> None:
         self._client: Optional[httpx.Client] = None
-        self._recipients: list[str] = []
+        self._recipients: list[tuple[str, str]] = []  # (phone, name)
         self._configured: bool = False
 
     def close(self) -> None:
@@ -172,11 +174,13 @@ class ModirPayamakNotifier:
 
         token = os.getenv("MODIR_PAYAMAK_TOKEN", "").strip()
         from_number = os.getenv("MODIR_PAYAMAK_FROM_NUMBER", "").strip()
-        recipients: list[str] = [
-            phone
-            for var in _RECIPIENT_ENV_VARS
-            if (phone := os.getenv(var, "").strip())
-        ]
+        recipients: list[tuple[str, str]] = []
+        for var in _RECIPIENT_ENV_VARS:
+            phone = os.getenv(var, "").strip()
+            if not phone:
+                continue
+            name = os.getenv(f"{var}_NAME", "").strip() or "همکار"
+            recipients.append((phone, name))
 
         if not token or not from_number:
             log.debug("modir_payamak: credentials not set, SMS alerts disabled")
@@ -237,27 +241,35 @@ class ModirPayamakNotifier:
         # should be notified about at all.
         repository.mark_express_alert_sent(order.source, order.source_order_id)
 
-        ref_id = f"express_sms:{order.source}:{order.source_order_id}"
-        description = (
-            f"express alert SMS for {order.source} order {order.source_order_id}"
-        )
-
         if not self.is_configured():
+            # No recipient list at all yet (or missing credentials) - can't
+            # even build per-recipient ref_ids, so queue one generic
+            # failure row rather than silently dropping the alert.
+            description = (
+                f"express alert SMS for {order.source} order {order.source_order_id}"
+            )
             log.error(
                 "modir_payamak: not configured - queuing %s for retry", description
             )
             repository.record_sms_failure(
-                ref_id,
-                self._format_message(order),
+                f"express_sms:{order.source}:{order.source_order_id}",
+                self._format_message("همکار", order),
                 "modir payamak not configured (is_configured() failed)",
             )
             return
 
-        # One message, fanned out to every configured recipient in a
-        # single call (see _send) - so this is one delivery/retry row
-        # per order, not one per recipient.
-        message = self._format_message(order)
-        self._deliver(ref_id, message, repository, description)
+        # Each of the (up to 5) recipients gets their own message, with
+        # their own name substituted in - so this is 5 independent
+        # deliveries/retry rows, not one batch send (see module
+        # docstring's "EACH RECIPIENT GETS THEIR OWN TEXT").
+        for phone, name in self._recipients:
+            message = self._format_message(name, order)
+            ref_id = f"express_sms:{order.source}:{order.source_order_id}:{phone}"
+            description = (
+                f"express alert SMS for {order.source} order "
+                f"{order.source_order_id} to {phone}"
+            )
+            self._deliver(ref_id, phone, message, repository, description)
 
     def retry_pending_notifications(self, repository: "Repository", max_attempts: int = 5) -> None:
         """Re-attempt every express-alert SMS that failed to send on a
@@ -270,8 +282,22 @@ class ModirPayamakNotifier:
         if not self.is_configured():
             return
         for failure in repository.get_pending_sms_failures(max_attempts=max_attempts):
+            # ref_id is "express_sms:{source}:{order_id}:{phone}" for a
+            # per-recipient failure (see notify_if_express), or the
+            # 3-part "express_sms:{source}:{order_id}" form recorded
+            # when is_configured() itself failed (no phone to target -
+            # skipped here and left for manual follow-up, since there is
+            # no recipient list to resend it to).
+            parts = failure.ref_id.split(":")
+            if len(parts) != 4:
+                log.warning(
+                    "modir_payamak: queued SMS %s has no target phone - "
+                    "skipping retry (needs manual resend)", failure.ref_id,
+                )
+                continue
+            phone = parts[3]
             try:
-                self._send(failure.message_text)
+                self._send(phone, failure.message_text)
                 repository.clear_sms_failure(failure.ref_id)
                 log.info(
                     "modir_payamak: retry succeeded for queued SMS %s", failure.ref_id
@@ -292,14 +318,23 @@ class ModirPayamakNotifier:
     # ------------------------------------------------------------------
     # Message formatting
     # ------------------------------------------------------------------
-    def _format_message(self, order: "NormalizedOrder") -> str:
-        """The single warehouse-alert text sent to every recipient in
-        one batch (see _send). order_number is optional on
-        NormalizedOrder, so source_order_id is the fallback identifier
-        the warehouse can still look the shipment up by."""
+    def _format_message(self, name: str, order: "NormalizedOrder") -> str:
+        """Personalized alert text, addressed to this one recipient by
+        name. Platform name is looked up the same way Telegram's
+        per-order message does (`src.telegram._PLATFORM_DISPLAY`) so an
+        internal source key like "digikala" never leaks into a message
+        a non-technical recipient reads - falls back to the raw source
+        string for a platform not in that mapping, same as Telegram.
+
+        order_number is optional on NormalizedOrder, so source_order_id
+        is the fallback identifier the warehouse can still look the
+        shipment up by - without an identifier at all, a personalized
+        "عزیز" greeting is friendlier but no more actionable than the
+        anonymous batch message it replaces."""
+        _, platform = _PLATFORM_DISPLAY.get(order.source, ("⚪", order.source))
         identifier = order.order_number or order.source_order_id
         return (
-            f"سفارش اکسپرس جدید از {order.source} ثبت شد - "
+            f"{name} عزیز سفارش اکسپرس جدید از پلتفرم {platform} ثبت شد - "
             f"شماره سفارش {identifier} - لطفا پیگیری شود"
         )
 
@@ -307,15 +342,14 @@ class ModirPayamakNotifier:
     # Retry queue for failed sends (mirrors TelegramNotifier._deliver)
     # ------------------------------------------------------------------
     def _deliver(
-        self, ref_id: str, text: str, repository: "Repository", description: str
+        self, ref_id: str, phone: str, text: str, repository: "Repository", description: str
     ) -> None:
-        """Attempt to send `text` to every configured recipient right
-        now; on ANY failure, persist it to Repository's SMS retry queue
-        under `ref_id` so retry_pending_notifications() picks it up on a
-        later poll cycle instead of the message being silently gone
-        forever."""
+        """Attempt to send `text` to `phone` right now; on ANY failure,
+        persist it to Repository's SMS retry queue under `ref_id` so
+        retry_pending_notifications() picks it up on a later poll cycle
+        instead of the message being silently gone forever."""
         try:
-            self._send(text)
+            self._send(phone, text)
             log.info("modir_payamak: sent %s", description)
         except ModirPayamakError as exc:
             log.error(
@@ -328,12 +362,13 @@ class ModirPayamakNotifier:
             )
             repository.record_sms_failure(ref_id, text, str(exc))
 
-    def _send(self, text: str) -> None:
-        """POST /v1/api/send once, fanning `text` out to every configured
-        recipient in a single call via IPPanel's `params.recipients` list
-        - unlike Telegram (one call per chat id), IPPanel takes the whole
-        recipient list itself. Only called after is_configured() has
-        populated self._client."""
+    def _send(self, phone: str, text: str) -> None:
+        """POST /v1/api/send for one recipient. Each recipient's message
+        text differs (their own name is in it - see _format_message), so
+        unlike the earlier "one call, N recipients" batch design this is
+        one call per phone number; IPPanel's `params.recipients` is still
+        a list, just a single-element one here. Only called after
+        is_configured() has populated self._client."""
         assert self._client is not None  # only called after is_configured()
         self._request(
             self._client,
@@ -341,7 +376,7 @@ class ModirPayamakNotifier:
             sending_type="webservice",
             from_number=self._from_number,
             message=text,
-            params={"recipients": self._recipients},
+            params={"recipients": [phone]},
         )
 
     @default_retry()
