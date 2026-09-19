@@ -62,6 +62,37 @@ When that happens this logs a warning and deterministically picks the
 first tied entry in catalog order rather than raising - a strict block
 on every tie would stop sync for well-behaved cases where the tie is
 merely a genuine duplicate row pointing at the same real product.
+
+FAMILY FALLBACK (runs only after containment has found a winner)
+----------------------------------------------------------------
+Containment picks the wrong row when the marketplace title lacks the
+words that tell sibling catalog rows apart. Example: "شکلات خوری خاتم
+کاری مدل حوضی کد 316 | ..." fully contains the generic row "شکلات
+خوري خاتم" (Code 1290013), which wins - but the intended row is
+"شکلات خوري حوضي شش گوشه تمام خاتم" (Code 2610003), and it fails
+containment only because the title never says "شش", "گوشه", "تمام".
+
+Given the containment winner W, _family_fallback() scans for a more
+specific sibling row R of W: every word of W must be in R (strictly
+inside it), R must itself have failed containment, and the title's
+head (the text before the first "|", minus _FAMILY_FILLER words) must
+explain at least one extra word of R that is not in _FAMILY_MARKETING.
+R is rejected outright if any word of R the title does NOT state
+contains a digit - a size, count or number is never guessed. Among
+candidates the best is the one whose extra words the head explains
+most, then the one with the fewest unstated words; catalog order
+breaks ties. No candidate -> W is returned exactly as before. A
+candidate -> it is returned instead, with a "family fallback" WARNING
+naming the title, W and the chosen row so the swap is auditable.
+
+Limits (deliberate - no fuzzy matching, embeddings or LLM calls):
+- It only helps when containment already has a winner. If a catalog
+  word is missing from the title and no generic row exists, the result
+  is still None.
+- It can pick a plausible-but-wrong sibling when the title says
+  something the catalog spells differently.
+- The rule it encodes: "when the title doesn't specify, prefer the
+  simplest row of the family".
 """
 from __future__ import annotations
 
@@ -155,6 +186,26 @@ _PERSIAN_DIGIT_BOUNDARY = re.compile(
 # Scoped to a >=2-character Persian prefix so the standalone word "کاری"
 # itself is never split into "" + "کاری".
 _CRAFT_SUFFIX_BOUNDARY = re.compile(r"(?<=[\u0600-\u06FF]{2})کاری$")
+
+# Family fallback (see the module docstring's FAMILY FALLBACK section).
+# Both sets hold already-normalized tokens (same form _tokenize emits).
+#
+# _FAMILY_FILLER: boilerplate words marketplaces wrap around every title
+# (brand, "model"/"code" labels, warranty boilerplate). Stripped from the
+# title's head so they can never count as evidence that a longer catalog
+# row is the intended one.
+_FAMILY_FILLER = frozenset({
+    "مدل", "کد", "و", "فراز", "هنر", "فرازهنر", "چند", "رنگ",
+    "گارانتی", "اصالت", "سلامت", "فیزیکی", "کالا",
+})
+
+# _FAMILY_MARKETING: words that only describe how a product is bundled or
+# pitched (set / pack / gift / box), not which family member it is. They
+# may appear in the title's head, but on their own they are not enough
+# to justify swapping the containment winner for a longer row - the
+# regression this guards against is "ست هدیه ... راستین 1" drifting to
+# "پک هدیه راستین 1" purely because both say "هدیه".
+_FAMILY_MARKETING = frozenset({"ست", "پک", "هدیه", "باکس"})
 
 
 @dataclass(frozen=True)
@@ -270,7 +321,9 @@ class ProductCatalog:
         """Best catalog match for a marketplace item's title, or None if
         nothing in the catalog is fully word-set-contained in it - see
         module docstring for the containment rule and why it's used
-        instead of raw word-overlap scoring."""
+        instead of raw word-overlap scoring. When containment finds a
+        winner, _family_fallback() may swap it for a more specific
+        sibling row - see the FAMILY FALLBACK section there."""
         if not platform_title:
             return None
         title_tokens = _tokenize(platform_title)
@@ -296,5 +349,63 @@ class ProductCatalog:
                 platform_title, len(tied), best_len,
                 [t for _, t, _ in tied],
             )
-        _, title, code = candidates[0]
+        winner = candidates[0]
+        try:
+            sibling = self._family_fallback(platform_title, title_tokens, winner)
+        except Exception:
+            # match() must never raise: if the fallback step itself
+            # breaks, degrade to today's behaviour (the containment
+            # winner) instead of failing the sync.
+            log.exception(
+                "didar: family fallback failed for title %r - using the "
+                "containment winner %r",
+                platform_title, winner[1],
+            )
+            sibling = None
+        _, title, code = sibling if sibling is not None else winner
         return CatalogMatch(code=code, title=title)
+
+    def _family_fallback(
+        self,
+        platform_title: str,
+        title_tokens: frozenset[str],
+        winner: tuple[frozenset[str], str, str],
+    ) -> tuple[frozenset[str], str, str] | None:
+        """Look for a more specific sibling of the containment winner
+        (see the module docstring's FAMILY FALLBACK section). Returns
+        the chosen (tokens, title, code) entry, or None to keep the
+        winner. Logs the "family fallback" warning when it returns an
+        entry."""
+        winner_tokens, winner_title, winner_code = winner
+        head = _tokenize(platform_title.split("|")[0]) - _FAMILY_FILLER
+
+        best: tuple[frozenset[str], str, str] | None = None
+        best_key: tuple[int, int] | None = None
+        for entry in self._entries:
+            tokens, _, code = entry
+            if code == winner_code:
+                continue
+            if not winner_tokens < tokens:  # strict subset of the row
+                continue
+            if tokens <= title_tokens:
+                # Would already have won containment - not a fallback.
+                continue
+            explained = ((tokens - winner_tokens) & head) - _FAMILY_MARKETING
+            if not explained:
+                continue
+            leftover = tokens - title_tokens
+            if any(ch.isdigit() for token in leftover for ch in token):
+                # Never guess a size/count/number the title didn't state.
+                continue
+            key = (-len(explained), len(leftover))
+            if best_key is None or key < best_key:  # strict: first wins ties
+                best, best_key = entry, key
+
+        if best is not None:
+            log.warning(
+                "didar: family fallback for title %r - containment winner "
+                "%r (code %s) replaced by more specific sibling row %r "
+                "(code %s)",
+                platform_title, winner_title, winner_code, best[1], best[2],
+            )
+        return best
