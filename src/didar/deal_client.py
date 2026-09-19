@@ -102,6 +102,12 @@ _SOURCE_DISPLAY_NAMES = {
     "digikala2": "دیجی‌کالا (فروشگاه دوم)",
     "basalam": "باسلام",
     "snappshop": "اسنپ‌شاپ",
+    # Second SnappShop vendor account (src/marketplaces/snappshop2.py) -
+    # distinct display name for readability in reports/messages, even
+    # though (per client request) it shares the FIRST store's own Didar
+    # Deal Label - see DidarConfig.deal_label_title_by_source in
+    # config.py.
+    "snappshop2": "اسنپ‌شاپ (فروشگاه دوم)",
     "farazhonar": "فرازهنر",
     # Digikala FBD - "ارسال به انبار دیجی‌کالا" (src/marketplaces/
     # digikala_warehouse.py). Not a customer-order source; listed here
@@ -154,6 +160,10 @@ _PANEL_URLS = {
     "digikala2": "https://seller.digikala.com/pwa",
     "basalam": "https://vendor.basalam.com",
     "snappshop": "https://seller.snappshop.ir/dashboard",
+    # Second SnappShop vendor account (src/marketplaces/snappshop2.py) -
+    # same vendor panel URL as the first account (both log in via
+    # seller.snappshop.ir with their own separate credentials).
+    "snappshop2": "https://seller.snappshop.ir/dashboard",
 }
 
 

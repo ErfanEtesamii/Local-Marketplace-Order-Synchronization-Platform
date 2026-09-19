@@ -21,6 +21,7 @@ from src.marketplaces.digikala2 import Digikala2Adapter
 from src.marketplaces.digikala_warehouse import DigikalaWarehouseAdapter
 from src.marketplaces.farazhonar import FarazHonarAdapter
 from src.marketplaces.snappshop import SnappShopAdapter
+from src.marketplaces.snappshop2 import SnappShop2Adapter
 from src.marketplaces.tapsishop import TapsiShopAdapter
 from src.modir_payamak import ModirPayamakNotifier
 from src.reporting import check_health, generate_daily_report
@@ -47,6 +48,17 @@ def build_engine() -> tuple[SyncEngine, Repository]:
         # SnappShopConfig.enabled in config.py. Set SNAPPSHOP_ENABLED=true
         # in .env once real credentials exist; no code change needed.
         log.info("snappshop: disabled (SNAPPSHOP_ENABLED is not 'true') - skipping")
+
+    if settings.snappshop2.enabled:
+        adapters.append(SnappShop2Adapter())
+    else:
+        # SNAPPSHOP2_ENABLED=false (the default) - second SnappShop
+        # vendor account (client request, 2026-09 - see
+        # src/marketplaces/snappshop2.py), same explicit opt-in pattern
+        # as SNAPPSHOP_ENABLED above. Set SNAPPSHOP2_ENABLED=true in
+        # .env once this account's own vendor_id is confirmed; no code
+        # change needed.
+        log.info("snappshop2: disabled (SNAPPSHOP2_ENABLED is not 'true') - skipping")
 
     if settings.digikala2.enabled:
         adapters.append(Digikala2Adapter())

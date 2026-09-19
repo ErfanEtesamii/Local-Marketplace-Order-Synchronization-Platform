@@ -851,6 +851,11 @@ CANCELLED_OR_FAILED_STATUSES: dict[str, set[str]] = {
     # missing `order_status` entirely - included so that case passes
     # through for manual review rather than silently syncing.
     "snappshop": {"canceled", "unknown"},
+    # Second SnappShop vendor account (src/marketplaces/snappshop2.py) -
+    # same vendor API, same status values, so the same blacklist
+    # applies unchanged. Kept as its own dict entry (not a shared
+    # reference), same reasoning as "digikala2" above.
+    "snappshop2": {"canceled", "unknown"},
 }
 
 # Allow-list: for a source listed here, ONLY these statuses may reach Didar -

@@ -273,6 +273,14 @@ class DidarConfig:
             "digikala2": self.deal_label_title_digikala2,
             "basalam": self.deal_label_title_basalam,
             "snappshop": self.deal_label_title_snappshop,
+            # Second SnappShop store (src/marketplaces/snappshop2.py) -
+            # CLIENT DECISION (2026-09, explicit chat request): unlike
+            # digikala2 above, this deliberately resolves through the
+            # SAME "اسنپ" Deal Label the first store's orders already
+            # use, not a distinct one - so this reuses
+            # deal_label_title_snappshop directly rather than adding a
+            # DIDAR_DEAL_LABEL_TITLE_SNAPPSHOP2 field.
+            "snappshop2": self.deal_label_title_snappshop,
             "farazhonar": self.deal_label_title_farazhonar,
         }
 
@@ -369,6 +377,48 @@ def _build_digikala2_config() -> DigikalaConfig:
     )
 
 
+def _build_snappshop2_config() -> SnappShopConfig:
+    """Second SnappShop vendor account - client request 2026-09 ("اسنپ
+    شاپ دوم رو هم مشابه دیجی کالا دوم میخوایم ثبت کنیم"): same
+    independent-adapter pattern as _build_digikala2_config()/
+    Digikala2Adapter (own class, own config, own file - see
+    src/marketplaces/snappshop2.py), reading SNAPPSHOP2_* env vars.
+
+    base_url and price_unit fall back to the first store's own values
+    when left blank/unset, since both stores talk to the same SnappShop
+    vendor API/currency - auth_token, agent_user and vendor_id never
+    fall back, each store's credentials are its own. Note base_url and
+    auth_token are commonly the SAME value across a client's multiple
+    SnappShop vendor accounts (the Bearer token identifies the calling
+    integration, not a single vendor - GET /vendors can list several
+    accessible vendors under one token; see snappshop.py's module
+    docstring) - it's agent_user/vendor_id that actually select which
+    vendor a request acts on, so distinct values there matter far more
+    than distinct values here.
+
+    Unlike Digikala's second store, this deliberately does NOT get its
+    own Deal Label (see deal_label_title_by_source above) - the client
+    explicitly asked for the SAME "اسنپ" label to be reused for both
+    SnappShop stores' deals.
+    """
+    fallback_price_unit = _get_or("SNAPPSHOP_PRICE_UNIT", "toman")
+    resolved_price_unit = _get_or("SNAPPSHOP2_PRICE_UNIT", fallback_price_unit)
+    if resolved_price_unit.strip().lower() not in ("toman", "rial"):
+        raise ValueError(
+            f"SNAPPSHOP2_PRICE_UNIT={resolved_price_unit!r} is invalid - must be "
+            f"'toman' or 'rial' (see src/currency.py for what each source is "
+            f"currently set to)"
+        )
+    return SnappShopConfig(
+        enabled=_get("SNAPPSHOP2_ENABLED", "false").lower() == "true",
+        base_url=_get_or("SNAPPSHOP2_BASE_URL", _get("SNAPPSHOP_BASE_URL")),
+        auth_token=_get("SNAPPSHOP2_AUTH_TOKEN"),
+        agent_user=_get("SNAPPSHOP2_AGENT_USER"),
+        vendor_id=_get("SNAPPSHOP2_VENDOR_ID"),
+        price_unit=resolved_price_unit.strip().lower(),
+    )
+
+
 @dataclass(frozen=True)
 class Settings:
     log_level: str = field(default_factory=lambda: _get("LOG_LEVEL", "INFO"))
@@ -423,6 +473,10 @@ class Settings:
     # rationale.
     digikala2: DigikalaConfig = field(default_factory=_build_digikala2_config)
     snappshop: SnappShopConfig = field(default_factory=SnappShopConfig)
+    # Second SnappShop vendor account - see _build_snappshop2_config's
+    # and src/marketplaces/snappshop2.py's docstrings for the full
+    # rationale.
+    snappshop2: SnappShopConfig = field(default_factory=_build_snappshop2_config)
     basalam: BasalamConfig = field(default_factory=BasalamConfig)
     farazhonar: FarazHonarConfig = field(default_factory=FarazHonarConfig)
     didar: DidarConfig = field(default_factory=DidarConfig)

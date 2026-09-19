@@ -197,6 +197,12 @@ _PLATFORM_DISPLAY = {
     "tapsishop": ("🟠", "تپسی‌شاپ"),
     "farazhonar": ("🔵", "فرازهنر"),
     "snappshop": ("⚪", "اسنپ‌شاپ"),
+    # Second SnappShop vendor account (src/marketplaces/snappshop2.py) -
+    # same neutral circle (same underlying platform), distinct display
+    # name so per-order Telegram messages/reports are still
+    # distinguishable between the two accounts - same reasoning as
+    # "digikala2" above.
+    "snappshop2": ("⚪", "اسنپ‌شاپ (فروشگاه دوم)"),
 }
 
 # Reverse lookup (Didar Deal Label title -> emoji) so the manual-deal

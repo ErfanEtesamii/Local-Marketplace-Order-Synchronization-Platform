@@ -20,6 +20,7 @@ uses official/documented APIs wherever they exist.
 | Tapsi Shop | `src/marketplaces/tapsishop.py` | Bearer token | ✅ live orders syncing |
 | Basalam | `src/marketplaces/basalam.py` | Bearer token (official Salam API) | ✅ live orders syncing |
 | SnappShop | `src/marketplaces/snappshop.py` | Bearer token + Agent-User header | ⏸️ disabled by default — client hasn't been granted API access yet (`SNAPPSHOP_ENABLED=false`); schema confirmed against the official vendor API doc and a real order, code is written and tested, just waiting on credentials |
+| SnappShop (فروشگاه دوم / second vendor account) | `src/marketplaces/snappshop2.py` | Bearer token + Agent-User header (same model as the first SnappShop account) | ⏸️ disabled by default (`SNAPPSHOP2_ENABLED=false`) — code written and unit-tested against the same confirmed schema as the first account, but this account's own `SNAPPSHOP2_VENDOR_ID` is still needed before it can run |
 | Didar CRM | `src/didar/*.py` | API key (query param) | ✅ Contact, Product, Deal, and post-sale checklist Activity creation all confirmed live |
 
 243 automated tests passing (`pytest tests/ -v`). See [`docs/architecture.md`](docs/architecture.md)
@@ -102,6 +103,7 @@ src/
 │   ├── digikala2.py            # second Digikala store - independent copy, see docs/architecture.md
 │   ├── basalam.py
 │   ├── snappshop.py
+│   ├── snappshop2.py           # second SnappShop vendor account - independent copy, see docs/architecture.md
 │   └── farazhonar.py
 └── didar/
     ├── contact_client.py       # upsert Contact - search-first by CustomerCode/MobilePhone
@@ -196,6 +198,15 @@ ActivityTypes).
   `digikala.py`, not a subclass — see
   [`docs/architecture.md`](docs/architecture.md) for why, and note that
   any future Digikala bugfix needs to be applied to both files by hand.
+- **SnappShop (second vendor account)**: gated behind `SNAPPSHOP2_ENABLED`,
+  same opt-in pattern as the sources above — off by default until this
+  account's own `SNAPPSHOP2_VENDOR_ID` (plus `_AUTH_TOKEN`/`_AGENT_USER`)
+  is filled into `.env`. The adapter (`src/marketplaces/snappshop2.py`)
+  is a deliberately independent copy of `snappshop.py`, same tradeoff as
+  the second Digikala store. Unlike the second Digikala store, it
+  reuses the FIRST SnappShop account's own Didar Deal Label ("اسنپ")
+  rather than getting a distinct one — a specific client instruction
+  for this account.
 - **Didar Contact MobilePhone matching**: the fallback search assumes
   Didar stores phone numbers in the same digit format marketplaces
   send (e.g. `0912...`). Not yet confirmed whether Didar normalizes
