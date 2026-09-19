@@ -385,3 +385,22 @@ def test_normalize_caches_image_lookup_per_product_id():
     assert products_route.call_count == 1
     assert order.items[0].product_image_url == "https://cdn.farazhonar.com/555.jpg"
     assert order.items[1].product_image_url == "https://cdn.farazhonar.com/555.jpg"
+
+
+@respx.mock
+def test_fetch_new_orders_filters_by_modified_date_not_created_date():
+    """Regression (2026-09, Faraz Honar #43870): an order created as
+    "pending" and paid hours later must still be returned once it becomes
+    "processing", so the query has to use modified_after, not after."""
+    route = respx.get("https://farazhonar.com/wp-json/wc/v3/orders").mock(
+        return_value=httpx.Response(200, json=[_RAW_ORDER], headers={"X-WP-TotalPages": "1"})
+    )
+
+    adapter = FarazHonarAdapter(config=_CFG)
+    adapter.fetch_new_orders(since=datetime(2026, 9, 19, 1, 0, tzinfo=timezone.utc))
+
+    params = route.calls[0].request.url.params
+    assert "modified_after" in params
+    assert "after" not in params
+    assert params["dates_are_gmt"] == "true"
+    assert adapter.fetches_by_modified_time is True

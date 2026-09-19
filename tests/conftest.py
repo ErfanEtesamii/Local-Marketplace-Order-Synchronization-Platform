@@ -19,3 +19,10 @@ def _isolate_telegram_env(monkeypatch):
     monkeypatch.delenv("TELEGRAM_CHAT_ID", raising=False)
     for i in range(1, 11):
         monkeypatch.delenv(f"TELEGRAM_CHAT_ID_{i}", raising=False)
+
+
+@pytest.fixture(autouse=True)
+def _no_attach_retry_sleep(monkeypatch):
+    """DidarActivityClient waits a few seconds between photo-upload
+    retries; tests must never really sleep."""
+    monkeypatch.setattr("src.didar.activity_client._sleep", lambda seconds: None)

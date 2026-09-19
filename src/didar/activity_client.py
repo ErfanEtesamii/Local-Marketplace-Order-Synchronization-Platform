@@ -85,6 +85,7 @@ mention of NewAttachments or a standalone upload endpoint.
 """
 from __future__ import annotations
 
+import time
 from datetime import datetime, timedelta, timezone
 
 import httpx
@@ -96,6 +97,13 @@ from src.http_utils import default_retry, raise_for_status_with_body
 from src.logger import get_logger
 
 log = get_logger(__name__)
+
+# Indirection so tests can stub out the waiting between attach retries.
+_sleep = time.sleep
+
+# Waits (seconds) between attempts when a single photo upload is rejected
+# with a transient-looking status - see DidarActivityClient._attach_with_retry.
+_ATTACH_RETRY_DELAYS = (2.0, 5.0)
 
 # Title of the checklist item that gets the order's product photo(s)
 # attached (see create_post_sale_checklist's ship_attachments param).
@@ -164,6 +172,24 @@ class DidarActivityClient:
         log.info("didar: created activity '%s' on deal %s -> Id=%s", title, deal_id, activity_id)
         return activity_id
 
+    def _post_attachments(
+        self, activity_id: str, attachments: list[tuple[bytes, str, str]]
+    ) -> None:
+        """One POST to /activity/AttachFilesToActivity carrying every file in
+        `attachments` as a repeated "uploads" multipart part."""
+        form = {"activityId": activity_id}
+        files = [
+            ("uploads", (filename, file_bytes, content_type))
+            for file_bytes, filename, content_type in attachments
+        ]
+        resp = self._client.post(
+            self._config.attach_files_to_activity_path,
+            params={"apikey": self._config.api_key},
+            data=form,
+            files=files,
+        )
+        raise_for_status_with_body(resp)
+
     def attach_photo_to_activity(
         self, activity_id: str, file_bytes: bytes, filename: str, content_type: str
     ) -> None:
@@ -180,18 +206,84 @@ class DidarActivityClient:
         agent's description) but nothing this project needs to chain
         into another call, so it's only logged, not parsed/returned.
         """
-        form = {"activityId": activity_id}
-        files = {"uploads": (filename, file_bytes, content_type)}
-        resp = self._client.post(
-            self._config.attach_files_to_activity_path,
-            params={"apikey": self._config.api_key},
-            data=form,
-            files=files,
-        )
-        raise_for_status_with_body(resp)
+        self._post_attachments(activity_id, [(file_bytes, filename, content_type)])
         log.info(
             "didar: attached photo '%s' to activity %s", filename, activity_id,
         )
+
+    def _attach_with_retry(
+        self, activity_id: str, attachment: tuple[bytes, str, str]
+    ) -> None:
+        """attach_photo_to_activity() for one photo, retried after a short
+        wait when Didar answers with a transient-looking status (417, 429
+        or 5xx). Other errors (and transport errors/timeouts, where the
+        upload may in fact have gone through) are not retried."""
+        file_bytes, filename, content_type = attachment
+        delays = list(_ATTACH_RETRY_DELAYS)
+        while True:
+            try:
+                self.attach_photo_to_activity(activity_id, file_bytes, filename, content_type)
+                return
+            except httpx.HTTPStatusError as exc:
+                status = exc.response.status_code
+                if not delays or not (status in (417, 429) or status >= 500):
+                    raise
+                wait = delays.pop(0)
+                log.warning(
+                    "didar: attaching photo '%s' to activity %s got HTTP %s - retrying in %ss",
+                    filename, activity_id, status, wait,
+                )
+                _sleep(wait)
+
+    def attach_photos_to_activity(
+        self,
+        activity_id: str,
+        attachments: list[tuple[bytes, str, str]],
+        deal_id: str = "",
+    ) -> None:
+        """Attach every photo of an order to one Activity. Never raises.
+
+        BUGFIX (2026-09, Digikala #375267085 / shipment 383265431 and
+        shipment 382264825): for a 2-product order only the FIRST photo
+        ever reached Didar. Photos used to be posted one request per
+        photo, back-to-back, and Didar answered the second request with
+        "417 Expectation Failed" (empty body) every time - the log shows
+        it for both 2-photo Digikala orders since the migration. The
+        endpoint is named AttachFilesToActivity (plural), so all photos
+        are now sent together in ONE request. If that request is
+        rejected, each photo is retried on its own (with a short wait
+        and a couple of retries on transient-looking statuses) so a
+        failure here degrades to the old behavior at worst.
+        """
+        if not attachments:
+            return
+
+        if len(attachments) > 1:
+            try:
+                self._post_attachments(activity_id, attachments)
+                log.info(
+                    "didar: attached %d photo(s) [%s] to activity %s in one request",
+                    len(attachments),
+                    ", ".join(name for _, name, _ in attachments),
+                    activity_id,
+                )
+                return
+            except Exception:
+                log.warning(
+                    "didar: attaching %d photos to activity %s in one request failed - "
+                    "falling back to one request per photo",
+                    len(attachments), activity_id, exc_info=True,
+                )
+
+        for attachment in attachments:
+            try:
+                self._attach_with_retry(activity_id, attachment)
+            except Exception:
+                log.exception(
+                    "didar: failed to attach product photo '%s' to activity %s "
+                    "(deal %s) - continuing with the rest of this order's photos",
+                    attachment[1], activity_id, deal_id,
+                )
 
     def create_ship_only_activity(
         self,
@@ -257,15 +349,7 @@ class DidarActivityClient:
             )
             return
 
-        for file_bytes, filename, content_type in ship_attachments or []:
-            try:
-                self.attach_photo_to_activity(activity_id, file_bytes, filename, content_type)
-            except Exception:
-                log.exception(
-                    "didar: failed to attach product photo '%s' to activity %s "
-                    "(warehouse deal %s) - continuing with the rest",
-                    filename, activity_id, deal_id,
-                )
+        self.attach_photos_to_activity(activity_id, ship_attachments or [], deal_id=deal_id)
 
     def create_post_sale_checklist(
         self,
@@ -346,16 +430,7 @@ class DidarActivityClient:
                 continue
 
             if title == SHIP_ACTIVITY_TITLE and ship_attachments:
-                for file_bytes, filename, content_type in ship_attachments:
-                    try:
-                        self.attach_photo_to_activity(activity_id, file_bytes, filename, content_type)
-                    except Exception:
-                        log.exception(
-                            "didar: failed to attach product photo '%s' to "
-                            "activity %s (deal %s) - continuing with the "
-                            "rest of this order's photos",
-                            filename, activity_id, deal_id,
-                        )
+                self.attach_photos_to_activity(activity_id, ship_attachments, deal_id=deal_id)
 
 
 def _fmt(dt: datetime) -> str:

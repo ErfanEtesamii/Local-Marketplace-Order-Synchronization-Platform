@@ -1187,3 +1187,169 @@ def test_no_warehouse_adapters_means_nothing_changes(repo, synced_ids_file):
     assert engine.warehouse_adapter_names == []
     assert engine._warehouse_service is None
     assert repo.is_already_synced("fake1", "1") is True
+
+
+# --- Faraz Honar: "pending" -> "processing" regression (2026-09) ----------
+# Real incident: order #43870 arrived as "pending", was skipped by the
+# ALLOWED_STATUSES filter, but its id had already been written to
+# synced_ids.json - so once the customer paid and it became "processing"
+# it was skipped forever as "already-synced" and never reached Didar.
+
+def _faraz_order(order_id: str, status: str, age: timedelta = timedelta(minutes=1)):
+    return NormalizedOrder(
+        source="farazhonar",
+        source_order_id=order_id,
+        order_number=order_id,
+        created_at=datetime.now(timezone.utc) - age,
+        total_price=Decimal("100000"),
+        status=status,
+        items=[OrderItem(sku="s", title="t", quantity=1, unit_price=Decimal("1"),
+                          final_price=Decimal("100000"))],
+    )
+
+
+def _faraz_adapter(orders):
+    adapter = FakeAdapter("farazhonar", list_orders=orders)
+    adapter.fetches_by_modified_time = True
+    return adapter
+
+
+def test_faraz_pending_order_is_synced_once_it_becomes_processing(repo, synced_ids_file):
+    import dataclasses
+    import json as _json
+
+    adapter = _faraz_adapter([_faraz_order("43870", "pending")])
+    didar = FakeDidarService()
+    engine = SyncEngine(
+        adapters=[adapter],
+        repository=repo,
+        didar_service=didar,
+        synced_ids_file_path=str(synced_ids_file),
+    )
+
+    engine.run_once()
+
+    assert didar.synced_orders == []
+    ids = _json.loads(synced_ids_file.read_text(encoding="utf-8")) if synced_ids_file.exists() else []
+    assert "farazhonar-43870" not in ids
+
+    # The customer pays: same order, new status, on a later poll.
+    adapter._list_orders = [dataclasses.replace(adapter._list_orders[0], status="processing")]
+    engine.run_once()
+
+    assert [o.source_order_id for o in didar.synced_orders] == ["43870"]
+    assert repo.is_already_synced("farazhonar", "43870")
+
+
+def test_faraz_processing_order_is_not_synced_twice(repo, synced_ids_file):
+    adapter = _faraz_adapter([_faraz_order("43870", "processing")])
+    didar = FakeDidarService()
+    engine = SyncEngine(
+        adapters=[adapter],
+        repository=repo,
+        didar_service=didar,
+        synced_ids_file_path=str(synced_ids_file),
+    )
+
+    engine.run_once()
+    engine.run_once()
+
+    assert len(didar.synced_orders) == 1
+
+
+def test_faraz_cancelled_order_is_never_synced(repo, synced_ids_file):
+    adapter = _faraz_adapter([_faraz_order("43871", "cancelled")])
+    didar = FakeDidarService()
+    engine = SyncEngine(
+        adapters=[adapter],
+        repository=repo,
+        didar_service=didar,
+        synced_ids_file_path=str(synced_ids_file),
+    )
+
+    engine.run_once()
+    engine.run_once()
+
+    assert didar.synced_orders == []
+
+
+def test_modified_time_adapter_keeps_order_created_before_the_5h_window(repo, synced_ids_file):
+    """An order created 2 days ago but paid (modified) just now must sync,
+    and must NOT be put on the permanent ignore list."""
+    adapter = _faraz_adapter([_faraz_order("43872", "processing", age=timedelta(days=2))])
+    didar = FakeDidarService()
+    engine = SyncEngine(
+        adapters=[adapter],
+        repository=repo,
+        didar_service=didar,
+        synced_ids_file_path=str(synced_ids_file),
+    )
+
+    engine.run_once()
+
+    assert [o.source_order_id for o in didar.synced_orders] == ["43872"]
+    assert "43872" not in repo.get_ignored_ids("farazhonar")
+
+
+def test_modified_time_adapter_skips_very_old_orders_without_ignoring_them(repo, synced_ids_file):
+    adapter = _faraz_adapter([_faraz_order("100", "processing", age=timedelta(days=200))])
+    didar = FakeDidarService()
+    engine = SyncEngine(
+        adapters=[adapter],
+        repository=repo,
+        didar_service=didar,
+        synced_ids_file_path=str(synced_ids_file),
+    )
+
+    engine.run_once()
+
+    assert didar.synced_orders == []
+    assert "100" not in repo.get_ignored_ids("farazhonar")
+
+
+def test_faraz_preorder_status_is_never_synced(repo, synced_ids_file):
+    """Pre-invoice (پیش‌فاکتور) orders - the custom "pre-order-status" and
+    "on-hold" statuses - must still never reach Didar."""
+    import json as _json
+
+    adapter = _faraz_adapter([
+        _faraz_order("43866", "pre-order-status"),
+        _faraz_order("43867", "on-hold"),
+    ])
+    didar = FakeDidarService()
+    engine = SyncEngine(
+        adapters=[adapter],
+        repository=repo,
+        didar_service=didar,
+        synced_ids_file_path=str(synced_ids_file),
+    )
+
+    engine.run_once()
+    engine.run_once()
+
+    assert didar.synced_orders == []
+    ids = _json.loads(synced_ids_file.read_text(encoding="utf-8")) if synced_ids_file.exists() else []
+    assert "farazhonar-43866" not in ids and "farazhonar-43867" not in ids
+
+
+def test_faraz_preinvoice_paid_ten_days_later_is_synced(repo, synced_ids_file):
+    """A pre-invoice created 10 days ago and paid today becomes "processing"
+    and must sync at that moment (and only then)."""
+    import dataclasses
+
+    adapter = _faraz_adapter([_faraz_order("43866", "pre-order-status", age=timedelta(days=10))])
+    didar = FakeDidarService()
+    engine = SyncEngine(
+        adapters=[adapter],
+        repository=repo,
+        didar_service=didar,
+        synced_ids_file_path=str(synced_ids_file),
+    )
+
+    engine.run_once()
+    assert didar.synced_orders == []
+
+    adapter._list_orders = [dataclasses.replace(adapter._list_orders[0], status="processing")]
+    engine.run_once()
+
+    assert [o.source_order_id for o in didar.synced_orders] == ["43866"]

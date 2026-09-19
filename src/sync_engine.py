@@ -68,6 +68,18 @@ log = get_logger(__name__)
 # entire account history.
 FETCH_WINDOW_HOURS = 5
 
+# Adapters that set `fetches_by_modified_time = True` (currently Faraz Honar)
+# ask their API for orders MODIFIED inside the sliding window, not CREATED
+# inside it - so an order that was created long ago but only just changed
+# status (e.g. WooCommerce "pending" -> "processing" once the customer pays)
+# is still returned. For these adapters the created_at window check below is
+# skipped (it would wrongly drop - and permanently ignore - exactly those
+# orders), and this age cap is used instead purely as a safety net against
+# old history flooding Didar (e.g. after a lost synced_ids.json). Kept
+# generous on purpose: a pre-invoice ("پیش‌فاکتور") order can sit unpaid for
+# weeks and must still sync the moment it becomes "processing".
+MODIFIED_WINDOW_MAX_ORDER_AGE_DAYS = 90
+
 
 class SyncEngine:
     def __init__(
@@ -85,6 +97,11 @@ class SyncEngine:
         self._didar = didar_service or DidarSyncService()
         self._synced_ids_file_path = synced_ids_file_path
         self._synced_ids = self._load_synced_ids()
+        # (unique_id, reason) pairs already logged as "skipped, will be
+        # re-checked" - keeps the log to one line per order+status instead
+        # of one line per 2-minute poll. In-memory only; a restart may log
+        # each currently-pending order once more, which is harmless.
+        self._recheck_skip_logged: set[tuple[str, str]] = set()
         self._telegram = TelegramNotifier()
         # Express-order SMS alert (2026-09 - see src/modir_payamak.py).
         # Injectable, unlike self._telegram above, purely so tests can
@@ -188,6 +205,28 @@ class SyncEngine:
         if getattr(adapter, "uses_id_based_watermark", False):
             window_kept: list[NormalizedOrder] = list(orders)
             window_dropped = 0
+        elif getattr(adapter, "fetches_by_modified_time", False):
+            # The adapter already filtered server-side by MODIFIED time, so
+            # created_at says nothing about freshness here (see
+            # MODIFIED_WINDOW_MAX_ORDER_AGE_DAYS). Too-old orders are just
+            # skipped this poll - NOT added to the permanent ignore list.
+            max_age_cutoff = datetime.now(timezone.utc) - timedelta(
+                days=MODIFIED_WINDOW_MAX_ORDER_AGE_DAYS
+            )
+            window_kept = []
+            window_dropped = 0
+            for order in orders:
+                if order.created_at is not None and order.created_at < max_age_cutoff:
+                    window_dropped += 1
+                    self._log_recheck_skip_once(
+                        self._order_id(platform, order.source_order_id),
+                        "too-old",
+                        "sync_engine: skipping %s order %s - created_at %s is older than %d days",
+                        platform, order.source_order_id, order.created_at,
+                        MODIFIED_WINDOW_MAX_ORDER_AGE_DAYS,
+                    )
+                    continue
+                window_kept.append(order)
         else:
             window_kept = []
             window_dropped = 0
@@ -223,6 +262,25 @@ class SyncEngine:
                     platform, order.source_order_id,
                 )
                 continue
+
+            # BUGFIX (2026-09): for allow-list sources (Faraz Honar) a status
+            # rejection is NOT final - a WooCommerce order arrives as
+            # "pending"/"on-hold" and becomes "processing" once paid. The id
+            # used to be added to _synced_ids BEFORE the status check inside
+            # _sync_one_order, so a "pending" order was marked synced on
+            # first sight and skipped as "already-synced" forever, even
+            # after it became "processing" (e.g. Faraz Honar #43870).
+            # Now such an order is left un-marked and simply re-evaluated on
+            # the next poll.
+            if platform in ALLOWED_STATUSES:
+                rejection = self._status_rejection(order)
+                if rejection is not None:
+                    self._log_recheck_skip_once(
+                        unique_id, order.status.lower(),
+                        "sync_engine: skipping %s order %s - %s (will re-check on next poll)",
+                        platform, order.source_order_id, rejection,
+                    )
+                    continue
 
             # Add to in-memory set and persist to file for future runs
             self._synced_ids.add(unique_id)
@@ -386,31 +444,44 @@ class SyncEngine:
         except OSError as exc:
             log.exception("sync_engine: failed to save order ID %s to %s", unique_id, file_path)
 
+    @staticmethod
+    def _status_rejection(order: NormalizedOrder) -> str | None:
+        """Why this order's status keeps it out of Didar, or None if OK.
+
+        Single source of truth for the ALLOWED_STATUSES allow-list and the
+        CANCELLED_OR_FAILED_STATUSES blacklist, used both by _sync_source
+        (to decide whether to mark an id as synced) and _sync_one_order.
+        """
+        status = order.status.lower()
+        allowed = ALLOWED_STATUSES.get(order.source)
+        if allowed is not None:
+            if status not in allowed:
+                return f"status {order.status} is not in the allowed set {sorted(allowed)}"
+            return None
+        if status in CANCELLED_OR_FAILED_STATUSES.get(order.source, set()):
+            return f"status {order.status} is cancelled/failed"
+        return None
+
+    def _log_recheck_skip_once(self, unique_id: str, reason_key: str, msg: str, *args) -> None:
+        key = (unique_id, reason_key)
+        if key in self._recheck_skip_logged:
+            return
+        self._recheck_skip_logged.add(key)
+        log.info(msg, *args)
+
     def _sync_one_order(
         self, adapter: MarketplaceAdapter, order: NormalizedOrder, unique_id: str
     ) -> None:
-        # ALLOWED_STATUSES (checked first) is an allow-list: if a source is
-        # listed there, ONLY those statuses may sync, and everything else is
-        # dropped - see its own docstring for why Faraz Honar specifically
-        # needs this instead of the CANCELLED_OR_FAILED_STATUSES blacklist.
-        allowed = ALLOWED_STATUSES.get(order.source)
-        if allowed is not None:
-            if order.status.lower() not in allowed:
-                log.info(
-                    "sync_engine: skipping %s order %s - status %s is not in the allowed set %s",
-                    order.source, order.source_order_id, order.status, sorted(allowed),
-                )
-                return
-        # Central filter: prevent cancelled/failed orders from syncing to Didar.
-        # Uses NormalizedOrder.status rather than per-adapter filters so that
-        # no order of any marketplace slips through if an adapter's own guard
-        # is incomplete or outdated. Keyed per source (see
-        # CANCELLED_OR_FAILED_STATUSES's own docstring) so one source's
-        # excluded statuses never affect another's.
-        elif order.status.lower() in CANCELLED_OR_FAILED_STATUSES.get(order.source, set()):
+        # Status allow-list / blacklist (see _status_rejection and
+        # ALLOWED_STATUSES's own docstring for why Faraz Honar is an
+        # allow-list). Uses NormalizedOrder.status rather than per-adapter
+        # filters so that no order of any marketplace slips through if an
+        # adapter's own guard is incomplete or outdated.
+        rejection = self._status_rejection(order)
+        if rejection is not None:
             log.info(
-                "sync_engine: skipping %s order %s - status %s is cancelled/failed",
-                order.source, order.source_order_id, order.status,
+                "sync_engine: skipping %s order %s - %s",
+                order.source, order.source_order_id, rejection,
             )
             return
 

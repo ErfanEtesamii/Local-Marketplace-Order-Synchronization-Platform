@@ -196,13 +196,17 @@ def test_create_post_sale_checklist_attaches_a_photo_per_line_item():
         ],
     )
 
-    assert attach_route.call_count == 3
+    # Photos are sent together in ONE request (Didar answered "417
+    # Expectation Failed" to back-to-back single-photo requests - see
+    # DidarActivityClient.attach_photos_to_activity).
+    assert attach_route.call_count == 1
     ship_index = [title for title, _ in POST_SALE_CHECKLIST].index("ارسال محصول")
     expected_activity_id = f"a-{ship_index}"
-    sent_bytes = [b"fake-bytes-1", b"fake-bytes-2", b"fake-bytes-3"]
-    for call, expected in zip(attach_route.calls, sent_bytes):
-        assert expected_activity_id.encode() in call.request.content
-        assert expected in call.request.content
+    sent = attach_route.calls[0].request.content
+    assert expected_activity_id.encode() in sent
+    assert sent.count(b'name="uploads"') == 3
+    for expected in (b"fake-bytes-1", b"fake-bytes-2", b"fake-bytes-3"):
+        assert expected in sent
 
 
 @respx.mock
@@ -216,7 +220,8 @@ def test_create_post_sale_checklist_continues_after_one_photo_attach_fails():
     )
     attach_route = respx.post("https://app.didar.me/api/activity/AttachFilesToActivity").mock(
         side_effect=[
-            httpx.Response(500, json={"Error": "boom"}),
+            httpx.Response(500, json={"Error": "boom"}),   # both photos in one request: rejected
+            httpx.Response(400, json={"Error": "bad file"}),  # photo 1 on its own: rejected, not retried
             httpx.Response(
                 200, json={"Response": {"Key": "k1", "Size": 123, "Type": "image/jpeg", "Name": "photo2.jpg"}}
             ),
@@ -234,8 +239,9 @@ def test_create_post_sale_checklist_continues_after_one_photo_attach_fails():
         ],
     )
 
-    assert attach_route.call_count == 2
-    assert b"fake-bytes-2" in attach_route.calls[1].request.content
+    assert attach_route.call_count == 3
+    assert b"fake-bytes-1" in attach_route.calls[1].request.content
+    assert b"fake-bytes-2" in attach_route.calls[2].request.content
 
 
 @respx.mock
@@ -300,3 +306,45 @@ def test_create_post_sale_checklist_continues_after_one_item_fails():
 
     # Every item was attempted (6 calls) despite the one 400 in the middle.
     assert route.call_count == len(POST_SALE_CHECKLIST)
+
+
+@respx.mock
+def test_photos_fall_back_to_one_request_each_and_retry_a_417():
+    """Regression (2026-09, Digikala shipment 383265431): Didar answered
+    "417 Expectation Failed" to the second photo of a 2-product order, so
+    only one photo ever reached the CRM. If the combined upload is
+    rejected, each photo is retried on its own, and a 417 is retried after
+    a short wait."""
+    attach_route = respx.post("https://app.didar.me/api/activity/AttachFilesToActivity").mock(
+        side_effect=[
+            httpx.Response(417),  # both photos together
+            httpx.Response(200, json={"Response": {"Key": "k1"}}),  # photo 1
+            httpx.Response(417),  # photo 2, first try
+            httpx.Response(200, json={"Response": {"Key": "k2"}}),  # photo 2, retry
+        ]
+    )
+
+    client = DidarActivityClient(config=_CFG_WITH_TYPES)
+    client.attach_photos_to_activity(
+        "a-42",
+        [
+            (b"fake-bytes-1", "photo1.jpg", "image/jpeg"),
+            (b"fake-bytes-2", "photo2.jpg", "image/jpeg"),
+        ],
+    )
+
+    assert attach_route.call_count == 4
+    assert b"fake-bytes-2" in attach_route.calls[2].request.content
+    assert b"fake-bytes-2" in attach_route.calls[3].request.content
+
+
+@respx.mock
+def test_photo_upload_that_keeps_failing_never_raises():
+    attach_route = respx.post("https://app.didar.me/api/activity/AttachFilesToActivity").mock(
+        return_value=httpx.Response(417)
+    )
+
+    client = DidarActivityClient(config=_CFG_WITH_TYPES)
+    client.attach_photos_to_activity("a-42", [(b"fake-bytes", "photo.jpg", "image/jpeg")])
+
+    assert attach_route.call_count == 3  # first try + 2 retries

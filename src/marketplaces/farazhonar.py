@@ -74,6 +74,13 @@ def _to_decimal(value) -> Decimal:
 class FarazHonarAdapter(MarketplaceAdapter):
     name = "farazhonar"
 
+    # fetch_new_orders() filters by date MODIFIED, not date created - see
+    # SyncEngine._sync_source, which skips its created_at window check for
+    # adapters that set this. Needed because a WooCommerce order is often
+    # created as "pending" and only becomes "processing" (the one status
+    # that syncs to Didar) hours later, once payment is confirmed.
+    fetches_by_modified_time = True
+
     def __init__(self, config: FarazHonarConfig | None = None) -> None:
         self._config = config or settings.farazhonar
         self._client = httpx.Client(
@@ -106,10 +113,16 @@ class FarazHonarAdapter(MarketplaceAdapter):
             resp = self._get(
                 "/wp-json/wc/v3/orders",
                 params={
-                    "after": (since or datetime.now(timezone.utc) - timedelta(hours=5)).astimezone(timezone.utc).isoformat(),
-                    # Without this, WooCommerce compares "after" against
-                    # the site-LOCAL `date_created` column, not the UTC
-                    # `date_created_gmt` one - despite the value above
+                    # BUGFIX (2026-09): was "after" (creation date). An order
+                    # created as "pending" and paid >5h later (e.g. #43870)
+                    # fell out of the window before it ever became
+                    # "processing" and was never fetched again.
+                    # "modified_after" returns it as soon as its status
+                    # changes.
+                    "modified_after": (since or datetime.now(timezone.utc) - timedelta(hours=5)).astimezone(timezone.utc).isoformat(),
+                    # Without this, WooCommerce compares "modified_after"
+                    # against the site-LOCAL `date_modified` column, not
+                    # the UTC `date_modified_gmt` one - despite the value above
                     # already being converted to UTC. If this store's
                     # WordPress timezone isn't UTC (common for Iranian
                     # sites, e.g. Asia/Tehran = +03:30), the fetch window
