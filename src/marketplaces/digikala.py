@@ -96,20 +96,25 @@ needs to be repeated manually and the new tokens re-seeded into .env
 (or directly into data/digikala_tokens.json).
 
 PRICE ENRICHMENT (2026-09, client request via chat, see
-_fetch_history_price_map()'s own docstring for the full detail):
-/ship-by-seller-orders' variants[] was confirmed (real payload) to
-expose only "price" + "count" per item - no unit-price/discount split
-exists on this endpoint at all. To show a genuine pre-discount "مبلغ
-واحد" / "تخفیف" / "مبلغ نهایی" breakdown in Didar (instead of always
-discount=0), _normalize_sbs_row() now makes a SECOND, best-effort call
-per shipment to the OLD /open-api/v1/orders/history endpoint - not to
-detect orders or drive the watermark (that risk doesn't apply here;
-see the 2026-09 MIGRATION section above), purely to look up that one
-order's real unit_price/unit_discount (both CONFIRMED field names, per
-a real response sample the client shared). A failed or empty lookup
-falls back to the pre-existing price*count/no-discount behavior, so
-this can never block a shipment from syncing - only degrade its price
-detail.
+_fetch_variant_promotion()'s own docstring for the full investigation
+and history): /ship-by-seller-orders' variants[] was confirmed (real
+payload) to expose only "price" + "count" per item - no unit-price/
+discount split exists on this endpoint at all, and that "price" is
+itself already the POST-discount selling price, not the original. To
+show a genuine pre-discount "مبلغ واحد" / "تخفیف" / "مبلغ نهایی"
+breakdown in Didar (instead of always discount=0),
+_normalize_sbs_row() now makes a SECOND, best-effort call per shipment
+- one per unique item variantId, via _build_promotion_map() -  to
+GET /open-api/v1/pricing/promotions/variant-current-promotions/
+{variant_id} for that variant's real original (rrp) price. An earlier
+version of this enrichment used the OLD /open-api/v1/orders/history
+endpoint instead; that was confirmed live (client's own production
+logs, 100% miss rate across 18/18 real orders) to belong to an
+entirely different, non-SBS order pipeline and was replaced - see
+_fetch_variant_promotion()'s docstring for the full investigation
+trail before touching this again. A failed or empty lookup falls back
+to the pre-existing price*count/no-discount behavior, so this can
+never block a shipment from syncing - only degrade its price detail.
 """
 from __future__ import annotations
 
@@ -235,6 +240,21 @@ class DigikalaAdapter(MarketplaceAdapter):
             headers={"content-type": "application/json"},
             timeout=30.0,
         )
+        # 2026-09 discount-enrichment fix (client report "تخفیف کالا ثبت
+        # نمیشه" - see _fetch_variant_promotion's docstring for the full
+        # investigation): caches Promotions API results per variantId for
+        # this adapter instance's lifetime. The endpoint's own rate_limit
+        # is low (confirmed live: max ~33-40 requests per reset window),
+        # and the same variantId legitimately recurs across many
+        # shipments/orders within one poll cycle (a popular product sold
+        # repeatedly) - without this cache, a busy poll cycle could burn
+        # through the whole rate-limit budget on redundant lookups for
+        # the same item. A promotion's price CAN change intra-process,
+        # but that risk is accepted here the same way category listing's
+        # cache already accepts it elsewhere in this codebase (see
+        # DidarProductClient._category_by_title_map) - re-fetching per
+        # order would defeat the point of caching at all.
+        self._variant_promotion_cache: dict[int, dict | None] = {}
 
     def _load_tokens(self) -> tuple[str, str]:
         """Prefer a previously-refreshed pair over the static .env seed,
@@ -357,14 +377,14 @@ class DigikalaAdapter(MarketplaceAdapter):
         # be null, and confirming replaces the row with a freshly
         # re-fetched one that has them populated.
         rows = [self._confirm_if_pending(row) for row in rows]
-        # Price enrichment (see _fetch_history_price_map's docstring) -
-        # one best-effort /orders/history lookup per row, done here (the
-        # I/O-performing entry point) rather than inside
-        # _normalize_sbs_row (kept pure - see its own docstring).
+        # Price enrichment (2026-09: switched from /orders/history to the
+        # Promotions API - see _fetch_variant_promotion's docstring for
+        # why /orders/history was confirmed unusable for SBS orders).
+        # One best-effort lookup per row, done here (the I/O-performing
+        # entry point) rather than inside _normalize_sbs_row (kept pure -
+        # see its own docstring).
         orders = [
-            self._normalize_sbs_row(
-                row, price_map=self._fetch_history_price_map(row.get("orderId"), row.get("orderDate"))
-            )
+            self._normalize_sbs_row(row, promotion_map=self._build_promotion_map(row))
             for row in rows
         ]
         log.info(
@@ -418,8 +438,8 @@ class DigikalaAdapter(MarketplaceAdapter):
         if not data:
             raise ValueError(f"digikala: shipment {source_order_id} not found")
         data = self._confirm_if_pending(data)
-        price_map = self._fetch_history_price_map(data.get("orderId"), data.get("orderDate"))
-        return self._normalize_sbs_row(data, price_map=price_map)
+        promotion_map = self._build_promotion_map(data)
+        return self._normalize_sbs_row(data, promotion_map=promotion_map)
 
     def _confirm_if_pending(self, row: dict) -> dict:
         """
@@ -682,8 +702,145 @@ class DigikalaAdapter(MarketplaceAdapter):
 
         return rows
 
+    def _fetch_variant_promotion(self, variant_id: int | str | None) -> dict | None:
+        """
+        2026-09 DISCOUNT-ENRICHMENT FIX (client report, real server logs:
+        "تخفیف کالا ثبت نمیشه" - discount never registers in Didar for
+        digikala orders).
+
+        INVESTIGATION SUMMARY (confirmed live, in order):
+        1. The original enrichment (_fetch_history_price_map below, via
+           /open-api/v1/orders/history) was CONFIRMED to have a 100%
+           miss rate in the client's own production logs (18/18 real SBS
+           orders sampled). Root cause: /orders/history's own
+           `order_type` parameter is documented as accepting only
+           processed/returned/canceled - it is a genuine "history" of
+           orders that already reached a later status, not a live view.
+           An SBS shipment looked up immediately after being confirmed
+           (this enrichment runs in the same sync cycle) is essentially
+           never there yet.
+        2. GET /open-api/v1/orders ("getting details of all active order
+           items seller") was tried next as a possible replacement. Live
+           test confirmed it belongs to an ENTIRELY DIFFERENT order
+           pipeline than SBS: a real SBS order (383370810) returned
+           zero rows via search[search_term], while a different,
+           non-SBS order (confirmed via `Select-String` against this
+           project's own order-sync.log returning nothing - this
+           project's sync never touched that order at all) WAS found
+           there. /orders and /orders/history both operate on Digikala's
+           classic (non-SBS) order numbering space - neither can ever
+           enrich an SBS order, regardless of status or timing.
+        3. /ship-by-seller-orders' own variants[] was already confirmed
+           (see this module's docstring) to expose only "price"+"count" -
+           no discount field on that endpoint either.
+        4. THE FIX: GET /open-api/v1/pricing/promotions/
+           variant-current-promotions/{variant_id} is keyed by
+           Digikala's product VARIANT id, not by order_id - entirely
+           independent of which order pipeline the order came through.
+           /ship-by-seller-orders' own `variants[]` rows carry a
+           `variantId` field DISTINCT from `productId` (confirmed live:
+           productId=19083049 vs variantId=68379146 for the same item) -
+           this project's code had only ever read `productId` before.
+           Confirmed live against a real order (383370810, product code
+           3818, known 5% discount from the client's own Didar
+           screenshot): `promotion_rrp_price`=11,000,000 and
+           `promotion_selling_price`=10,450,000 (Rial) - exactly the
+           1,100,000/1,045,000 Toman pair shown in the seller panel,
+           and a confirmed 5% gap.
+
+        IMPORTANT COROLLARY, also confirmed by that same live check:
+        SBS's own `variants[].price` is ALREADY the post-discount
+        selling price (10,450,000 - identical to
+        promotion_selling_price), NOT the original pre-discount price.
+        This is the actual root cause of "discount ثبت نمیشه": the old
+        SBS-only fallback used `price` as if it were the ORIGINAL
+        (pre-discount) unit price, so Discount always computed to 0 -
+        not because discounts weren't happening, but because the only
+        price this adapter had access to was already the discounted
+        one. `promotion_rrp_price` is the only source found so far for
+        the true original price.
+
+        Returns {"rrp_price": Decimal, "selling_price": Decimal} for the
+        first APPROVED current promotion, or None if there's no active
+        promotion on this variant right now (a real, common case - not
+        an error) or the lookup itself failed. Never raises - best
+        effort, same convention as _fetch_history_price_map before it:
+        a failed/absent lookup here must never block the shipment from
+        syncing, it just falls back to SBS's own price with discount=0,
+        same as always.
+
+        Cached per variant_id for this adapter instance's lifetime - see
+        self._variant_promotion_cache's own comment in __init__ for why.
+        """
+        if variant_id is None:
+            return None
+        if variant_id in self._variant_promotion_cache:
+            return self._variant_promotion_cache[variant_id]
+
+        result: dict | None = None
+        try:
+            payload = self._get(
+                f"/open-api/v1/pricing/promotions/variant-current-promotions/{variant_id}",
+                params={"page": 1, "size": 200},
+            )
+            items = (payload.get("data") or {}).get("items") or []
+            for item in items:
+                if not isinstance(item, dict):
+                    continue
+                if item.get("variant_status") != "approved":
+                    continue
+                result = {
+                    "rrp_price": _to_decimal(item.get("promotion_rrp_price")),
+                    "selling_price": _to_decimal(item.get("promotion_selling_price")),
+                }
+                break
+        except Exception:
+            log.exception(
+                "digikala: failed to fetch current promotions for variant %s - "
+                "falling back to SBS price with no discount for this item",
+                variant_id,
+            )
+            result = None
+
+        self._variant_promotion_cache[variant_id] = result
+        return result
+
+    def _build_promotion_map(self, row: dict) -> dict[int, dict]:
+        """
+        {variantId: {"rrp_price": Decimal, "selling_price": Decimal}} for
+        every item on this SBS row that currently has an approved
+        promotion - see _fetch_variant_promotion's docstring for the
+        full rationale. One lookup per UNIQUE variantId on the row (a
+        multi-item shipment could repeat a variant across quantity
+        splits, though rare); _fetch_variant_promotion's own cache
+        additionally dedupes across DIFFERENT rows/shipments within one
+        poll cycle.
+        """
+        result: dict[int, dict] = {}
+        for v in row.get("variants") or []:
+            variant_id = v.get("variantId")
+            if variant_id is None or variant_id in result:
+                continue
+            promo = self._fetch_variant_promotion(variant_id)
+            if promo is not None:
+                result[variant_id] = promo
+        return result
+
     def _fetch_history_price_map(self, order_id, order_date: str | None) -> dict[str, dict]:
         """
+        SUPERSEDED (2026-09) - kept only for reference/tests, no longer
+        called from fetch_new_orders()/fetch_order_detail(). See
+        _fetch_variant_promotion's docstring for the full investigation:
+        this endpoint was confirmed live to have a 100% miss rate for
+        SBS orders (order_type is documented as processed/returned/
+        canceled only - not a live view of a just-confirmed order), and
+        is now replaced by the Promotions API. Left in place rather than
+        deleted in case a future non-SBS use ever needs it, and because
+        this project's convention favors an explained removal over a
+        silent one - if this is confirmed permanently dead, delete it
+        and its two module-level date helpers (_fmt_history_date/
+        _parse_history_date) together in one pass.
+
         2026-09 PRICE ENRICHMENT (client request: "مبلغ واحد" in Didar
         should be the pre-discount unit price, with the real discount
         shown separately - see chat thread).
@@ -841,81 +998,105 @@ class DigikalaAdapter(MarketplaceAdapter):
             }
 
         if not price_map:
+            # DIAGNOSTIC (2026-09, client report: "تخفیف کالا ثبت نمیشه" -
+            # every single digikala order in the client's server logs hit
+            # this exact warning, a 100% miss rate across 18/18 orders
+            # sampled, with no transport exception anywhere - the request
+            # itself succeeds, it just never contains a row for the
+            # order being looked up. Leading theory: /orders/history is
+            # a genuine "history" of orders that already reached a later
+            # status (order_type is documented as processed/returned/
+            # canceled only - see module docstring), so a brand-new
+            # order looked up immediately after
+            # "auto-confirmed pending shipment -> processing" (this
+            # lookup runs right there, same sync cycle) may not exist in
+            # this endpoint's dataset YET regardless of the date window -
+            # not a date-window or parsing bug. Logged at WARNING (not
+            # DEBUG) because the deployed log level only captures INFO+
+            # (confirmed: zero DEBUG lines in the client's logs), and
+            # this is a one-time diagnostic that must survive that -
+            # remove once the theory above is confirmed/refuted from a
+            # real occurrence of this log line.
+            sample_order_ids = [str(r.get("order_id")) for r in rows[:5]]
             log.warning(
                 "digikala: no matching /orders/history rows found for order %s within "
-                "the search window - syncing this shipment with SBS price, no discount",
-                order_id,
+                "the search window (fetched %d total row(s) across the search; first-page "
+                "sample order_id values seen: %s; window=%s..%s) - syncing this shipment "
+                "with SBS price, no discount",
+                order_id, len(rows), sample_order_ids, window_from, window_to,
             )
         return price_map
 
-    def _normalize_sbs_row(self, row: dict, price_map: dict[str, dict] | None = None) -> NormalizedOrder:
+    def _normalize_sbs_row(self, row: dict, promotion_map: dict[int, dict] | None = None) -> NormalizedOrder:
         """
         Build a NormalizedOrder directly from one /ship-by-seller-orders
         row (list or single-shipment detail - both share this shape).
         No cross-row grouping: one shipment = one Deal (Decision 1).
 
-        Deliberately pure / no I/O of its own: `price_map` (see
-        _fetch_history_price_map's docstring) is looked up by the CALLER
-        (fetch_new_orders / fetch_order_detail below) and passed in here,
-        rather than this method reaching out to /orders/history itself.
-        Every existing test in this file calls _normalize_sbs_row()
-        directly with no network mocking at all, relying on it being a
-        pure row->NormalizedOrder transform - keeping the HTTP call out
-        of this method preserves that (a bare `None` here, e.g. from
-        those tests, falls back to the pre-enrichment price*count/no-
-        discount behavior, same as always).
+        Deliberately pure / no I/O of its own: `promotion_map` (see
+        _fetch_variant_promotion's docstring) is looked up by the CALLER
+        (fetch_new_orders / fetch_order_detail below) and passed in
+        here, rather than this method reaching out to the Promotions API
+        itself. Every existing test in this file calls
+        _normalize_sbs_row() directly with no network mocking at all,
+        relying on it being a pure row->NormalizedOrder transform -
+        keeping the HTTP call out of this method preserves that (a bare
+        `None` here, e.g. from those tests, falls back to the
+        pre-enrichment price*count/no-discount behavior, same as
+        always).
         """
         shipment_id = row.get("shipmentId")
         order_id = row.get("orderId")
         variants = row.get("variants") or []
-        price_map = price_map or {}
+        promotion_map = promotion_map or {}
 
         # CONFIRMED (real payload, 2026-09): /ship-by-seller-orders'
         # variants[] only ever exposes "price" + "count" per item - no
         # unit_price/total_price split and no discount field anywhere on
-        # THIS endpoint (this used to be flagged as an unconfirmed
-        # assumption; a real sample response settled it). Since that data
-        # genuinely doesn't exist here, callers pass in `price_map` -
-        # looked up from /orders/history via _fetch_history_price_map()
-        # - for the real pre-discount/discount breakdown (see that
-        # method's own docstring for exactly what it returns and why a
-        # missing/failed lookup is safe: price_map={} just falls back to
-        # the price*count/no-discount branch below, unchanged from
-        # before this enrichment existed).
+        # THIS endpoint. ALSO CONFIRMED (2026-09, order 383370810 /
+        # product code 3818, see _fetch_variant_promotion's docstring):
+        # this "price" is itself ALREADY the post-discount selling
+        # price, not the original - so it's usable as final_price, but
+        # never as unit_price when a discount is active. Callers pass in
+        # `promotion_map` - looked up from the Promotions API via
+        # _fetch_variant_promotion()/_build_promotion_map(), keyed by
+        # each item's own `variantId` - for the real original
+        # (pre-discount) price. A missing/failed lookup is safe:
+        # promotion_map={} just falls back to the price*count/no-
+        # discount branch below, unchanged from before this enrichment
+        # existed (which itself was already the behavior whenever no
+        # promotion happens to be active on a given variant - not an
+        # error case).
 
         items = []
         for v in variants:
             sku = str(v["sellerCode"]) if v.get("sellerCode") is not None else str(v.get("productId", ""))
             quantity = int(v.get("count") or 1)
-            history_prices = price_map.get(sku)
-            if history_prices is not None:
-                # Real pre-discount unit price + per-unit discount, from
-                # /orders/history (see _fetch_history_price_map) - this
-                # is what lets Didar show "مبلغ واحد" (before discount),
+            variant_id = v.get("variantId")
+            promo = promotion_map.get(variant_id) if variant_id is not None else None
+            if promo is not None:
+                # Real pre-discount (rrp) unit price, from the
+                # Promotions API (see _fetch_variant_promotion) - this is
+                # what lets Didar show "مبلغ واحد" (before discount),
                 # "تخفیف" (the real per-unit gap) and "مبلغ نهایی" (after
                 # discount) as three genuinely different numbers instead
                 # of the SBS fallback below, which always yields
-                # discount=0. final_price is computed here as (unit_price
-                # - unit_discount) * quantity rather than trusted from
-                # history's own "total_price" field - see
-                # _fetch_history_price_map's docstring for why that field
-                # isn't used. Clamped at 0 in case unit_discount ever
-                # exceeds unit_price (bad/stale data) - a negative line
-                # total would be nonsensical and would also trip
-                # didar/deal_client.py's own negative-discount guard.
-                per_unit_final = history_prices["unit_price"] - history_prices["unit_discount"]
-                if per_unit_final < 0:
-                    per_unit_final = Decimal("0")
-                unit_price = to_rial(history_prices["unit_price"], self._config.price_unit)
-                final_price = to_rial(per_unit_final * Decimal(quantity), self._config.price_unit)
+                # discount=0. final_price is computed from the
+                # Promotions API's own promotion_selling_price (not
+                # SBS's own "price") for consistency with rrp_price's
+                # source/timing, though the two are expected to match in
+                # the normal case (confirmed live: they did, for order
+                # 383370810).
+                unit_price = to_rial(promo["rrp_price"], self._config.price_unit)
+                final_price = to_rial(promo["selling_price"] * Decimal(quantity), self._config.price_unit)
             else:
-                # Fallback: no matching /orders/history row was found for
-                # this line (lookup failed, order too old for the search
-                # window, or a genuine join-key mismatch - see
-                # _fetch_history_price_map's docstring). Same behavior as
-                # before this enrichment existed: price=per-unit,
-                # final_price=price*count, discount ends up 0 downstream
-                # in didar/deal_client.py's _build_deal_item.
+                # Fallback: no currently-approved promotion for this
+                # variant (a real, common case - not an error) or the
+                # lookup itself failed - see _fetch_variant_promotion's
+                # docstring. Same behavior as before this enrichment
+                # existed: price=per-unit, final_price=price*count,
+                # discount ends up 0 downstream in
+                # didar/deal_client.py's _build_deal_item.
                 unit_price = to_rial(_to_decimal(v.get("price")), self._config.price_unit)
                 final_price = to_rial(
                     _to_decimal(v.get("price")) * Decimal(quantity), self._config.price_unit
@@ -930,6 +1111,7 @@ class DigikalaAdapter(MarketplaceAdapter):
                     product_image_url=str(v["image_url"]) if v.get("image_url") else None,
                 )
             )
+
 
         # Status mapping - Decision 3, digikala-sbs-migration-prompt.md:
         # isCancelled is the primary signal (an explicit, less

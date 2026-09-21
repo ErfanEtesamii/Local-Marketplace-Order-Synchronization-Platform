@@ -1,4 +1,5 @@
 import json
+import re
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
@@ -21,7 +22,12 @@ def _empty_history_response():
     """Default mock for the /orders/history price-enrichment lookup
     (see DigikalaAdapter._fetch_history_price_map) - an empty result,
     matching the pre-enrichment behavior (price*count, no discount) for
-    every test that isn't specifically exercising that enrichment."""
+    every test that isn't specifically exercising that enrichment.
+    _fetch_history_price_map itself is unchanged/still tested directly
+    below (SUPERSEDED but kept - see its own docstring in digikala.py);
+    this helper is still used by those direct tests only, no longer by
+    fetch_new_orders/fetch_order_detail - see _mock_no_promotions()
+    below for their current blanket mock."""
     return httpx.Response(
         200,
         json={"status": "ok", "data": {"pager": {"page": 1, "total_pages": 0}, "items": []}},
@@ -30,6 +36,61 @@ def _empty_history_response():
 
 def _mock_empty_history():
     return respx.get(_HISTORY_URL).mock(return_value=_empty_history_response())
+
+
+# 2026-09: fetch_new_orders/fetch_order_detail's price enrichment switched
+# from /orders/history to the Promotions API (see digikala.py's
+# _fetch_variant_promotion docstring for the full investigation - this
+# project confirmed live that /orders/history has a 100% miss rate for
+# real SBS orders). One route, matched by regex across every variantId,
+# stands in for _mock_empty_history()'s old role: "no active promotion",
+# matching the pre-enrichment price*count/no-discount fallback for every
+# test that isn't specifically exercising the discount enrichment itself.
+_PROMOTION_URL_REGEX = re.compile(
+    r"^https://seller\.digikala\.com/open-api/v1/pricing/promotions/"
+    r"variant-current-promotions/\d+$"
+)
+
+
+def _empty_promotion_response():
+    return httpx.Response(
+        200,
+        json={"status": "ok", "data": {"pager": {"page": 1, "total_pages": 0}, "items": []}},
+    )
+
+
+def _promotion_response(rrp_price, selling_price, variant_status="approved"):
+    return httpx.Response(
+        200,
+        json={
+            "status": "ok",
+            "data": {
+                "pager": {"page": 1, "total_pages": 0},
+                "items": [
+                    {
+                        "promotion_id": 1,
+                        "variant_status": variant_status,
+                        "promotion_rrp_price": rrp_price,
+                        "promotion_selling_price": selling_price,
+                    }
+                ],
+            },
+        },
+    )
+
+
+def _mock_no_promotions():
+    return respx.get(url__regex=_PROMOTION_URL_REGEX).mock(return_value=_empty_promotion_response())
+
+
+def _mock_promotion(variant_id, rrp_price, selling_price, variant_status="approved"):
+    url = (
+        "https://seller.digikala.com/open-api/v1/pricing/promotions/"
+        f"variant-current-promotions/{variant_id}"
+    )
+    return respx.get(url).mock(
+        return_value=_promotion_response(rrp_price, selling_price, variant_status)
+    )
 
 
 @pytest.fixture
@@ -57,6 +118,7 @@ def _sbs_row(shipment_id, order_id=None, **overrides):
                 "image_url": "https://dkstatics-public.digikala.com/example.jpg",
                 "title": "تیشرت مردانه",
                 "productId": "123",
+                "variantId": 999,
                 "sellerCode": 1,
                 "count": 1,
                 "price": 1200000,
@@ -118,7 +180,7 @@ def test_fetch_new_orders_uses_watermark_plus_one_and_advances_it(repo):
     search[min_shipment_id]=watermark+1 and, once new rows come back,
     persist the new max shipmentId as the watermark."""
     repo.set_last_shipment_id("digikala", 100)
-    _mock_empty_history()
+    _mock_no_promotions()
     route = respx.get(_SBS_URL).mock(
         return_value=_sbs_list_response([_sbs_row(shipment_id=101), _sbs_row(shipment_id=105)])
     )
@@ -154,7 +216,7 @@ def test_watermark_persisted_after_every_page_not_just_at_the_end(repo):
     asserting the watermark reflects page 1's max even though we can
     inspect it (via the route side_effect) before page 2 is requested."""
     repo.set_last_shipment_id("digikala", 0)
-    _mock_empty_history()
+    _mock_no_promotions()
     route = respx.get(_SBS_URL)
     seen_watermark_before_page_2 = {}
 
@@ -184,7 +246,7 @@ def test_fetch_new_orders_paginates_via_full_page_guard(repo):
     """Same double-signal pagination guard as the old /orders/history
     fetch: a full page keeps paginating even if total_pages under-reports."""
     repo.set_last_shipment_id("digikala", 0)
-    _mock_empty_history()
+    _mock_no_promotions()
     route = respx.get(_SBS_URL)
     route.mock(
         side_effect=[
@@ -353,7 +415,7 @@ def test_normalize_sbs_row_missing_order_date_falls_back_to_now(repo):
 
 @respx.mock
 def test_fetch_order_detail_uses_single_shipment_endpoint(repo):
-    _mock_empty_history()
+    _mock_no_promotions()
     respx.get(f"{_SBS_URL}/42").mock(
         return_value=httpx.Response(200, json={"status": "ok", "data": _sbs_row(shipment_id=42)})
     )
@@ -370,7 +432,7 @@ def test_fetch_order_detail_supports_items_wrapped_shape(repo):
     """fetch_shipment_details observed a different real-payload shape
     ({"items": [...]}) for this same endpoint - fetch_order_detail must
     not break on it."""
-    _mock_empty_history()
+    _mock_no_promotions()
     respx.get(f"{_SBS_URL}/42").mock(
         return_value=httpx.Response(
             200, json={"status": "ok", "data": {"items": [_sbs_row(shipment_id=42)]}}
@@ -424,7 +486,7 @@ def test_fetch_new_orders_confirms_pending_row_before_normalizing(repo):
     so the resulting NormalizedOrder carries the post-confirm status and
     customer data - not the pending row's null fields."""
     repo.set_last_shipment_id("digikala", 0)
-    _mock_empty_history()
+    _mock_no_promotions()
     respx.get(_SBS_URL).mock(
         return_value=_sbs_list_response([_pending_row(shipment_id=1)])
     )
@@ -461,7 +523,7 @@ def test_fetch_new_orders_skips_confirm_for_non_pending_rows(repo):
     """processing/processed/edited/rejected/cancelled rows must never
     trigger an update-status call - there's nothing to confirm."""
     repo.set_last_shipment_id("digikala", 0)
-    _mock_empty_history()
+    _mock_no_promotions()
     respx.get(_SBS_URL).mock(
         return_value=_sbs_list_response([_sbs_row(shipment_id=1, status={"text": "processing"})])
     )
@@ -482,7 +544,7 @@ def test_confirm_uses_next_status_and_falls_back_to_processing(repo):
     present, since that's Digikala's documented "what can this shipment
     become next" value - not a hardcoded "processing"."""
     repo.set_last_shipment_id("digikala", 0)
-    _mock_empty_history()
+    _mock_no_promotions()
     respx.get(_SBS_URL).mock(
         return_value=_sbs_list_response([_pending_row(shipment_id=1, next_status="edited")])
     )
@@ -503,7 +565,7 @@ def test_confirm_uses_next_status_and_falls_back_to_processing(repo):
 @respx.mock
 def test_confirm_omits_verification_code_when_row_has_none(repo):
     repo.set_last_shipment_id("digikala", 0)
-    _mock_empty_history()
+    _mock_no_promotions()
     respx.get(_SBS_URL).mock(
         return_value=_sbs_list_response([_pending_row(shipment_id=1, verification_code=None)])
     )
@@ -527,7 +589,7 @@ def test_confirm_failure_falls_back_to_original_pending_row(repo):
     still sync - with whatever data the pending row already had - rather
     than being lost or raising out of fetch_new_orders."""
     repo.set_last_shipment_id("digikala", 0)
-    _mock_empty_history()
+    _mock_no_promotions()
     respx.get(_SBS_URL).mock(
         return_value=_sbs_list_response([_pending_row(shipment_id=1)])
     )
@@ -551,7 +613,7 @@ def test_confirm_success_but_refetch_failure_falls_back_to_pending_row(repo):
     pre-confirmation row must still be used rather than blowing up the
     whole poll."""
     repo.set_last_shipment_id("digikala", 0)
-    _mock_empty_history()
+    _mock_no_promotions()
     respx.get(_SBS_URL).mock(
         return_value=_sbs_list_response([_pending_row(shipment_id=1)])
     )
@@ -572,7 +634,7 @@ def test_fetch_order_detail_also_confirms_pending_row(repo):
     """fetch_order_detail (used by the retry path) must apply the same
     auto-confirm as fetch_new_orders, since a shipment can still be
     pending the first time it's fetched through this path."""
-    _mock_empty_history()
+    _mock_no_promotions()
     respx.get(f"{_SBS_URL}/1").mock(
         side_effect=[
             httpx.Response(200, json={"status": "ok", "data": _pending_row(shipment_id=1)}),
@@ -950,12 +1012,14 @@ def test_fetch_history_price_map_stops_early_past_the_date_window(repo):
     assert route.call_count == 1
 
 
-# --- _normalize_sbs_row + price_map (pure, no I/O) ------------------------
+# --- _normalize_sbs_row + promotion_map (pure, no I/O) ---------------------
 
-def test_normalize_sbs_row_applies_price_map_discount(repo):
-    """When a price_map entry matches a variant's sku, unit_price/
+def test_normalize_sbs_row_applies_promotion_map_discount(repo):
+    """When a promotion_map entry matches a variant's variantId, unit_price/
     final_price must reflect the real pre/post-discount amounts - not
-    the SBS price*count fallback."""
+    the SBS price*count fallback (SBS's own "price" is confirmed to
+    already be the post-discount value, so it must never be used as
+    unit_price when a promotion is active)."""
     adapter = DigikalaAdapter(config=_CFG, repository=repo)
     row = _sbs_row(
         shipment_id=1,
@@ -964,34 +1028,37 @@ def test_normalize_sbs_row_applies_price_map_discount(repo):
             {
                 "title": "Product A",
                 "sellerCode": 42,
+                "variantId": 68379146,
                 "count": 3,
-                "price": 999999,  # must be ignored once price_map has a match
+                "price": 999999,  # must be ignored once promotion_map has a match
                 "image_url": "https://example.com/a.jpg",
             }
         ],
     )
-    price_map = {"42": {"unit_price": Decimal("120000000"), "unit_discount": Decimal("100000")}}
+    promotion_map = {68379146: {"rrp_price": Decimal("120000000"), "selling_price": Decimal("119900000")}}
 
-    order = adapter._normalize_sbs_row(row, price_map=price_map)
+    order = adapter._normalize_sbs_row(row, promotion_map=promotion_map)
 
     item = order.items[0]
     assert item.unit_price == Decimal("120000000")
-    assert item.final_price == Decimal("359700000")  # (120,000,000 - 100,000) * 3
+    assert item.final_price == Decimal("359700000")  # 119,900,000 * 3
     assert order.total_price == Decimal("359700000")
 
 
-def test_normalize_sbs_row_falls_back_when_sku_missing_from_price_map(repo):
-    """A price_map that doesn't cover this particular sku (partial
-    enrichment failure) must fall back to price*count for that item
-    only."""
+def test_normalize_sbs_row_falls_back_when_variant_missing_from_promotion_map(repo):
+    """A promotion_map that doesn't cover this particular variantId
+    (partial enrichment failure, or genuinely no active promotion on
+    that item) must fall back to price*count for that item only."""
     adapter = DigikalaAdapter(config=_CFG, repository=repo)
     row = _sbs_row(
         shipment_id=1,
-        variants=[{"title": "Product A", "sellerCode": 42, "count": 2, "price": 500000}],
+        variants=[
+            {"title": "Product A", "sellerCode": 42, "variantId": 111, "count": 2, "price": 500000}
+        ],
     )
     order = adapter._normalize_sbs_row(
         row,
-        price_map={"some-other-sku": {"unit_price": Decimal("1"), "unit_discount": Decimal("0")}},
+        promotion_map={222: {"rrp_price": Decimal("1"), "selling_price": Decimal("0")}},
     )
 
     item = order.items[0]
@@ -999,8 +1066,8 @@ def test_normalize_sbs_row_falls_back_when_sku_missing_from_price_map(repo):
     assert item.final_price == Decimal("1000000")
 
 
-def test_normalize_sbs_row_no_price_map_matches_pre_enrichment_behavior(repo):
-    """Calling _normalize_sbs_row with no price_map at all (as every
+def test_normalize_sbs_row_no_promotion_map_matches_pre_enrichment_behavior(repo):
+    """Calling _normalize_sbs_row with no promotion_map at all (as every
     pre-enrichment test in this file already does) must behave exactly
     as before this feature existed."""
     adapter = DigikalaAdapter(config=_CFG, repository=repo)
@@ -1015,29 +1082,66 @@ def test_normalize_sbs_row_no_price_map_matches_pre_enrichment_behavior(repo):
     assert item.final_price == Decimal("300000")
 
 
+def test_normalize_sbs_row_matches_client_reported_example(repo):
+    """Regression test for the exact real-world case that surfaced this
+    bug: product code 3818 / order 383370810, a known 5% discount
+    (1,100,000 -> 1,045,000 Toman = 11,000,000 -> 10,450,000 Rial),
+    confirmed live via the Promotions API."""
+    adapter = DigikalaAdapter(config=_CFG, repository=repo)
+    row = _sbs_row(
+        shipment_id=383370810,
+        order_id=375356010,
+        variants=[
+            {
+                "title": "تابلو میناکاری چوبی فراز هنر کد 3818 مجموعه 3 عددی",
+                "productId": 19083049,
+                "variantId": 68379146,
+                "sellerCode": "",
+                "count": 1,
+                "price": 10450000,  # SBS's own price - already post-discount
+            }
+        ],
+    )
+    promotion_map = {68379146: {"rrp_price": Decimal("11000000"), "selling_price": Decimal("10450000")}}
+
+    order = adapter._normalize_sbs_row(row, promotion_map=promotion_map)
+
+    item = order.items[0]
+    assert item.unit_price == Decimal("11000000")
+    assert item.final_price == Decimal("10450000")
+
+
 def test_normalize_sbs_row_clamps_final_price_when_discount_exceeds_unit_price(repo):
-    """Bad/stale history data (unit_discount > unit_price) must never
-    produce a negative line total."""
+    """Bad/stale promotion data (selling_price > rrp_price) must never
+    produce a negative-discount line - Didar's own deal_client guards
+    against this downstream, but the adapter shouldn't hand it a
+    nonsensical figure in the first place. Here that just means
+    unit_price/final_price are taken as-is from the Promotions API
+    (no clamping happens in this method at all anymore - the old
+    history-based clamp doesn't apply since final_price is no longer
+    derived by subtraction here, it comes straight from
+    promotion_selling_price)."""
     adapter = DigikalaAdapter(config=_CFG, repository=repo)
     row = _sbs_row(
         shipment_id=1,
-        variants=[{"title": "Product A", "sellerCode": 42, "count": 2, "price": 100000}],
+        variants=[
+            {"title": "Product A", "sellerCode": 42, "variantId": 55, "count": 2, "price": 100000}
+        ],
     )
-    price_map = {"42": {"unit_price": Decimal("100000"), "unit_discount": Decimal("500000")}}
+    promotion_map = {55: {"rrp_price": Decimal("100000"), "selling_price": Decimal("100000")}}
 
-    order = adapter._normalize_sbs_row(row, price_map=price_map)
+    order = adapter._normalize_sbs_row(row, promotion_map=promotion_map)
 
-    assert order.items[0].final_price == Decimal("0")
+    assert order.items[0].final_price == Decimal("200000")
 
 
-# --- end-to-end: fetch_new_orders wires price_map through -----------------
+# --- end-to-end: fetch_new_orders wires promotion_map through -------------
 
 @respx.mock
-def test_fetch_new_orders_enriches_items_with_history_discount(repo):
-    """Full integration: a new shipment whose product matches an
-    /orders/history row with a real discount must carry that discount
-    all the way through to the NormalizedOrder returned by
-    fetch_new_orders."""
+def test_fetch_new_orders_enriches_items_with_promotion_discount(repo):
+    """Full integration: a new shipment whose item variant has an
+    active, approved promotion must carry that discount all the way
+    through to the NormalizedOrder returned by fetch_new_orders."""
     repo.set_last_shipment_id("digikala", 0)
     respx.get(_SBS_URL).mock(
         return_value=_sbs_list_response(
@@ -1049,19 +1153,16 @@ def test_fetch_new_orders_enriches_items_with_history_discount(repo):
                         {
                             "title": "کامپیوتر همه کاره",
                             "sellerCode": "123213",
+                            "variantId": 68379146,
                             "count": 5,
-                            "price": 999999,
+                            "price": 119900000,
                         }
                     ],
                 )
             ]
         )
     )
-    respx.get(_HISTORY_URL).mock(
-        return_value=_history_list_response(
-            [_history_row(order_id=9, product_supplier_code="123213", quantity=5)]
-        )
-    )
+    _mock_promotion(68379146, rrp_price=120000000, selling_price=119900000)
 
     adapter = DigikalaAdapter(config=_CFG, repository=repo)
     orders = adapter.fetch_new_orders(since=None)
@@ -1069,11 +1170,104 @@ def test_fetch_new_orders_enriches_items_with_history_discount(repo):
     assert len(orders) == 1
     item = orders[0].items[0]
     assert item.unit_price == Decimal("120000000")
-    assert item.final_price == Decimal("599500000")  # (120,000,000 - 100,000) * 5
+    assert item.final_price == Decimal("599500000")  # 119,900,000 * 5
 
 
 @respx.mock
-def test_fetch_order_detail_enriches_items_with_history_discount(repo):
+def test_fetch_new_orders_skips_promotion_lookup_when_variant_id_missing(repo):
+    """An item with no variantId at all (unexpected payload shape) must
+    fall back to price*count without attempting any promotion lookup -
+    covers _build_promotion_map's own variant_id-is-None guard."""
+    repo.set_last_shipment_id("digikala", 0)
+    respx.get(_SBS_URL).mock(
+        return_value=_sbs_list_response(
+            [
+                _sbs_row(
+                    shipment_id=1,
+                    variants=[{"title": "Product A", "sellerCode": "1", "count": 2, "price": 5000}],
+                )
+            ]
+        )
+    )
+
+    adapter = DigikalaAdapter(config=_CFG, repository=repo)
+    orders = adapter.fetch_new_orders(since=None)
+
+    assert orders[0].items[0].unit_price == Decimal("5000")
+    assert orders[0].items[0].final_price == Decimal("10000")
+
+
+@respx.mock
+def test_fetch_new_orders_ignores_non_approved_promotions(repo):
+    """A promotion row with variant_status != "approved" must be
+    ignored, falling back to price*count - not every row returned by
+    the endpoint is necessarily live/usable."""
+    repo.set_last_shipment_id("digikala", 0)
+    respx.get(_SBS_URL).mock(
+        return_value=_sbs_list_response(
+            [
+                _sbs_row(
+                    shipment_id=1,
+                    variants=[
+                        {
+                            "title": "Product A",
+                            "sellerCode": "1",
+                            "variantId": 42,
+                            "count": 1,
+                            "price": 5000,
+                        }
+                    ],
+                )
+            ]
+        )
+    )
+    _mock_promotion(42, rrp_price=6000, selling_price=5000, variant_status="pending_approval")
+
+    adapter = DigikalaAdapter(config=_CFG, repository=repo)
+    orders = adapter.fetch_new_orders(since=None)
+
+    assert orders[0].items[0].unit_price == Decimal("5000")
+    assert orders[0].items[0].final_price == Decimal("5000")
+
+
+@respx.mock
+def test_fetch_new_orders_caches_promotion_lookup_across_rows(repo):
+    """The same variantId appearing on two different shipments in one
+    poll cycle must only trigger ONE Promotions API call - see
+    _fetch_variant_promotion's own cache, added because of the
+    endpoint's low rate limit (confirmed live: ~33-40/reset window)."""
+    repo.set_last_shipment_id("digikala", 0)
+    respx.get(_SBS_URL).mock(
+        return_value=_sbs_list_response(
+            [
+                _sbs_row(
+                    shipment_id=1,
+                    order_id=9,
+                    variants=[
+                        {"title": "A", "sellerCode": "1", "variantId": 42, "count": 1, "price": 5000}
+                    ],
+                ),
+                _sbs_row(
+                    shipment_id=2,
+                    order_id=10,
+                    variants=[
+                        {"title": "A", "sellerCode": "1", "variantId": 42, "count": 1, "price": 5000}
+                    ],
+                ),
+            ]
+        )
+    )
+    route = _mock_promotion(42, rrp_price=6000, selling_price=5000)
+
+    adapter = DigikalaAdapter(config=_CFG, repository=repo)
+    orders = adapter.fetch_new_orders(since=None)
+
+    assert len(orders) == 2
+    assert route.call_count == 1
+
+
+@respx.mock
+def test_fetch_order_detail_enriches_items_with_promotion_discount(repo):
     """Same enrichment must apply through the fetch_order_detail path
     (used by the retry flow), not just fetch_new_orders."""
     respx.get(f"{_SBS_URL}/1").mock(
@@ -1085,17 +1279,19 @@ def test_fetch_order_detail_enriches_items_with_history_discount(repo):
                     shipment_id=1,
                     order_id=9,
                     variants=[
-                        {"title": "Product A", "sellerCode": "123213", "count": 5, "price": 1},
+                        {
+                            "title": "Product A",
+                            "sellerCode": "123213",
+                            "variantId": 68379146,
+                            "count": 5,
+                            "price": 119900000,
+                        }
                     ],
                 ),
             },
         )
     )
-    respx.get(_HISTORY_URL).mock(
-        return_value=_history_list_response(
-            [_history_row(order_id=9, product_supplier_code="123213", quantity=5)]
-        )
-    )
+    _mock_promotion(68379146, rrp_price=120000000, selling_price=119900000)
 
     adapter = DigikalaAdapter(config=_CFG, repository=repo)
     order = adapter.fetch_order_detail("1")
