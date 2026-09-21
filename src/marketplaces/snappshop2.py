@@ -423,6 +423,14 @@ def _parse_date(value: str | None) -> datetime:
     if not value:
         return datetime.now(timezone.utc)
     try:
-        return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        dt = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        # BUGFIX (2026-09-21): mirrors the same fix in snappshop.py (this
+        # store is a maintained independent copy) - SnappShop doesn't
+        # always send an offset/"Z" suffix on created_at, and an
+        # offset-naive result here crashes sync_engine.py's window
+        # comparison every poll for as long as the order stays in the
+        # fetch window. Assume UTC, same as SnappShop's documented/
+        # observed offset-aware timestamps.
+        return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
     except ValueError:
         return datetime.now(timezone.utc)

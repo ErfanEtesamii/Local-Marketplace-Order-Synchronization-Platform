@@ -232,7 +232,32 @@ class SyncEngine:
             window_dropped = 0
             newly_ignored_ids: list[str] = []
             for order in orders:
-                if order.created_at is not None and order.created_at < since:
+                # BUGFIX (2026-09-21): this comparison used to run
+                # unguarded. A single order with a bad created_at (e.g.
+                # the offset-naive-vs-offset-aware TypeError from
+                # SnappShop's _parse_date - see that module's docstring)
+                # raised out of this loop entirely, silently aborting the
+                # rest of the poll cycle for this source: no exception
+                # logged (only the first run after a restart had a
+                # try/except around it), no orders synced, and the
+                # source's set_last_sync_time() below never reached - for
+                # 19+ hours, every 2 minutes, until the bad order aged
+                # out of the fetch window and stopped being returned at
+                # all. One bad order must never take the rest of this
+                # source's batch down with it.
+                try:
+                    is_outside_window = (
+                        order.created_at is not None and order.created_at < since
+                    )
+                except Exception:
+                    log.exception(
+                        "sync_engine: could not evaluate window for %s order %s "
+                        "(created_at=%r) - keeping it so status/ID dedup can decide",
+                        platform, order.source_order_id, order.created_at,
+                    )
+                    window_kept.append(order)
+                    continue
+                if is_outside_window:
                     window_dropped += 1
                     newly_ignored_ids.append(order.source_order_id)
                     log.info(
