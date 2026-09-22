@@ -39,6 +39,9 @@ _CFG = DidarConfig(
     # CLIENT DECISION: FBD deals carry the first store's existing
     # "دیجی کالا" label, not a label of their own.
     deal_label_title_digikala="دیجی کالا",
+    # Required: create_warehouse_shipment_deal() now raises before ever
+    # calling Didar if this is blank.
+    warehouse_placeholder_person_id="placeholder-person-1",
     default_product_category_id="cat-default",
     # Explicitly blank (not left to the field's default_factory, which
     # reads the real .env) so these tests never load the client's actual
@@ -118,9 +121,11 @@ def _mock_create_path():
 # --- the Deal body ---------------------------------------------------------
 
 @respx.mock
-def test_deal_has_the_fixed_title_and_no_person_id():
-    """No customer exists on this endpoint, so the Title is a constant
-    and PersonId must be ABSENT - not null, not a placeholder."""
+def test_deal_has_the_fixed_title_and_the_configured_placeholder_person_id():
+    """No real customer exists on this endpoint, so the Title is a
+    constant and PersonId must be the configured placeholder Contact -
+    Didar's Deal.save_v2 rejects a Deal with neither PersonId nor
+    CompanyId ("person and company both are empty")."""
     _, deal_route = _mock_create_path()
 
     deal_id = _client().create_warehouse_shipment_deal(_ITEM)
@@ -129,7 +134,28 @@ def test_deal_has_the_fixed_title_and_no_person_id():
     deal = deal_route.calls[0].request.content
     body = json.loads(deal)
     assert body["Deal"]["Title"] == WAREHOUSE_DEAL_TITLE
-    assert "PersonId" not in body["Deal"]
+    assert body["Deal"]["PersonId"] == "placeholder-person-1"
+
+
+def test_deal_creation_requires_placeholder_person_id():
+    """Without DIDAR_WAREHOUSE_PLACEHOLDER_PERSON_ID configured, fail
+    fast - before ever calling Didar - rather than let every poll hit
+    the same "person and company both are empty" 400 forever."""
+    cfg = DidarConfig(
+        base_url="https://app.didar.me/api", api_key="test-key",
+        pipeline_id="p1", pipeline_stage_id="stage-1",
+        deal_label_title_digikala="دیجی کالا",
+        warehouse_placeholder_person_id="",
+        default_product_category_id="cat-default",
+        product_catalog_xlsx="",
+    )
+    client = DidarDealClient(config=cfg, product_client=DidarProductClient(config=cfg))
+
+    try:
+        client.create_warehouse_shipment_deal(_ITEM)
+        assert False, "expected RuntimeError"
+    except RuntimeError as exc:
+        assert "DIDAR_WAREHOUSE_PLACEHOLDER_PERSON_ID" in str(exc)
 
 
 @respx.mock

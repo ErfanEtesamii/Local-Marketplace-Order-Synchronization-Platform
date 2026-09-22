@@ -1368,13 +1368,19 @@ class DidarDealClient:
         One Deal for one FBD item. Differences from create_deal(), all
         deliberate:
 
-          - NO PersonId key at all. This endpoint exposes no customer,
-            so there is nobody to link; a placeholder Contact was
-            considered and rejected by the client (it would pollute the
-            CRM's contact list with a fake person). If Didar ever
-            rejects a Deal without PersonId, the fix is a single
-            configured placeholder Contact Id - never a Contact created
-            per item.
+          - PersonId is the configured placeholder
+            (DIDAR_WAREHOUSE_PLACEHOLDER_PERSON_ID / self._config.
+            warehouse_placeholder_person_id), the SAME Id on every FBD
+            deal - never a Contact created per item. This endpoint
+            exposes no customer, so there is nobody real to link, but
+            Didar's Deal.save_v2 contract requires PersonId (confirmed
+            live via the "person and company both are empty" 400 - see
+            digikala_warehouse.py's module docstring for the incident
+            history - and per Didar's own docs, CompanyId alone does
+            not satisfy this for Create Deal). Raises RuntimeError
+            up front, before ever calling Didar, when this isn't
+            configured - a clearer failure than every poll re-hitting
+            the same 400 forever.
           - Fixed Title (WAREHOUSE_DEAL_TITLE) - there is no customer
             name to build one from.
           - The same pipeline/stage as customer orders
@@ -1393,8 +1399,18 @@ class DidarDealClient:
         Raises on failure (no fire-and-forget wrapper): the caller must
         NOT mark this item as synced if no Deal was created.
         """
+        if not self._config.warehouse_placeholder_person_id:
+            raise RuntimeError(
+                "DIDAR_WAREHOUSE_PLACEHOLDER_PERSON_ID is not configured - "
+                "digikala_warehouse (FBD) deals cannot be created without it "
+                "(Didar rejects Deal.save_v2 with no PersonId/CompanyId). "
+                "Run scripts/create_warehouse_placeholder_contact.py to create "
+                "a placeholder Contact and put its Id in .env."
+            )
+
         deal_body: dict = {
             "Title": WAREHOUSE_DEAL_TITLE,
+            "PersonId": self._config.warehouse_placeholder_person_id,
             "PipelineId": self._config.pipeline_id,
             "PipelineStageId": self._config.pipeline_stage_id,
             "Description": _build_warehouse_description(item),

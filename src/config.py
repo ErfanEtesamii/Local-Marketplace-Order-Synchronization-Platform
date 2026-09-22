@@ -208,6 +208,24 @@ class DidarConfig:
     # deal_client.py). Left blank, OwnerId is simply omitted from the
     # request, same as LabelId below when a source has none configured.
     default_owner_id: str = field(default_factory=lambda: _get("DIDAR_DEFAULT_OWNER_ID"))
+    # REQUIRED for digikala_warehouse (FBD) deals - see
+    # create_warehouse_shipment_deal() in deal_client.py. The FBD source
+    # endpoint exposes no customer at all, but Didar's Deal.save_v2
+    # contract requires PersonId (confirmed live: a Deal with no
+    # PersonId/CompanyId is rejected with "person and company both are
+    # empty", and Didar's own docs mark PersonId as Required - CompanyId
+    # alone does not satisfy it for Create Deal). The Id here must be an
+    # EXISTING Person in Didar - get it via Get Person By Mobile / Get
+    # Person By Id / Search Person (see scripts/create_warehouse_placeholder_contact.py
+    # for a one-off helper that creates a dedicated placeholder Contact
+    # and prints its Id). Deliberately a DEDICATED Contact (e.g. "سفارشات
+    # انبار دیجی‌کالا"), not a staff member's own Person record, so FBD
+    # deals don't get mixed into a real person's contact history. Left
+    # blank, every digikala_warehouse item keeps failing exactly as
+    # today - see the module docstring in digikala_warehouse.py.
+    warehouse_placeholder_person_id: str = field(
+        default_factory=lambda: _get("DIDAR_WAREHOUSE_PLACEHOLDER_PERSON_ID")
+    )
     # Post-sale checklist Activity types (src/didar/activity_client.py) -
     # confirmed live for this account via POST /activity/GetActivityType
     # (2026-08): this account already has ONE dedicated ActivityType per

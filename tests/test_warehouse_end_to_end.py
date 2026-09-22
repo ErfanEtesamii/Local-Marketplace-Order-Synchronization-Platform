@@ -38,6 +38,9 @@ _DIDAR_CFG = DidarConfig(
     deal_label_title_digikala="دیجی کالا",
     default_product_category_id="cat-default",
     activity_type_ship_id="ship-type-id",
+    # Required: create_warehouse_shipment_deal() now raises before ever
+    # calling Didar if this is blank.
+    warehouse_placeholder_person_id="placeholder-person-1",
     # Blank on purpose so nothing here depends on the developer's .env.
     product_catalog_xlsx="", default_owner_id="",
 )
@@ -182,7 +185,7 @@ def test_an_item_created_after_the_floor_flows_all_the_way_into_didar(repo, tmp_
     assert repo.is_already_synced("digikala_warehouse", "55123") is False
 
     deal_body = json.loads(routes["deal"].calls[0].request.content)
-    assert "PersonId" not in deal_body["Deal"]
+    assert deal_body["Deal"]["PersonId"] == "placeholder-person-1"
     assert (
         "شناسه یکتای هماهنگ‌سازی: digikala_warehouse:55123"
         in deal_body["Deal"]["Description"].splitlines()

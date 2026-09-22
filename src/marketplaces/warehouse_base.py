@@ -25,11 +25,15 @@ and its saved output):
     row: a single order can contain more than one item.)
   - Status: the response has NO textual status enum - only
     `warehouse_status_at`, a timestamp. There is nothing resembling
-    "pending" vs "confirmed" to filter on. Per the client's own answer,
-    these deals are created with no Contact/PersonId at all and simply
-    tracked as "seen" from the first poll onward (see the cold-start
-    docstring in digikala_warehouse.py, stage 2) - so no status field is
+    "pending" vs "confirmed" to filter on - so no status field is
     modeled here at all; being returned by this endpoint IS "active".
+    Every item seen is tracked from the first poll onward (see the
+    cold-start docstring in digikala_warehouse.py, stage 2). Each Deal
+    DOES carry a PersonId - a dedicated placeholder Contact, configured
+    via DIDAR_WAREHOUSE_PLACEHOLDER_PERSON_ID, the same on every FBD
+    deal - because Didar's Deal.save_v2 rejects a Deal with neither
+    PersonId nor CompanyId; see create_warehouse_shipment_deal() in
+    deal_client.py.
   - Dates (order_created_at, warehouse_status_at, commitment_date):
     CONFIRMED Gregorian/ISO 8601 with a numeric UTC offset (e.g.
     "2026-09-11T08:49:01.000000+03:30") - NOT Jalali. Parsed the same way
