@@ -203,6 +203,43 @@ def test_price_unit_rial_config_does_not_multiply():
 
 
 @respx.mock
+def test_total_price_excludes_shipping_even_when_woocommerce_total_includes_it():
+    """
+    Regression test (client feedback, 2026-09 - "مبلغ نهایی نباید قیمت
+    پیک ... لحاظ شده باشه"): WooCommerce's order "total" field is the
+    GRAND total (subtotal + shipping_total + tax), so an order with a
+    nonzero shipping_total must NOT have that shipping folded into
+    order.total_price - total_price must reflect PRODUCTS ONLY, same
+    convention as every other adapter (Digikala/SnappShop/Basalam all
+    total their line items, never the marketplace's own order-level
+    grand-total field).
+    """
+    raw_order_with_shipping = {
+        "id": 777,
+        "number": "777",
+        "status": "processing",
+        "date_created_gmt": "2026-09-01T09:00:00",
+        # Grand total = 300000 (products) + 50000 (shipping) = 350000
+        "total": "350000",
+        "shipping_total": "50000",
+        "billing": {"first_name": "سارا", "last_name": "احمدی", "phone": "09351234567"},
+        "line_items": [
+            {"sku": "SKU-C", "name": "قاب عکس", "quantity": 1, "price": "300000", "total": "300000"},
+        ],
+    }
+    respx.get("https://farazhonar.com/wp-json/wc/v3/orders/777").mock(
+        return_value=httpx.Response(200, json=raw_order_with_shipping)
+    )
+    adapter = FarazHonarAdapter(config=_CFG)
+    order = adapter.fetch_order_detail("777")
+
+    # 300000 تومان × 10 = 3,000,000 ریال - products only, shipping excluded.
+    assert order.total_price == 3_000_000
+    # Shipping is still tracked, just on its own field, not folded into total_price.
+    assert order.shipping_cost == 500_000
+
+
+@respx.mock
 def test_normalize_resolves_image_url_for_each_line_item():
     """
     The first image URL from each line item's WooCommerce product must

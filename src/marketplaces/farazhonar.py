@@ -267,7 +267,24 @@ class FarazHonarAdapter(MarketplaceAdapter):
             source_order_id=str(raw.get("id")),
             order_number=str(raw.get("number", raw.get("id"))),
             created_at=_parse_date(raw.get("date_created_gmt")),
-            total_price=to_rial(_to_decimal(raw.get("total")), self._config.price_unit),
+            # BUGFIX (client feedback, 2026-09 - "مبلغ نهایی نباید قیمت
+            # پیک ... لحاظ شده باشه"): WooCommerce's order-level "total"
+            # is the GRAND total - officially documented as
+            # subtotal + shipping_total + tax + fees, NOT a products-only
+            # figure. Using it here meant Faraz Honar was the one source
+            # in this project whose total_price silently included the
+            # shipping cost, unlike every other adapter (Digikala,
+            # SnappShop, Basalam), which all total the PRODUCT lines only
+            # (see e.g. digikala.py's total_price=sum(i.final_price ...)).
+            # That inconsistency fed straight into
+            # sync_engine._order_amounts()'s total_amount (stored in
+            # synced_orders) and src/telegram.py's per-order "مبلغ کل"
+            # line, silently double-counting shipping for this source
+            # only. Summing each line's own (already post-discount,
+            # shipping-free) `total` instead makes total_price mean the
+            # same thing - products only, no shipping, no tax - for every
+            # source in the project.
+            total_price=sum((i.final_price for i in items), Decimal("0")),
             status=str(raw.get("status", "unknown")),
             items=items,
             customer_full_name=full_name,
