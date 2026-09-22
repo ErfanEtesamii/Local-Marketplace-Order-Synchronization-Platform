@@ -1,6 +1,7 @@
 import json as _json
 from datetime import datetime, timedelta, timezone
 
+import pytest
 import respx
 import httpx
 
@@ -348,3 +349,49 @@ def test_photo_upload_that_keeps_failing_never_raises():
     client.attach_photos_to_activity("a-42", [(b"fake-bytes", "photo.jpg", "image/jpeg")])
 
     assert attach_route.call_count == 3  # first try + 2 retries
+
+
+# --- create_note() (stage 2 of the "طبقه‌بندی انواع سفارش اسنپ‌شاپ" prompt) -
+# A separate method from create_activity() on purpose - see its docstring
+# - so it gets its own dedicated coverage rather than being folded into
+# the checklist tests above.
+
+@respx.mock
+def test_create_note_sends_the_exact_documented_body():
+    route = respx.post("https://app.didar.me/api/activity/save").mock(
+        return_value=httpx.Response(200, json={"Response": {"Id": "note-1"}})
+    )
+
+    client = DidarActivityClient(config=_CFG_WITH_TYPES)
+    activity_id = client.create_note(deal_id="deal-9", text="ارسال به انبار")
+
+    assert activity_id == "note-1"
+    body = _json.loads(route.calls[0].request.content)
+    assert body == {
+        "Activity": {
+            "ActivityTypeId": "00000000-0000-0000-0000-000000000000",
+            "ResultNote": "ارسال به انبار",
+            "IsDone": True,
+            "DealId": "deal-9",
+        }
+    }
+    # No Title/DueDate/OwnerId - this is a plain note, not a planned
+    # checklist item (see create_activity()'s body for comparison).
+    assert "Title" not in body["Activity"]
+    assert "DueDate" not in body["Activity"]
+    assert "OwnerId" not in body["Activity"]
+
+
+@respx.mock
+def test_create_note_propagates_a_failed_response():
+    """create_note() does NOT catch its own errors (see its docstring) -
+    a non-2xx response must reach the caller (sync_engine.py, stage 3)
+    exactly like create_activity() does, so the caller's fire-and-forget
+    wrapper is what decides not to fail the sync."""
+    respx.post("https://app.didar.me/api/activity/save").mock(
+        return_value=httpx.Response(400, json={"message": "invalid DealId"})
+    )
+
+    client = DidarActivityClient(config=_CFG_WITH_TYPES)
+    with pytest.raises(httpx.HTTPStatusError):
+        client.create_note(deal_id="bad-deal", text="ارسال به انبار")

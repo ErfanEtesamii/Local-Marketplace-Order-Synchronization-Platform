@@ -235,3 +235,42 @@ def test_warehouse_shipments_have_no_retry_queue(repo):
     adapter.fetch_order_detail(), which this source does not have."""
     assert not hasattr(repo, "record_warehouse_failure")
     assert not hasattr(repo, "get_pending_warehouse_failures")
+
+
+# --- SnappShop order-type Didar note dedup guard (2026-11) -----------------
+# New table, new methods - none of the tests above change. See
+# snappshop_notes_added in repository.py's module docstring (item 13) and
+# the "طبقه‌بندی انواع سفارش اسنپ‌شاپ" prompt. Same shape as the
+# express-alert dedup guard tested in test_modir_payamak.py, exercised
+# directly here (rather than through notify_if_express/create_note) the
+# same way the warehouse-shipment guard above is.
+
+
+def test_snappshop_note_dedupe_marks_and_checks(repo):
+    assert repo.has_snappshop_note_been_added("snappshop", "847837753") is False
+    repo.mark_snappshop_note_added("snappshop", "847837753")
+    assert repo.has_snappshop_note_been_added("snappshop", "847837753") is True
+
+
+def test_snappshop_note_dedupe_is_scoped_per_source_and_id(repo):
+    repo.mark_snappshop_note_added("snappshop", "847837753")
+
+    assert repo.has_snappshop_note_been_added("snappshop", "999999999") is False
+    assert repo.has_snappshop_note_been_added("snappshop2", "847837753") is False
+
+
+def test_marking_a_snappshop_note_twice_is_a_harmless_no_op(repo):
+    """INSERT OR IGNORE: _sync_one_order() and retry_pending_failures()
+    can both see the same order, so a repeated call must never raise or
+    duplicate the row."""
+    repo.mark_snappshop_note_added("snappshop", "847837753")
+    repo.mark_snappshop_note_added("snappshop", "847837753")
+
+    with repo._connect() as conn:
+        rows = conn.execute(
+            "SELECT platform, source_order_id FROM snappshop_notes_added "
+            "WHERE platform = ? AND source_order_id = ?",
+            ("snappshop", "847837753"),
+        ).fetchall()
+
+    assert rows == [("snappshop", "847837753")]

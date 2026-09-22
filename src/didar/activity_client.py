@@ -109,6 +109,14 @@ _ATTACH_RETRY_DELAYS = (2.0, 5.0)
 # attached (see create_post_sale_checklist's ship_attachments param).
 SHIP_ACTIVITY_TITLE = "ارسال محصول"
 
+# ActivityTypeId for a plain Note (as opposed to a planned to-do item),
+# per Didar's own /activity/save documentation - always this all-zero
+# GUID, never one of the per-account Ids configured on DidarConfig for
+# POST_SALE_CHECKLIST above. Named as a module constant (same pattern as
+# SHIP_ACTIVITY_TITLE) rather than hardcoded inline inside create_note()
+# so this one confirmed value has exactly one place to live.
+NOTE_ACTIVITY_TYPE_ID = "00000000-0000-0000-0000-000000000000"
+
 # Fallback anchor (client instruction, 2026-08-29) for marketplaces whose
 # adapter doesn't yet expose a real ship_time (currently: everything
 # except Basalam - see NormalizedOrder.ship_time). Rather than skip the
@@ -170,6 +178,40 @@ class DidarActivityClient:
         payload = self._post("/activity/save", json=request_body)
         activity_id = _extract_activity_id(payload)
         log.info("didar: created activity '%s' on deal %s -> Id=%s", title, deal_id, activity_id)
+        return activity_id
+
+    def create_note(self, deal_id: str, text: str) -> str:
+        """Adds a plain, already-done Note (`ResultNote`) to `deal_id` -
+        NOT a planned to-do item, so this is kept as its own method
+        rather than folded into create_activity(): the request body
+        shape genuinely differs (IsDone is always True, ResultNote
+        replaces Title, there is no DueDate/OwnerId, and ActivityTypeId
+        is always the fixed NOTE_ACTIVITY_TYPE_ID above rather than one
+        of DidarConfig's per-checklist-item Ids).
+
+        Used by sync_engine.py's SnappShop order-type classification
+        (see the "طبقه‌بندی انواع سفارش اسنپ‌شاپ" prompt) to leave exactly
+        one note per order - "اسنپ اکسپرس : تهران/اصفهان" or
+        "ارسال به انبار".
+
+        Same contract as create_activity(): this call itself can raise
+        (a transport error, a non-2xx response, an unrecognized
+        response shape from _extract_activity_id()). It does NOT catch
+        or log its own errors and does NOT decide fire-and-forget - that
+        is the caller's responsibility, exactly like the existing
+        relationship between create_activity() and _sync_one_order().
+        """
+        activity_body = {
+            "ActivityTypeId": NOTE_ACTIVITY_TYPE_ID,
+            "ResultNote": text,
+            "IsDone": True,
+            "DealId": deal_id,
+        }
+        request_body = {"Activity": activity_body}
+
+        payload = self._post("/activity/save", json=request_body)
+        activity_id = _extract_activity_id(payload)
+        log.info("didar: added note to deal %s -> Id=%s", deal_id, activity_id)
         return activity_id
 
     def _post_attachments(

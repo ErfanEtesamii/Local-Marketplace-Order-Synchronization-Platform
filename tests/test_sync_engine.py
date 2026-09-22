@@ -1353,3 +1353,166 @@ def test_faraz_preinvoice_paid_ten_days_later_is_synced(repo, synced_ids_file):
     engine.run_once()
 
     assert [o.source_order_id for o in didar.synced_orders] == ["43866"]
+
+
+# --- SnappShop order-type Didar note (stage 3 of the "طبقه‌بندی انواع
+# سفارش اسنپ‌شاپ + ثبت یادداشت خودکار در دیدار" prompt) ------------------
+
+class FakeDidarActivityClient:
+    """Records every create_note() call; can be told to fail once for a
+    given deal_id to exercise the "never blocks the sync, retried on the
+    next cycle" fire-and-forget path."""
+
+    def __init__(self, fail_once_for: set[str] | None = None):
+        self._fail_once_for = set(fail_once_for or ())
+        self.notes: list[tuple[str, str]] = []
+
+    def create_note(self, deal_id: str, text: str) -> str:
+        if deal_id in self._fail_once_for:
+            self._fail_once_for.remove(deal_id)
+            raise RuntimeError("simulated Didar create_note failure")
+        self.notes.append((deal_id, text))
+        return f"note-{len(self.notes)}"
+
+
+def _snappshop_order(source: str, order_id: str, shipping_method: str | None):
+    return NormalizedOrder(
+        source=source,
+        source_order_id=order_id,
+        order_number=order_id,
+        created_at=datetime.now(timezone.utc),
+        total_price=Decimal("100000"),
+        status="confirmed",
+        items=[OrderItem(sku="s", title="t", quantity=1, unit_price=Decimal("1"),
+                          final_price=Decimal("100000"))],
+        shipping_method=shipping_method,
+    )
+
+
+def _snappshop_engine(repo, synced_ids_file, adapter, activity_client):
+    return SyncEngine(
+        adapters=[adapter],
+        repository=repo,
+        didar_service=FakeDidarService(),
+        synced_ids_file_path=str(synced_ids_file),
+        didar_activity_client=activity_client,
+    )
+
+
+def test_snappshop_tehran_express_order_gets_tehran_note(repo, synced_ids_file):
+    adapter = FakeAdapter(
+        "snappshop", list_orders=[_snappshop_order("snappshop", "1", "EXPRESS")],
+    )
+    activity_client = FakeDidarActivityClient()
+
+    _snappshop_engine(repo, synced_ids_file, adapter, activity_client).run_once()
+
+    assert activity_client.notes == [("deal-1", "اسنپ اکسپرس : تهران")]
+    assert repo.has_snappshop_note_been_added("snappshop", "1") is True
+
+
+def test_snappshop2_isfahan_express_order_gets_isfahan_note(repo, synced_ids_file):
+    adapter = FakeAdapter(
+        "snappshop2", list_orders=[_snappshop_order("snappshop2", "1", "EXPRESS")],
+    )
+    activity_client = FakeDidarActivityClient()
+
+    _snappshop_engine(repo, synced_ids_file, adapter, activity_client).run_once()
+
+    assert activity_client.notes == [("deal-1", "اسنپ اکسپرس : اصفهان")]
+    assert repo.has_snappshop_note_been_added("snappshop2", "1") is True
+
+
+def test_snappshop_non_express_order_gets_warehouse_note(repo, synced_ids_file):
+    """No express keyword on delivery_type, on either vendor account -
+    the single "ارسال به انبار" text, with no further condition (see the
+    prompt's "زمینه‌ی تصمیم" section - destination-based splitting is not
+    implemented yet)."""
+    adapter = FakeAdapter(
+        "snappshop", list_orders=[_snappshop_order("snappshop", "1", "NORMAL")],
+    )
+    activity_client = FakeDidarActivityClient()
+
+    _snappshop_engine(repo, synced_ids_file, adapter, activity_client).run_once()
+
+    assert activity_client.notes == [("deal-1", "ارسال به انبار")]
+
+
+def test_snappshop2_non_express_order_also_gets_warehouse_note(repo, synced_ids_file):
+    adapter = FakeAdapter(
+        "snappshop2", list_orders=[_snappshop_order("snappshop2", "1", None)],
+    )
+    activity_client = FakeDidarActivityClient()
+
+    _snappshop_engine(repo, synced_ids_file, adapter, activity_client).run_once()
+
+    assert activity_client.notes == [("deal-1", "ارسال به انبار")]
+
+
+def test_snappshop_note_is_not_added_twice_once_guard_says_already_added(repo, synced_ids_file):
+    repo.mark_snappshop_note_added("snappshop", "1")
+    adapter = FakeAdapter(
+        "snappshop", list_orders=[_snappshop_order("snappshop", "1", "EXPRESS")],
+    )
+    activity_client = FakeDidarActivityClient()
+
+    _snappshop_engine(repo, synced_ids_file, adapter, activity_client).run_once()
+
+    assert activity_client.notes == []
+
+
+def test_snappshop_note_is_a_noop_for_other_marketplaces(repo, synced_ids_file):
+    """basalam/digikala/etc. orders never call create_note() - the guard
+    is on order.source, not just "is this SnappShop's engine instance"."""
+    adapter = FakeAdapter("fake1", list_orders=[_order("fake1", "1", with_items=True)])
+    activity_client = FakeDidarActivityClient()
+
+    _snappshop_engine(repo, synced_ids_file, adapter, activity_client).run_once()
+
+    assert activity_client.notes == []
+    assert repo.has_snappshop_note_been_added("fake1", "1") is False
+
+
+def test_snappshop_note_failure_does_not_fail_the_sync_or_mark_the_guard(repo, synced_ids_file):
+    """create_note() raising must not stop the order from being marked
+    synced (fire-and-forget, same as notify_if_express), and the missing
+    mark_snappshop_note_added() call is what lets the next poll retry
+    the note specifically."""
+    adapter = FakeAdapter(
+        "snappshop", list_orders=[_snappshop_order("snappshop", "1", "EXPRESS")],
+    )
+    activity_client = FakeDidarActivityClient(fail_once_for={"deal-1"})
+
+    _snappshop_engine(repo, synced_ids_file, adapter, activity_client).run_once()
+
+    assert repo.is_already_synced("snappshop", "1") is True
+    assert repo.has_snappshop_note_been_added("snappshop", "1") is False
+
+
+def test_snappshop_note_is_added_on_the_retry_path_too(repo, synced_ids_file):
+    """Mirrors the matching notify_if_express/SBS-enrichment retry-path
+    tests: an order whose first Didar sync attempt failed (for a reason
+    unrelated to the note itself) must still get its order-type note
+    once run_once()'s own trailing retry pass succeeds -
+    retry_pending_failures() re-fetches the order via
+    fetch_order_detail() and must call _add_snappshop_warehouse_note()
+    same as _sync_one_order() does."""
+    list_order = _snappshop_order("snappshop", "1", "EXPRESS")
+    retry_fetched_order = NormalizedOrder(**list_order.__dict__)
+    adapter = FakeAdapter(
+        "snappshop", list_orders=[list_order], details={"1": retry_fetched_order},
+    )
+    didar = FakeDidarService(fail_once_for={"snappshop:1"})
+    activity_client = FakeDidarActivityClient()
+    engine = SyncEngine(
+        adapters=[adapter],
+        repository=repo,
+        didar_service=didar,
+        synced_ids_file_path=str(synced_ids_file),
+        didar_activity_client=activity_client,
+    )
+
+    engine.run_once()  # first attempt fails, then run_once's own retry pass fixes it
+
+    assert activity_client.notes == [("deal-1", "اسنپ اکسپرس : تهران")]
+    assert repo.has_snappshop_note_been_added("snappshop", "1") is True

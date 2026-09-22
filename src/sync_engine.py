@@ -52,14 +52,29 @@ from pathlib import Path
 
 from src.config import settings
 from src.db.repository import Repository
+from src.didar.activity_client import DidarActivityClient
 from src.didar.service import DidarSyncService
 from src.didar.warehouse_service import DidarWarehouseSyncService
+from src.express_alert import is_express_order
 from src.logger import get_logger
 from src.marketplaces.base import MarketplaceAdapter, NormalizedOrder
 from src.modir_payamak import ModirPayamakNotifier
 from src.telegram import TelegramNotifier
 
 log = get_logger(__name__)
+
+# SnappShop order-type Didar note text (see "طبقه‌بندی انواع سفارش اسنپ‌شاپ"
+# prompt / _add_snappshop_warehouse_note below). Express text is per
+# vendor account (snappshop=Tehran, snappshop2=Isfahan); every other
+# SnappShop order - i.e. everything is_express_order() doesn't positively
+# identify as express - gets the single warehouse text below, with no
+# further condition (see the prompt's "زمینه‌ی تصمیم" section for why the
+# destination-based split is not implemented yet).
+_SNAPPSHOP_EXPRESS_NOTE_TEXT: dict[str, str] = {
+    "snappshop": "اسنپ اکسپرس : تهران",
+    "snappshop2": "اسنپ اکسپرس : اصفهان",
+}
+_SNAPPSHOP_WAREHOUSE_NOTE_TEXT = "ارسال به انبار"
 
 # Sliding fetch window: pull all orders created in the last
 # FETCH_WINDOW hours on every poll. This is deliberately much wider
@@ -91,6 +106,7 @@ class SyncEngine:
         sms_notifier: ModirPayamakNotifier | None = None,
         warehouse_adapters: list | None = None,
         warehouse_service: DidarWarehouseSyncService | None = None,
+        didar_activity_client: DidarActivityClient | None = None,
     ) -> None:
         self._adapters = {a.name: a for a in adapters}
         self._repo = repository or Repository()
@@ -109,6 +125,13 @@ class SyncEngine:
         # default is the same "construct our own, it's cheap and
         # config-gated" pattern the Telegram notifier uses.
         self._sms_notifier = sms_notifier or ModirPayamakNotifier()
+        # SnappShop order-type Didar note (2026-11 - see
+        # _add_snappshop_warehouse_note below). Injectable for the same
+        # reason as self._sms_notifier: tests can pass a fake without
+        # touching the network; default-constructing DidarActivityClient()
+        # is cheap (no network call happens until a request is actually
+        # made, same as self._didar/DidarSyncService's own default).
+        self._didar_activity_client = didar_activity_client or DidarActivityClient()
         # Digikala FBD ("ارسال به انبار دیجی‌کالا", 2026-09) - kept in its
         # own dict, NEVER merged into self._adapters: an FBD item is not a
         # NormalizedOrder (see marketplaces/warehouse_base.py), it is
@@ -553,11 +576,70 @@ class SyncEngine:
             # an SMS-provider problem can never delay the message every
             # order gets.
             self._sms_notifier.notify_if_express(order, self._repo)
+            # Same fire-and-forget contract, immediately after the SMS
+            # alert - see _add_snappshop_warehouse_note's docstring.
+            # No-op for every source other than snappshop/snappshop2.
+            self._add_snappshop_warehouse_note(order, deal_id)
         except Exception as exc:
             log.exception(
                 "sync_engine: failed to sync %s order %s", order.source, order.source_order_id
             )
             self._repo.record_failure(order.source, order.source_order_id, str(exc))
+
+    def _add_snappshop_warehouse_note(self, order: NormalizedOrder, deal_id: str) -> None:
+        """Adds exactly one Didar note classifying a SnappShop order as
+        express or warehouse-bound (see the "طبقه‌بندی انواع سفارش اسنپ‌شاپ +
+        ثبت یادداشت خودکار در دیدار" prompt). A no-op for every other
+        marketplace.
+
+        Fire-and-forget, same contract as notify_if_express() right
+        above it at both call sites (_sync_one_order and
+        retry_pending_failures): this method itself never raises, so an
+        order-type note issue can never fail the order sync or the SMS
+        alert.
+
+        Guarded by Repository.has_snappshop_note_been_added() so a
+        re-processed order - this is called from BOTH _sync_one_order()
+        and retry_pending_failures(), same as notify_if_express() - never
+        gets a second note on the same Didar deal.
+
+        Destination-based splitting ("ارسال فوری به انبار" vs "ارسال به
+        انبار") is deliberately NOT implemented yet - see the prompt's
+        "زمینه‌ی تصمیم" section: as of API v2.1.2, neither SnappShop order
+        endpoint exposes a structured buyer-destination field, and
+        NormalizedOrder.customer_city/customer_province are intentionally
+        left unset for these two adapters rather than guessed. This
+        if/else is written so that adding that split later is one more
+        branch here, not a rewrite of this method.
+        """
+        if order.source not in ("snappshop", "snappshop2"):
+            return
+        if self._repo.has_snappshop_note_been_added(order.source, order.source_order_id):
+            return
+
+        if is_express_order(order):
+            text = _SNAPPSHOP_EXPRESS_NOTE_TEXT.get(order.source)
+            if text is None:
+                log.warning(
+                    "sync_engine: no express note text configured for SnappShop "
+                    "source '%s' - skipping order-type note for order %s",
+                    order.source, order.source_order_id,
+                )
+                return
+        else:
+            text = _SNAPPSHOP_WAREHOUSE_NOTE_TEXT
+
+        try:
+            self._didar_activity_client.create_note(deal_id, text)
+        except Exception:
+            log.exception(
+                "sync_engine: failed to add SnappShop order-type note ('%s') to "
+                "deal %s (order %s %s) - will retry on the next poll/retry cycle",
+                text, deal_id, order.source, order.source_order_id,
+            )
+            return
+
+        self._repo.mark_snappshop_note_added(order.source, order.source_order_id)
 
     def _prepare_and_push_to_didar(
         self, adapter: MarketplaceAdapter, order: NormalizedOrder
@@ -811,6 +893,9 @@ class SyncEngine:
                 # an order that reaches this method twice from paging
                 # the warehouse twice.
                 self._sms_notifier.notify_if_express(order, self._repo)
+                # See the matching call/comment in _sync_one_order() -
+                # same reasoning applies to the retry path.
+                self._add_snappshop_warehouse_note(order, deal_id)
                 log.info(
                     "sync_engine: retry succeeded for %s order %s",
                     failure.platform, failure.source_order_id,

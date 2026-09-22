@@ -118,6 +118,25 @@ Five responsibilities:
      active, so the very next poll retries it naturally. The cost of a
      failure is a delay of one poll interval, not a lost item.
 
+ 13. SnappShop order-type Didar note dedup guard (snappshop_notes_added
+     table, 2026-11 - see the "طبقه‌بندی انواع سفارش اسنپ‌شاپ" prompt and
+     src/didar/activity_client.py's create_note()). Exactly the same
+     shape and reasoning as express_alerts_sent (item 10) - "have we
+     already committed this side effect for this
+     (platform, source_order_id)?" - copied on purpose rather than
+     reused: a snappshop/snappshop2 order gets exactly ONE Didar note
+     ("اسنپ اکسپرس : ..." or "ارسال به انبار") regardless of how many
+     times _sync_one_order()/retry_pending_failures() see it, and that
+     commitment is independent of both the express-SMS commitment above
+     and the Didar-sync commitment in synced_orders - each must be able
+     to fail without affecting the others. The row is written only
+     AFTER DidarActivityClient.create_note() succeeds (unlike
+     express_alerts_sent, which is written before the send - see
+     src/sync_engine.py's _add_snappshop_warehouse_note()), since a
+     failed note has no retry queue of its own and simply gets
+     reattempted on the very next poll cycle that sees the same order.
+     Rows are never deleted.
+
 Kept deliberately simple - one file, no ORM - matching the scale of a
 single-server background service.
 """
@@ -226,6 +245,13 @@ CREATE TABLE IF NOT EXISTS synced_warehouse_shipments (
     synced_at          TEXT NOT NULL,
     total_amount       INTEGER,
     PRIMARY KEY (source, source_shipment_id)
+);
+
+CREATE TABLE IF NOT EXISTS snappshop_notes_added (
+    platform        TEXT NOT NULL,
+    source_order_id TEXT NOT NULL,
+    added_at        TEXT NOT NULL,
+    PRIMARY KEY (platform, source_order_id)
 );
 """
 
@@ -479,6 +505,56 @@ class Repository:
                 VALUES (?, ?, ?)
                 """,
                 (platform, source_order_id, datetime.now(timezone.utc).isoformat()),
+            )
+
+    # --- SnappShop order-type Didar note dedup guard (2026-11) -------------
+    # See snappshop_notes_added in the schema docstring above (item 13)
+    # and src/didar/activity_client.py's create_note(). Same
+    # has_X_been_sent()/mark_X_sent() shape as
+    # has_express_alert_been_sent/mark_express_alert_sent right above,
+    # copied against its own table so a snappshop/snappshop2 order's
+    # single Didar note is a commitment independent of both the
+    # express-SMS guard above and the Didar-sync guard at the top of
+    # this file.
+
+    def has_snappshop_note_been_added(self, source: str, source_order_id: str) -> bool:
+        """True iff the single SnappShop order-type note ("اسنپ اکسپرس :
+        ..." or "ارسال به انبار") has already been added for this order.
+        Called by sync_engine.py's _add_snappshop_warehouse_note() before
+        every attempt - which, like notify_if_express(), is invoked from
+        BOTH _sync_one_order() and retry_pending_failures() - so this is
+        the only thing standing between a re-processed order and a
+        second note on the same Didar deal.
+        """
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT 1 FROM snappshop_notes_added WHERE platform = ? AND source_order_id = ?",
+                (source, source_order_id),
+            ).fetchone()
+        return row is not None
+
+    def mark_snappshop_note_added(self, source: str, source_order_id: str) -> None:
+        """Record that this order's SnappShop order-type note has been
+        added.
+
+        Unlike mark_express_alert_sent() (written BEFORE the send is
+        attempted), this is written only AFTER
+        DidarActivityClient.create_note() has already succeeded - a
+        failed note has no retry queue of its own, so leaving no row
+        behind on failure is what lets the very next poll cycle that
+        sees the same order try again.
+
+        INSERT OR IGNORE (same pattern as mark_express_alert_sent()) so
+        a repeated call for the same order is a harmless no-op that
+        keeps the FIRST added_at rather than an error or an overwrite.
+        """
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT OR IGNORE INTO snappshop_notes_added (platform, source_order_id, added_at)
+                VALUES (?, ?, ?)
+                """,
+                (source, source_order_id, datetime.now(timezone.utc).isoformat()),
             )
 
     # --- Digikala FBD ("ارسال به انبار") dedup guard (2026-09) ------------

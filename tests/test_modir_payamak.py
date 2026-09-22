@@ -79,6 +79,21 @@ _RECIPIENTS = [
     ("+989123333333", "سارا"),
 ]
 
+# All six configurable slots exercised together (stage 1-a of the
+# "طبقه‌بندی انواع سفارش اسنپ‌شاپ" prompt: EXPRESS_ALERT_SMS_RECIPIENT_6
+# was added alongside _1.._5) - a separate list from _RECIPIENTS above
+# so every existing 3-recipient test keeps asserting on exactly the
+# scenario it always has, while the six-recipient behaviour gets its
+# own dedicated coverage below.
+_SIX_RECIPIENTS = [
+    ("+989121111111", "علی"),
+    ("+989122222222", "رضا"),
+    ("+989123333333", "سارا"),
+    ("+989124444444", "مریم"),
+    ("+989125555555", "حسین"),
+    ("+989126666666", "زهرا"),
+]
+
 _API = "https://edge.ippanel.com/v1/api"
 _SEND_URL = f"{_API}/send"
 
@@ -95,6 +110,8 @@ _ENV_VARS = (
     "EXPRESS_ALERT_SMS_RECIPIENT_4_NAME",
     "EXPRESS_ALERT_SMS_RECIPIENT_5",
     "EXPRESS_ALERT_SMS_RECIPIENT_5_NAME",
+    "EXPRESS_ALERT_SMS_RECIPIENT_6",
+    "EXPRESS_ALERT_SMS_RECIPIENT_6_NAME",
 )
 
 
@@ -208,6 +225,14 @@ def test_is_configured_true_and_makes_no_network_call(monkeypatch):
 def test_is_configured_collects_all_three_recipients_with_their_names(monkeypatch):
     notifier = _configured_notifier(monkeypatch)
     assert notifier._recipients == _RECIPIENTS
+
+
+def test_is_configured_collects_all_six_recipients_with_their_names(monkeypatch):
+    """EXPRESS_ALERT_SMS_RECIPIENT_6 (added alongside _1.._5) is read the
+    same as every other slot - all six non-empty entries are collected,
+    in order."""
+    notifier = _configured_notifier(monkeypatch, recipients=_SIX_RECIPIENTS)
+    assert notifier._recipients == _SIX_RECIPIENTS
 
 
 def test_is_configured_skips_empty_recipient_slots(monkeypatch):
@@ -573,6 +598,29 @@ def test_notify_if_express_sends_one_personalized_sms_per_recipient(monkeypatch,
     assert route.call_count == len(_RECIPIENTS)
     bodies = [json.loads(call.request.content) for call in route.calls]
     for body, (phone, name) in zip(bodies, _RECIPIENTS):
+        assert body["params"]["recipients"] == [phone]
+        assert body["message"] == notifier._format_message(name, order)
+    # Sent cleanly, so nothing should be sitting in the retry queue.
+    assert repo.get_pending_sms_failures() == []
+
+
+@respx.mock
+def test_notify_if_express_sends_one_personalized_sms_per_recipient_with_six_recipients(
+    monkeypatch, repo
+):
+    """Same scenario as the three-recipient test above, but with all six
+    EXPRESS_ALERT_SMS_RECIPIENT_{1..6} slots filled - locks in that the
+    sixth slot added in this stage is sent to exactly like the rest,
+    each recipient still getting their own personalized message."""
+    route = respx.post(_SEND_URL).mock(return_value=_ok_send_response())
+    notifier = _configured_notifier(monkeypatch, recipients=_SIX_RECIPIENTS)
+    order = _express_order()
+
+    notifier.notify_if_express(order, repo)
+
+    assert route.call_count == len(_SIX_RECIPIENTS) == 6
+    bodies = [json.loads(call.request.content) for call in route.calls]
+    for body, (phone, name) in zip(bodies, _SIX_RECIPIENTS):
         assert body["params"]["recipients"] == [phone]
         assert body["message"] == notifier._format_message(name, order)
     # Sent cleanly, so nothing should be sitting in the retry queue.

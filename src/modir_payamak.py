@@ -45,7 +45,7 @@ sufficient, and every real send failure (bad token, network error, a
 failure that goes through the same retry queue either way.
 
 ANOTHER DELIBERATE DIFFERENCE: unlike a Telegram message (informational
-- a duplicate is mildly annoying at worst), this SMS pages five real
+- a duplicate is mildly annoying at worst), this SMS pages six real
 people. `notify_if_express()` therefore treats "have we already
 committed to notifying about this order" as a durable, checked fact
 (`Repository.has_express_alert_been_sent()` /
@@ -72,8 +72,8 @@ failure belongs to without Repository needing a new column.
 
 Env vars (added to config.py / .env in stage 8 of this feature):
     MODIR_PAYAMAK_TOKEN, MODIR_PAYAMAK_FROM_NUMBER,
-    EXPRESS_ALERT_SMS_RECIPIENT_1.._5,
-    EXPRESS_ALERT_SMS_RECIPIENT_1_NAME.._5_NAME
+    EXPRESS_ALERT_SMS_RECIPIENT_1.._6,
+    EXPRESS_ALERT_SMS_RECIPIENT_1_NAME.._6_NAME
 Read directly via os.getenv here, same as TelegramNotifier does for
 TELEGRAM_BOT_TOKEN/TELEGRAM_CHAT_ID* - config.py's "nothing outside this
 file calls os.getenv" convention is, in this codebase, already the
@@ -124,6 +124,7 @@ _RECIPIENT_ENV_VARS = (
     "EXPRESS_ALERT_SMS_RECIPIENT_3",
     "EXPRESS_ALERT_SMS_RECIPIENT_4",
     "EXPRESS_ALERT_SMS_RECIPIENT_5",
+    "EXPRESS_ALERT_SMS_RECIPIENT_6",
 )
 
 
@@ -164,7 +165,7 @@ class ModirPayamakNotifier:
     # ------------------------------------------------------------------
     def is_configured(self) -> bool:
         """True iff MODIR_PAYAMAK_TOKEN, MODIR_PAYAMAK_FROM_NUMBER and at
-        least one EXPRESS_ALERT_SMS_RECIPIENT_{1..5} are set. Makes NO
+        least one EXPRESS_ALERT_SMS_RECIPIENT_{1..6} are set. Makes NO
         network call (see module docstring for why this differs from
         TelegramNotifier.is_configured()'s getMe() check) and caches the
         result so this is a cheap call on every poll cycle. Returns
@@ -187,7 +188,7 @@ class ModirPayamakNotifier:
             return False
         if not recipients:
             log.warning(
-                "modir_payamak: no EXPRESS_ALERT_SMS_RECIPIENT_{1..5} configured "
+                "modir_payamak: no EXPRESS_ALERT_SMS_RECIPIENT_{1..6} configured "
                 "- SMS alerts disabled"
             )
             return False
@@ -258,8 +259,8 @@ class ModirPayamakNotifier:
             )
             return
 
-        # Each of the (up to 5) recipients gets their own message, with
-        # their own name substituted in - so this is 5 independent
+        # Each of the (up to 6) recipients gets their own message, with
+        # their own name substituted in - so this is 6 independent
         # deliveries/retry rows, not one batch send (see module
         # docstring's "EACH RECIPIENT GETS THEIR OWN TEXT").
         for phone, name in self._recipients:
