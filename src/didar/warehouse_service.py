@@ -38,6 +38,7 @@ from urllib.parse import urlparse
 
 import httpx
 
+from src.config import settings
 from src.didar.activity_client import DidarActivityClient
 from src.didar.deal_client import DidarDealClient
 from src.logger import get_logger
@@ -73,6 +74,21 @@ class DidarWarehouseSyncService:
                 item.source_shipment_id, existing_deal_id,
             )
             return existing_deal_id
+
+        if settings.dry_run:
+            # DRY_RUN (see config.Settings.dry_run docstring): the lookup
+            # above already happened for real - only the WRITE (Deal
+            # create -> ship Activity) is skipped. A stable fake id (not
+            # a real Didar id, so it can never collide with one) lets the
+            # caller's normal mark_warehouse_shipment_synced()/
+            # mark_deal_notified() flow run unchanged during the test.
+            fake_deal_id = f"DRY_RUN-fbd-{item.source_shipment_id}"
+            log.info(
+                "didar: [DRY_RUN] would sync FBD item %s (order %s) -> deal+ship-activity "
+                "(no real Didar write made) -> %s",
+                item.source_shipment_id, item.order_id, fake_deal_id,
+            )
+            return fake_deal_id
 
         deal_id = self._deals.create_warehouse_shipment_deal(item)
         log.info(

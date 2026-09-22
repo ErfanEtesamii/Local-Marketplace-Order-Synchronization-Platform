@@ -629,6 +629,19 @@ class SyncEngine:
         else:
             text = _SNAPPSHOP_WAREHOUSE_NOTE_TEXT
 
+        if settings.dry_run:
+            # DRY_RUN (see config.Settings.dry_run docstring): deal_id at
+            # this point is DidarSyncService.sync_order()'s fake DRY_RUN-*
+            # id (no real deal exists), so a real create_note() call would
+            # just fail against it anyway - skip it cleanly instead of
+            # making (and logging an exception for) a doomed API call.
+            log.info(
+                "sync_engine: [DRY_RUN] would add SnappShop order-type note ('%s') to "
+                "deal %s (order %s %s) (no real Didar write made)",
+                text, deal_id, order.source, order.source_order_id,
+            )
+            return
+
         try:
             self._didar_activity_client.create_note(deal_id, text)
         except Exception:

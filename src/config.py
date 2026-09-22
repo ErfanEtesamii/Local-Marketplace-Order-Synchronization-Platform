@@ -444,6 +444,32 @@ class Settings:
     poll_interval_seconds: int = field(
         default_factory=lambda: int(_get("POLL_INTERVAL_SECONDS", "120"))
     )
+    # DRY_RUN (2026-09, added for side-by-side testing with Faraz-Honar -
+    # mirrors that project's own DRY_RUN flag/semantics, faraz_honar/config.py).
+    # When true, every READ still happens exactly as normal on every poll
+    # cycle (marketplace order fetches, Digikala/SnappShop/Basalam token
+    # usage, Didar's find_existing_deal_id / find_existing_warehouse_deal_id
+    # lookups) so token-refresh and rate-limit behaviour can be observed
+    # live - but the real-world WRITE side effects are skipped and logged
+    # instead of executed:
+    #   - Didar: no Contact upsert, no Deal creation, no checklist
+    #     Activities for a customer order (see didar/service.py::sync_order);
+    #     no FBD warehouse Deal/Activity either (see
+    #     didar/warehouse_service.py::sync_shipment); no SnappShop
+    #     express/warehouse note (see sync_engine.py::
+    #     _add_snappshop_warehouse_note)
+    #   - Modir Payamak: no express-order SMS sent (see
+    #     modir_payamak.py::ModirPayamakNotifier._deliver)
+    #   - Telegram: no message sent to the team chats (see
+    #     telegram.py::TelegramNotifier._deliver)
+    # The local Repository (synced_orders / retry queues) is NOT touched
+    # by these skips, so a dry run intentionally reprocesses the same
+    # orders every cycle - that's the point during a short manual test:
+    # confirming each cycle keeps fetching/parsing cleanly rather than
+    # only proving it once. Defaults to false (normal live behaviour) so
+    # nothing changes for the existing running service unless DRY_RUN=true
+    # is set explicitly in .env.
+    dry_run: bool = field(default_factory=lambda: _get("DRY_RUN", "false").lower() == "true")
     # "Any deal" Telegram poller (client request, 2026-09 - see
     # src/didar/deal_poller.py): every Deal registered in Didar, manual
     # or automatic, gets a Telegram notification. Runs on the same

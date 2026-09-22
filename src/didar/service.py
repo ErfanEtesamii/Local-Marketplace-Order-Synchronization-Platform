@@ -10,6 +10,7 @@ from urllib.parse import urlparse
 
 import httpx
 
+from src.config import settings
 from src.didar.activity_client import DidarActivityClient
 from src.didar.contact_client import DidarContactClient
 from src.didar.deal_client import DidarDealClient
@@ -51,6 +52,21 @@ class DidarSyncService:
         existing_deal_id = self._deals.find_existing_deal_id(order)
         if existing_deal_id:
             return existing_deal_id
+
+        if settings.dry_run:
+            # DRY_RUN (see config.Settings.dry_run docstring): the lookup
+            # above already happened for real - only the WRITE (Contact
+            # upsert -> Deal create -> checklist Activities) is skipped.
+            # A stable fake id (not a real Didar id, so it can never
+            # collide with one) lets the caller's normal mark_synced()/
+            # notify_new_order() flow run unchanged during the test.
+            fake_deal_id = f"DRY_RUN-{order.source}-{order.source_order_id}"
+            log.info(
+                "didar: [DRY_RUN] would sync %s order %s -> contact+deal+checklist "
+                "(no real Didar write made) -> %s",
+                order.source, order.source_order_id, fake_deal_id,
+            )
+            return fake_deal_id
 
         customer_code = _customer_code_for(order)
         contact = self._contacts.upsert_contact(

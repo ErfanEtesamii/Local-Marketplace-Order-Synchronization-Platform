@@ -100,6 +100,7 @@ from typing import TYPE_CHECKING, Optional
 
 import httpx
 
+from src.config import settings
 from src.express_alert import is_express_order
 from src.http_utils import default_retry, raise_for_status_with_body
 from src.logger import get_logger
@@ -282,6 +283,10 @@ class ModirPayamakNotifier:
         up (leaves the row in place, logged) after `max_attempts`."""
         if not self.is_configured():
             return
+        if settings.dry_run:
+            # DRY_RUN: don't drain the real retry queue with real sends
+            # either - see _deliver()'s dry-run branch above.
+            return
         for failure in repository.get_pending_sms_failures(max_attempts=max_attempts):
             # ref_id is "express_sms:{source}:{order_id}:{phone}" for a
             # per-recipient failure (see notify_if_express), or the
@@ -349,6 +354,12 @@ class ModirPayamakNotifier:
         persist it to Repository's SMS retry queue under `ref_id` so
         retry_pending_notifications() picks it up on a later poll cycle
         instead of the message being silently gone forever."""
+        if settings.dry_run:
+            # DRY_RUN (see config.Settings.dry_run docstring): never page
+            # the five real warehouse recipients during a manual test -
+            # nothing to queue for retry either, since no send was made.
+            log.info("modir_payamak: [DRY_RUN] would send %s (no real SMS sent)", description)
+            return
         try:
             self._send(phone, text)
             log.info("modir_payamak: sent %s", description)

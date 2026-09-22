@@ -129,6 +129,7 @@ from typing import TYPE_CHECKING, Optional, Union
 import httpx
 import jdatetime
 
+from src.config import settings
 from src.db.repository import Repository
 from src.didar.deal_client import DealStatusBreakdown, DidarDealClient
 from src.http_utils import default_retry, raise_for_status_with_body
@@ -1660,6 +1661,12 @@ class TelegramNotifier:
         "order:<platform>:<source_order_id>" or "deal:<deal_id>") so a
         retry replaces the same queued row rather than piling up
         duplicates."""
+        if settings.dry_run:
+            # DRY_RUN (see config.Settings.dry_run docstring): never touch
+            # the real chats during a manual side-by-side test - nothing
+            # to queue for retry either, since no send was attempted.
+            log.info("telegram: [DRY_RUN] would send %s (no real message sent)", description)
+            return
         try:
             self._send(text)
             log.info("telegram: sent %s", description)
@@ -1684,6 +1691,10 @@ class TelegramNotifier:
         place, logged, but stops retrying) after `max_attempts`, same
         cutoff convention as get_pending_failures()."""
         if not self.is_configured():
+            return
+        if settings.dry_run:
+            # DRY_RUN: don't drain the real retry queue with real sends
+            # either - see _deliver()'s dry-run branch above.
             return
         for failure in repository.get_pending_notification_failures(max_attempts=max_attempts):
             try:
