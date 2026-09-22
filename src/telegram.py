@@ -741,20 +741,21 @@ class TelegramNotifier:
 
         products_total = sum((i.final_price for i in order.items), Decimal("0"))
 
-        # FIXED SHIPPING FEE (client request, 2026-09; corrected 2026-09 -
-        # see src/shipping_fees.py's module docstring for the Toman
-        # figures and why they're 1,000x the original client-stated
-        # values). Digikala and Faraz Honar show a flat, client-specified
-        # fee here instead of the real order.shipping_cost - unlike the
-        # Didar DealItem Description (src/didar/deal_client.py), which
-        # shows this same fee in Toman, Telegram shows it in RIAL
-        # (shipping_fee_rial() = shipping_fee_toman() * 10), and the
-        # "مبلغ کل" grand total is built from products_total + this fee
-        # rather than order.total_price - so the displayed total always
-        # equals what's actually shown above it. Every other source (and
-        # a Faraz Honar order shipped by neither Pishtaz nor Tipax) keeps
-        # the original behaviour: real shipping_cost in Rial, and
-        # order.total_price as the grand total.
+        # FIXED SHIPPING FEE (client request, 2026-09; corrected 2026-09;
+        # Digikala's flat fee REMOVED 2026-09 - see
+        # src/shipping_fees.py's module docstring). Only Faraz Honar
+        # still shows a flat, client-specified fee here instead of the
+        # real order.shipping_cost - unlike the Didar DealItem
+        # Description (src/didar/deal_client.py), which shows this same
+        # fee in Toman, Telegram shows it in RIAL (shipping_fee_rial() =
+        # shipping_fee_toman() * 10), and the "مبلغ کل" grand total is
+        # built from products_total + this fee rather than
+        # order.total_price - so the displayed total always equals
+        # what's actually shown above it. Every other source - Digikala
+        # included, since 2026-09 - (and a Faraz Honar order shipped by
+        # neither Pishtaz nor Tipax) keeps the original behaviour: real
+        # shipping_cost in Rial, and order.total_price as the grand
+        # total.
         fixed_fee_rial = shipping_fee_rial(order)
         if fixed_fee_rial is not None:
             shipping_display = f"{_format_rial(fixed_fee_rial)} ریال"

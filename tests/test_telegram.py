@@ -193,12 +193,12 @@ def test_is_configured_false_when_bot_unreachable(monkeypatch):
 # ---------------------------------------------------------------------
 
 def test_format_new_order_message_matches_exact_template():
-    """Digikala's "هزینه ارسال" line shows the client's flat 2,390,000
-    Rial fee (see src/shipping_fees.py: 239,000 Toman * 10), not the
-    order's real shipping_cost (here 30,000 Rial) - client request,
-    2026-09. The "مبلغ کل" grand total is products_total + this fee
-    (100,000 + 2,390,000 = 2,490,000), not the order's own total_price
-    (130,000)."""
+    """Digikala's "هزینه ارسال" line shows the order's own real
+    shipping_cost (30,000 Rial) - the flat-fee override that used to
+    replace it was REMOVED 2026-09 (see src/shipping_fees.py's module
+    docstring: Digikala's real shipping cost varies per order). The
+    "مبلغ کل" grand total is therefore the order's own total_price
+    (130,000), not products_total + a fixed fee."""
     notifier = TelegramNotifier()
     order = _order_with_items(
         "digikala", "12345", total="130000", shipping_cost="30000",
@@ -227,14 +227,14 @@ def test_format_new_order_message_matches_exact_template():
         "1️⃣ Test Product\n"
         "   └─ 50,000 ریال × 2\n"
         "🚚 هزینه ارسال:\n"
-        "2,390,000 ریال\n"
+        "30,000 ریال\n"
         "━━━━━━━━━━━━━━━━━━━━\n"
         "💰 مبلغ محصولات:\n"
         "100,000 ریال\n"
         "🚚 ارسال:\n"
-        "2,390,000 ریال\n"
+        "30,000 ریال\n"
         "💳 مبلغ کل:\n"
-        "2,490,000 ریال\n"
+        "130,000 ریال\n"
         "━━━━━━━━━━━━━━━━━━━━\n"
         f"🕐 {expected_date_str} — ۱۸:۴۲\n"
         "🟢 ثبت موفق در دیدار\n"
@@ -285,15 +285,16 @@ def test_format_new_order_message_farazhonar_platform_emoji():
 # total is products_total + this fee, not order.total_price.
 # ---------------------------------------------------------------------
 
-def test_digikala_always_shows_flat_2390000_rial_shipping_fee():
-    """Digikala shows the flat 2,390,000 Rial fee (239,000 Toman * 10)
-    regardless of the order's real shipping_cost, and the grand total
-    is products_total (100,000) + this fee."""
+def test_digikala_shows_real_shipping_cost_not_a_flat_fee():
+    """REMOVED 2026-09 (see src/shipping_fees.py's module docstring):
+    Digikala's real shipping_cost varies per order, so it must be shown
+    as-is, and the grand total must be the order's own total_price
+    rather than products_total + a fixed fee."""
     notifier = TelegramNotifier()
-    order = _order_with_items("digikala", "1", shipping_cost="999999")
+    order = _order_with_items("digikala", "1", total="999999", shipping_cost="999999")
     message = notifier._format_new_order_message(order)
-    assert "🚚 هزینه ارسال:\n2,390,000 ریال\n" in message
-    assert "💳 مبلغ کل:\n2,490,000 ریال\n" in message
+    assert "🚚 هزینه ارسال:\n999,999 ریال\n" in message
+    assert "💳 مبلغ کل:\n999,999 ریال\n" in message
 
 
 def test_farazhonar_pishtaz_shows_2250000_rial_shipping_fee():

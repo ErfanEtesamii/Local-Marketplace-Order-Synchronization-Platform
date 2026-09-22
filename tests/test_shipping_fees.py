@@ -22,14 +22,17 @@ _ORDER = NormalizedOrder(
 )
 
 
-def test_digikala_always_returns_flat_239000_toman():
+def test_digikala_no_longer_has_a_fixed_fee():
+    """REMOVED 2026-09 (see module docstring): Digikala's real
+    shipping_cost varies per order (confirmed via the SBS endpoints'
+    own shippingCost field), so this must return None regardless of
+    what shipping_cost the order carries - callers fall back to the
+    real order.shipping_cost instead."""
     order = replace(_ORDER, source="digikala")
-    assert shipping_fee_toman(order) == Decimal("239000")
+    assert shipping_fee_toman(order) is None
 
-
-def test_digikala_ignores_real_shipping_cost():
-    order = replace(_ORDER, source="digikala", shipping_cost=Decimal("999999"))
-    assert shipping_fee_toman(order) == Decimal("239000")
+    order2 = replace(_ORDER, source="digikala2", shipping_cost=Decimal("999999"))
+    assert shipping_fee_toman(order2) is None
 
 
 def test_farazhonar_pishtaz_returns_225000_toman():
@@ -60,7 +63,7 @@ def test_farazhonar_no_method_returns_none():
 
 
 def test_other_sources_return_none():
-    for source in ("tapsishop", "basalam", "snappshop"):
+    for source in ("tapsishop", "basalam", "snappshop", "digikala", "digikala2"):
         order = replace(_ORDER, source=source)
         assert shipping_fee_toman(order) is None
 
@@ -74,9 +77,10 @@ def test_format_toman_uses_ascii_digits_and_comma():
 # shipping_fee_rial() - Telegram's Rial equivalent of the same fee
 # ---------------------------------------------------------------------
 
-def test_digikala_rial_fee_is_toman_fee_times_ten():
+def test_digikala_rial_fee_is_none_now_too():
+    """Same removal as shipping_fee_toman() - see module docstring."""
     order = replace(_ORDER, source="digikala")
-    assert shipping_fee_rial(order) == Decimal("2390000")
+    assert shipping_fee_rial(order) is None
 
 
 def test_farazhonar_pishtaz_rial_fee():

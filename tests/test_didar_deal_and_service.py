@@ -598,12 +598,12 @@ def test_deal_item_description_prefers_tracking_code_over_shipment_id():
 
 
 @respx.mock
-def test_deal_item_description_digikala_uses_flat_239000_toman_fee():
-    """Client request (2026-09; corrected 2026-09 to 1,000x the original
-    figure - see src/shipping_fees.py's module docstring): Digikala's
-    DealItem Description always shows the flat 239,000 Toman shipping
-    fee, regardless of whatever real shipping_cost Digikala's own API
-    reports for this order."""
+def test_deal_item_description_digikala_uses_real_shipping_cost():
+    """REMOVED 2026-09 (see src/shipping_fees.py's module docstring):
+    Digikala's real shipping_cost varies per order, so the flat-fee
+    override no longer applies - the DealItem Description must show
+    the order's own real shipping_cost (Rial), same as any other
+    unfixed source."""
     _mock_categories()
     _mock_product_search_no_match()
     respx.post("https://app.didar.me/api/product/save").mock(
@@ -619,8 +619,8 @@ def test_deal_item_description_digikala_uses_flat_239000_toman_fee():
     client.create_deal(contact_id="c-1", display_name="Someone", order=order)
 
     deal_body = route.calls[0].request.content
-    assert "هزینه ارسال: 239,000 تومان".encode() in deal_body
-    assert b"999,999" not in deal_body
+    assert "هزینه ارسال: 999,999 ریال".encode() in deal_body
+    assert b"239,000" not in deal_body
 
 
 @respx.mock

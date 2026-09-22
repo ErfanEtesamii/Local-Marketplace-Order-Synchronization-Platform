@@ -1,22 +1,26 @@
 """
 Fixed, client-specified shipping-fee DISPLAY amounts (client request,
-2026-09) for the two platforms whose product Description / Telegram
-notification should show a shipping line: Digikala (flat) and Faraz
-Honar (depends on which courier the order was shipped by).
+2026-09; Digikala's flat fee REMOVED 2026-09 - see below) for the
+platform whose product Description / Telegram notification should
+still show a flat shipping line instead of the real per-order figure:
+Faraz Honar only (depends on which courier the order was shipped by).
 
 THIS IS DELIBERATELY SEPARATE FROM NormalizedOrder.shipping_cost:
 that field already holds each source's own real, API-reported shipping
-figure (Digikala via its SBS shipment-details endpoint, Faraz Honar via
+figure (Digikala via its SBS list/shipment-details endpoints -
+`shippingCost` on GET /open-api/v1/ship-by-seller-orders and
+GET /open-api/v1/ship-by-seller-orders/{shipment_id} - Faraz Honar via
 WooCommerce's "shipping_total") and keeps feeding whatever already
 consumes it unchanged (e.g. Telegram's aggregate daily/weekly/monthly/
-yearly report totals). The amounts here are flat numbers the client
-gave directly and are used ONLY for the two specific display lines this
+yearly report totals, and now also Digikala's own display lines - see
+below). The amount here is a flat number the client gave directly for
+Faraz Honar and is used ONLY for the two specific display lines this
 feature covers (the Didar DealItem Description and the Telegram
 per-order "هزینه ارسال" line) - see src/didar/deal_client.py and
 src/telegram.py.
 
-UNIT: TOMAN, not Rial - the client stated these numbers directly in
-Toman and asked for them to be shown "با واحد قیمتی خودشون" (in their
+UNIT: TOMAN, not Rial - the client stated this number directly in
+Toman and asked for it to be shown "با واحد قیمتی خودشون" (in their
 own price unit) wherever the ORIGINAL Toman display is used (currently
 only Didar's DealItem Description - see deal_client.py). Telegram's
 "هزینه ارسال" line is a separate case (client request, 2026-09): it
@@ -30,13 +34,18 @@ that flow into Didar's own numeric money fields (UnitPrice, etc.); the
 Didar Description text stays plain Toman display text, unaffected by
 that.
 
-DIGIKALA: flat 239,000 Toman for every order (client-stated flat rate,
-independent of whatever real shipping_cost that source's own API
-happens to report for a given order). CORRECTED 2026-09: the original
-figure taken from the client was 239 Toman - implausibly small for an
-actual shipping fee (~2,390 Rial) - and was itself a client-side typo;
-the client confirmed the real intended amount is 239,000 Toman
-(2,390,000 Rial).
+DIGIKALA: REMOVED 2026-09. Originally a flat 239,000 Toman for every
+order (client-stated, independent of the real per-order shipping_cost)
+- corrected once already from a client typo of 239 Toman. The client
+has since confirmed (2026-09) that Digikala's real shipping cost is
+NOT constant across orders - it varies per shipment (confirmed via the
+SBS endpoints' own `shippingCost` field, e.g. 650,000 Rial in one
+sample order) - so the flat override no longer applies. `source in
+("digikala", "digikala2")` now falls through to `return None` at the
+bottom of shipping_fee_toman(), same as any other source with no fixed
+fee, which makes both call sites use their existing real-shipping_cost
+fallback path instead (order.shipping_cost, already populated by
+src/marketplaces/digikala.py from the same SBS `shippingCost` field).
 
 FARAZ HONAR: depends on which courier the order was shipped by
 (NormalizedOrder.shipping_method, populated by the adapter from
@@ -47,9 +56,10 @@ WooCommerce's shipping_lines[].method_title):
       -> None, i.e. no shipping line for that order. Per the client's
       own instruction, an unrecognized method must never be guessed as
       one of these two.
-Same 2026-09 correction as Digikala above: these were originally 225
+Same 2026-09 correction as Digikala had: these were originally 225
 and 250 Toman (also implausibly small) before the client confirmed the
-real amounts are 1,000x that.
+real amounts are 1,000x that. Unlike Digikala, this one hasn't been
+revisited - still flat by client request as of this file's last edit.
 
 EVERY OTHER SOURCE (Tapsi Shop, Basalam, SnappShop): always None - per
 the client, those platforms have no shipping cost to show at all.
@@ -62,7 +72,6 @@ from src.currency import TOMAN, to_rial
 from src.didar.category_mapping import _normalize_fa
 from src.marketplaces.base import NormalizedOrder
 
-DIGIKALA_SHIPPING_FEE_TOMAN = Decimal("239000")
 FARAZHONAR_PISHTAZ_FEE_TOMAN = Decimal("225000")
 FARAZHONAR_TIPAX_FEE_TOMAN = Decimal("250000")
 
@@ -73,18 +82,12 @@ _TIPAX_KEYWORD = "تیپاکس"
 def shipping_fee_toman(order: NormalizedOrder) -> Decimal | None:
     """The fixed display shipping fee (Toman) for this order's Didar
     DealItem Description line, or None when this source/method has no
-    such fixed fee - every source besides Digikala and Faraz Honar, or a
-    Faraz Honar order whose shipping method is neither Pishtaz nor
-    Tipax. A None return means the caller should fall back to its own
-    existing behaviour (see call sites) rather than show nothing
-    outright, since only Digikala/Faraz Honar are affected by this
-    feature at all."""
-    if order.source in ("digikala", "digikala2"):
-        # Second Digikala store (src/marketplaces/digikala2.py) - same
-        # flat client-stated fee as the first store, since both stores
-        # sell through the same Digikala Open API/shipping arrangement.
-        return DIGIKALA_SHIPPING_FEE_TOMAN
-
+    such fixed fee - every source besides Faraz Honar (Digikala
+    included, since 2026-09 - see module docstring), or a Faraz Honar
+    order whose shipping method is neither Pishtaz nor Tipax. A None
+    return means the caller should fall back to its own existing
+    behaviour (real order.shipping_cost - see call sites) rather than
+    show nothing outright."""
     if order.source == "farazhonar":
         method = _normalize_fa(order.shipping_method or "")
         if _PISHTAZ_KEYWORD in method:
