@@ -385,6 +385,17 @@ class SyncEngine:
                 )
                 continue
 
+            # Marked notified BEFORE DidarDealPoller can ever see this same
+            # Deal.Id - same reasoning as _sync_one_order() above. Without
+            # this, the FBD deal (still in the customer-order pipeline, per
+            # create_warehouse_shipment_deal()'s docstring) is invisible to
+            # DidarDealPoller's dedup, so it gets treated as an
+            # unrecognized/manual entry and sent through
+            # notify_new_deal()'s "ثبت دستی در دیدار" template instead of
+            # being silently skipped - confirmed in production (deal #6108,
+            # 2026-09).
+            self._repo.mark_deal_notified(deal_id)
+
             self._repo.mark_warehouse_shipment_synced(
                 item.source,
                 item.source_shipment_id,

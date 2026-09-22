@@ -194,6 +194,27 @@ def test_an_item_created_after_the_floor_flows_all_the_way_into_didar(repo, tmp_
 
 
 @respx.mock
+def test_warehouse_deal_is_marked_notified_so_the_deal_poller_skips_it(repo, tmp_path):
+    """Regression test for a confirmed production incident (deal #6108,
+    2026-09): an FBD deal lives in the same pipeline as customer orders
+    (see create_warehouse_shipment_deal()'s docstring), so if it's never
+    marked notified, DidarDealPoller later discovers it as an
+    unrecognized deal and sends it through notify_new_deal()'s
+    "ثبت دستی در دیدار" (manual-entry) Telegram template - wrong, since
+    nobody typed it into Didar by hand. Marking it notified up front
+    (mirroring what _sync_one_order() already does for customer orders)
+    is what makes the poller skip it, same as any other program-created
+    deal."""
+    repo.set_last_sync_time("digikala_warehouse", datetime(2026, 9, 1, tzinfo=timezone.utc))
+    respx.get(_ORDERS_URL).mock(return_value=_orders_response([_row()]))
+    _mock_didar()
+
+    _engine(repo, tmp_path).run_once()
+
+    assert repo.is_deal_notified("deal-1") is True
+
+
+@respx.mock
 def test_polling_twice_creates_exactly_one_deal(repo, tmp_path):
     """The endpoint keeps returning an item while it is active, so the
     second poll must be a no-op - this is the guard that would otherwise
