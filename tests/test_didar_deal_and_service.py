@@ -624,7 +624,12 @@ def test_deal_item_description_digikala_uses_real_shipping_cost():
 
 
 @respx.mock
-def test_deal_item_description_farazhonar_pishtaz_uses_225000_toman_fee():
+def test_deal_item_description_farazhonar_uses_real_shipping_cost():
+    """REMOVED 2026-09 (see src/shipping_fees.py's module docstring):
+    Faraz Honar's flat Pishtaz/Tipax fee is gone - the DealItem
+    Description must show the order's own real shipping_cost (Rial,
+    from WooCommerce's shipping_total), regardless of courier, same as
+    any other source."""
     _mock_categories()
     _mock_product_search_no_match()
     respx.post("https://app.didar.me/api/product/save").mock(
@@ -634,33 +639,18 @@ def test_deal_item_description_farazhonar_pishtaz_uses_225000_toman_fee():
         return_value=httpx.Response(200, json={"Response": {"Deal": {"Id": "d-1"}}})
     )
 
-    order = replace(_ORDER, source="farazhonar", shipping_method="پیشتاز")
+    order = replace(
+        _ORDER, source="farazhonar", shipping_method="پیشتاز",
+        shipping_cost=Decimal("777000"),
+    )
 
     client = DidarDealClient(config=_CFG)
     client.create_deal(contact_id="c-1", display_name="Someone", order=order)
 
     deal_body = route.calls[0].request.content
-    assert "هزینه ارسال: 225,000 تومان".encode() in deal_body
-
-
-@respx.mock
-def test_deal_item_description_farazhonar_tipax_uses_250000_toman_fee():
-    _mock_categories()
-    _mock_product_search_no_match()
-    respx.post("https://app.didar.me/api/product/save").mock(
-        return_value=httpx.Response(200, json={"Response": {"Product": {"Id": "p-1"}}})
-    )
-    route = respx.post("https://app.didar.me/api/deal/save_v2").mock(
-        return_value=httpx.Response(200, json={"Response": {"Deal": {"Id": "d-1"}}})
-    )
-
-    order = replace(_ORDER, source="farazhonar", shipping_method="تیپاکس")
-
-    client = DidarDealClient(config=_CFG)
-    client.create_deal(contact_id="c-1", display_name="Someone", order=order)
-
-    deal_body = route.calls[0].request.content
-    assert "هزینه ارسال: 250,000 تومان".encode() in deal_body
+    assert "هزینه ارسال: 777,000 ریال".encode() in deal_body
+    assert b"225,000" not in deal_body
+    assert b"250,000" not in deal_body
 
 
 @respx.mock

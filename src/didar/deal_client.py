@@ -1502,15 +1502,13 @@ def _build_item_description(order: NormalizedOrder) -> str:
     tracking_number = order.shipment_tracking_code or order.shipment_id
     if tracking_number:
         lines.append(f"شماره مرسوله: {tracking_number}")
-    # FIXED SHIPPING FEE (client request, 2026-09; Digikala's flat fee
-    # REMOVED 2026-09 - see src/shipping_fees.py's module docstring):
-    # only Faraz Honar still gets a flat, client-specified Toman amount
-    # here (225/250 depending on courier), regardless of whatever real
-    # shipping_cost that source's own API reports for this order. Every
-    # other source - Digikala included, since 2026-09 - falls back to
-    # the original behaviour: show the real order.shipping_cost (Rial)
-    # when the adapter provided one, or no shipping line at all
-    # otherwise.
+    # FIXED SHIPPING FEE: REMOVED ENTIRELY 2026-09 for every source
+    # (Digikala, then Faraz Honar - see src/shipping_fees.py's module
+    # docstring for the history). shipping_fee_toman() now always
+    # returns None, so this always falls through to the real
+    # order.shipping_cost (Rial) when the adapter provided one, or no
+    # shipping line at all otherwise - same real figure every source's
+    # adapter already reads from its own API.
     fixed_fee_toman = shipping_fee_toman(order)
     if fixed_fee_toman is not None:
         lines.append(f"هزینه ارسال: {format_toman(fixed_fee_toman)} تومان")

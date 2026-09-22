@@ -297,20 +297,22 @@ def test_digikala_shows_real_shipping_cost_not_a_flat_fee():
     assert "💳 مبلغ کل:\n999,999 ریال\n" in message
 
 
-def test_farazhonar_pishtaz_shows_2250000_rial_shipping_fee():
+def test_farazhonar_shows_real_shipping_cost_not_a_flat_courier_fee():
+    """REMOVED 2026-09 (see src/shipping_fees.py's module docstring):
+    Faraz Honar's flat Pishtaz/Tipax fee is gone - the real
+    shipping_cost (WooCommerce's shipping_total) must be shown
+    regardless of courier, and the grand total must be the order's own
+    total_price rather than products_total + a fixed fee."""
     notifier = TelegramNotifier()
-    order = _order_with_items("farazhonar", "1", shipping_method="پیشتاز")
+    order = _order_with_items(
+        "farazhonar", "1", total="450000", shipping_cost="350000",
+        shipping_method="پیشتاز",
+    )
     message = notifier._format_new_order_message(order)
-    assert "🚚 هزینه ارسال:\n2,250,000 ریال\n" in message
-    assert "💳 مبلغ کل:\n2,350,000 ریال\n" in message
-
-
-def test_farazhonar_tipax_shows_2500000_rial_shipping_fee():
-    notifier = TelegramNotifier()
-    order = _order_with_items("farazhonar", "1", shipping_method="تیپاکس")
-    message = notifier._format_new_order_message(order)
-    assert "🚚 هزینه ارسال:\n2,500,000 ریال\n" in message
-    assert "💳 مبلغ کل:\n2,600,000 ریال\n" in message
+    assert "🚚 هزینه ارسال:\n350,000 ریال\n" in message
+    assert "💳 مبلغ کل:\n450,000 ریال\n" in message
+    assert "2,250,000" not in message
+    assert "2,500,000" not in message
 
 
 def test_farazhonar_unknown_shipping_method_falls_back_to_real_cost():

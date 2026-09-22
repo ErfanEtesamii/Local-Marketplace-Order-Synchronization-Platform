@@ -1,8 +1,11 @@
-"""Tests for src/shipping_fees.py - the fixed, client-specified
-shipping-fee display amounts for Digikala / Faraz Honar (client
-request, 2026-09; corrected 2026-09 to 1,000x the original figures -
-see the module docstring). Toman feeds Didar's Description text,
-Rial (shipping_fee_rial) feeds Telegram's display and grand total."""
+"""Tests for src/shipping_fees.py. The fixed, client-specified
+shipping-fee display amounts (originally client requests, 2026-09) for
+Digikala and Faraz Honar have both been REMOVED (2026-09 - see the
+module docstring): shipping_fee_toman()/shipping_fee_rial() now always
+return None, for every source, so the two display call sites
+(src/didar/deal_client.py, src/telegram.py) always fall back to the
+real order.shipping_cost each adapter already reads from its own
+API."""
 from dataclasses import replace
 from datetime import datetime, timezone
 from decimal import Decimal
@@ -21,78 +24,36 @@ _ORDER = NormalizedOrder(
                       final_price=Decimal("100000"))],
 )
 
-
-def test_digikala_no_longer_has_a_fixed_fee():
-    """REMOVED 2026-09 (see module docstring): Digikala's real
-    shipping_cost varies per order (confirmed via the SBS endpoints'
-    own shippingCost field), so this must return None regardless of
-    what shipping_cost the order carries - callers fall back to the
-    real order.shipping_cost instead."""
-    order = replace(_ORDER, source="digikala")
-    assert shipping_fee_toman(order) is None
-
-    order2 = replace(_ORDER, source="digikala2", shipping_cost=Decimal("999999"))
-    assert shipping_fee_toman(order2) is None
+_ALL_SOURCES = ("tapsishop", "basalam", "snappshop", "snappshop2", "digikala",
+                "digikala2", "farazhonar")
 
 
-def test_farazhonar_pishtaz_returns_225000_toman():
-    order = replace(_ORDER, source="farazhonar", shipping_method="پیشتاز")
-    assert shipping_fee_toman(order) == Decimal("225000")
-
-
-def test_farazhonar_tipax_returns_250000_toman():
-    order = replace(_ORDER, source="farazhonar", shipping_method="تیپاکس")
-    assert shipping_fee_toman(order) == Decimal("250000")
-
-
-def test_farazhonar_method_matching_is_normalized():
-    """Arabic yeh/kaf variants and surrounding text must still match -
-    see src/didar/category_mapping.py's _normalize_fa()."""
-    order = replace(_ORDER, source="farazhonar", shipping_method="ارسال با پیشتاز پست")
-    assert shipping_fee_toman(order) == Decimal("225000")
-
-
-def test_farazhonar_unknown_method_returns_none():
-    order = replace(_ORDER, source="farazhonar", shipping_method="پست عادی")
-    assert shipping_fee_toman(order) is None
-
-
-def test_farazhonar_no_method_returns_none():
-    order = replace(_ORDER, source="farazhonar", shipping_method=None)
-    assert shipping_fee_toman(order) is None
-
-
-def test_other_sources_return_none():
-    for source in ("tapsishop", "basalam", "snappshop", "digikala", "digikala2"):
-        order = replace(_ORDER, source=source)
+def test_shipping_fee_toman_is_always_none():
+    """No source has a fixed display fee anymore - every source's real
+    shipping_cost is used instead (Digikala: SBS shippingCost; Basalam:
+    vendor-parcels shipping_cost; Tapsi Shop: shipments[].
+    operationalCost; Faraz Honar: WooCommerce shipping_total; SnappShop
+    has no such field at all, so its order.shipping_cost stays None
+    same as always)."""
+    for source in _ALL_SOURCES:
+        order = replace(_ORDER, source=source, shipping_cost=Decimal("999999"))
         assert shipping_fee_toman(order) is None
+
+
+def test_farazhonar_shipping_method_no_longer_affects_the_fee():
+    """REMOVED 2026-09: Faraz Honar's flat Pishtaz/Tipax fee is gone -
+    shipping_method must not resurrect it."""
+    for method in ("پیشتاز", "تیپاکس", "ارسال با پیشتاز پست", "پست عادی", None):
+        order = replace(_ORDER, source="farazhonar", shipping_method=method)
+        assert shipping_fee_toman(order) is None
+
+
+def test_shipping_fee_rial_is_always_none():
+    for source in _ALL_SOURCES:
+        order = replace(_ORDER, source=source, shipping_cost=Decimal("999999"))
+        assert shipping_fee_rial(order) is None
 
 
 def test_format_toman_uses_ascii_digits_and_comma():
     assert format_toman(Decimal("239000")) == "239,000"
     assert format_toman(Decimal("12500")) == "12,500"
-
-
-# ---------------------------------------------------------------------
-# shipping_fee_rial() - Telegram's Rial equivalent of the same fee
-# ---------------------------------------------------------------------
-
-def test_digikala_rial_fee_is_none_now_too():
-    """Same removal as shipping_fee_toman() - see module docstring."""
-    order = replace(_ORDER, source="digikala")
-    assert shipping_fee_rial(order) is None
-
-
-def test_farazhonar_pishtaz_rial_fee():
-    order = replace(_ORDER, source="farazhonar", shipping_method="پیشتاز")
-    assert shipping_fee_rial(order) == Decimal("2250000")
-
-
-def test_farazhonar_tipax_rial_fee():
-    order = replace(_ORDER, source="farazhonar", shipping_method="تیپاکس")
-    assert shipping_fee_rial(order) == Decimal("2500000")
-
-
-def test_rial_fee_is_none_when_toman_fee_is_none():
-    order = replace(_ORDER, source="farazhonar", shipping_method="پست عادی")
-    assert shipping_fee_rial(order) is None
