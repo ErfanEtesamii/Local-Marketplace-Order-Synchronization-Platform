@@ -45,6 +45,7 @@ Design choices worth calling out:
 from __future__ import annotations
 
 import json
+import logging
 import uuid
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
@@ -303,9 +304,15 @@ class SyncEngine:
             # Build the unique ID used for dedup in the repository.
             unique_id = self._order_id(platform, order.source_order_id)
 
-            # Check against in-memory set of already-synced IDs
+            # Check against in-memory set of already-synced IDs. Routine/
+            # expected (dedup doing its job for an order still inside the
+            # 5h window) rather than something to act on, and firing on
+            # every 2-minute poll for every still-in-window order is
+            # exactly the kind of line that used to flood this log - see
+            # logger.py's _RepeatSuppressFilter for the backstop, but this
+            # one is noisy enough on its own merits to just keep at DEBUG.
             if unique_id in self._synced_ids:
-                log.info(
+                log.debug(
                     "sync_engine: skipping already-synced %s order %s",
                     platform, order.source_order_id,
                 )
@@ -349,7 +356,17 @@ class SyncEngine:
         # for reporting, decoupled from dedup.
         self._repo.set_last_sync_time(platform, datetime.now(timezone.utc))
 
-        log.info(
+        # This line fires every poll (every 2 min) for every source,
+        # whether or not anything happened - by far the single biggest
+        # contributor to log volume when nothing's going on. Keep it at
+        # INFO only when there's something to report (an order kept or
+        # window-dropped this cycle); an all-zero "nothing happened"
+        # cycle drops to DEBUG so `get_last_sync_time` heartbeats are
+        # still there to grep for, but don't drown out real activity by
+        # default.
+        had_activity = len(window_kept) > 0 or window_dropped > 0
+        log.log(
+            logging.INFO if had_activity else logging.DEBUG,
             "sync_engine: completed poll of %s (kept=%d, dropped-out-of-window=%d, total=%d)",
             adapter.name, len(window_kept), window_dropped, len(orders),
         )
@@ -392,7 +409,8 @@ class SyncEngine:
 
         for item in items:
             if self._repo.is_warehouse_shipment_synced(item.source, item.source_shipment_id):
-                log.info(
+                # Routine - see the matching comment in _sync_source above.
+                log.debug(
                     "sync_engine: skipping already-synced %s FBD item %s",
                     item.source, item.source_shipment_id,
                 )
@@ -426,7 +444,11 @@ class SyncEngine:
                 total_amount=item.unit_price * item.quantity,
             )
 
-        log.info(
+        # Same reasoning as the "completed poll" line in _sync_source:
+        # this fires every poll regardless of activity, so only promote
+        # it to INFO when there was actually an item to report.
+        log.log(
+            logging.INFO if items else logging.DEBUG,
             "sync_engine: completed FBD poll of %s (%d item(s) seen)",
             adapter.name, len(items),
         )
