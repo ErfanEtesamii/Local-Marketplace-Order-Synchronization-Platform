@@ -101,7 +101,10 @@ that was fixed).
   shipment = one Didar Deal; a persistent `shipmentId` watermark
   (`uses_id_based_watermark = True`) defines "new", not a date window.
 - **Token lifecycle** (confirmed via a real token exchange):
-  - `access_token`: ~24 hours.
+  - `access_token`: ~2 hours in practice (every refresh in the 2026-09-23/24
+    production logs returned an expiry of exactly +2h; earlier notes said
+    ~24h). Refreshed proactively `DIGIKALA_TOKEN_REFRESH_LEAD_SECONDS`
+    (default 900) before expiry, and on a 401 as a fallback.
   - `refresh_token`: ~1 year (matches the ~360-day figure shown in the
     seller panel's own token screen - that panel figure is the
     refresh-token/client grant, not the short-lived access token).

@@ -95,6 +95,7 @@ warning - never defaulted to a fabricated title, quantity or price.
 from __future__ import annotations
 
 import json
+import time
 from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
@@ -107,8 +108,18 @@ from src.db.repository import Repository
 from src.http_utils import default_retry, raise_for_status_with_body
 from src.logger import get_logger
 from src.marketplaces.warehouse_base import WarehouseShipmentItem
+from src.token_utils import (
+    jwt_seconds_left,
+    prefer_cached_token,
+    read_token_cache,
+    write_token_cache_atomic,
+)
 
 log = get_logger(__name__)
+
+# After a failed proactive refresh, wait this long before trying again
+# (each poll cycle would otherwise retry every POLL_INTERVAL_SECONDS).
+_PROACTIVE_REFRESH_RETRY_BACKOFF_SECONDS = 300
 
 _ORDERS_PATH = "/open-api/v1/orders"
 
@@ -276,10 +287,76 @@ class DigikalaWarehouseAdapter:
         return self._config.access_token, self._config.refresh_token
 
     def _save_tokens(self) -> None:
-        self._token_cache_path.parent.mkdir(parents=True, exist_ok=True)
-        self._token_cache_path.write_text(
-            json.dumps({"access_token": self._access_token, "refresh_token": self._refresh_token})
+        # Atomic (temp file + os.replace): Faraz-Honar reads this file
+        # from another process and must never see half a JSON document.
+        write_token_cache_atomic(
+            self._token_cache_path, self._access_token, self._refresh_token
         )
+
+    # --- proactive refresh / shared-cache adoption (2026-09 token fix) ---
+    #
+    # Access tokens live ~2h. Refreshing only AFTER a 401 (the old
+    # behaviour) left the shared cache file holding an expired token for a
+    # couple of minutes after every expiry, which broke Faraz-Honar's
+    # price updater (it reads this file and may not refresh itself). So:
+    #   1. refresh proactively while the current token still has less than
+    #      settings.digikala_token_refresh_lead_seconds of life left, and
+    #   2. before refreshing (proactively or after a 401) first look at the
+    #      cache file - if another adapter/process already wrote a newer
+    #      pair, adopt it instead of spending another refresh.
+    # Same block is copied into digikala.py / digikala2.py /
+    # digikala_warehouse.py (project convention: auth is a copy).
+
+    # monotonic() deadline before which a failed proactive refresh is not
+    # retried (the 401 path still works regardless).
+    _next_proactive_refresh_at: float = 0.0
+
+    def _adopt_cached_tokens(self, *, current_known_bad: bool = False) -> bool:
+        cached = read_token_cache(self._token_cache_path)
+        if cached is None:
+            return False
+        cached_access, cached_refresh = cached
+        if not prefer_cached_token(
+            self._access_token, cached_access, current_known_bad=current_known_bad
+        ):
+            return False
+        self._access_token, self._refresh_token = cached_access, cached_refresh
+        return True
+
+    def _refresh_if_expiring(self) -> None:
+        lead = settings.digikala_token_refresh_lead_seconds
+        if lead <= 0:
+            return
+        left = jwt_seconds_left(self._access_token)
+        if left is None or left > lead:
+            return
+        if self._adopt_cached_tokens():
+            left = jwt_seconds_left(self._access_token)
+            if left is None or left > lead:
+                log.info(
+                    "digikala_warehouse: adopted a fresher access token from the shared cache "
+                    "(expires in %d s)",
+                    int(left) if left is not None else -1,
+                )
+                return
+        if time.monotonic() < self._next_proactive_refresh_at:
+            return
+        log.info(
+            "digikala_warehouse: access token expires in %d s (lead %d s), refreshing proactively",
+            int(left),
+            lead,
+        )
+        try:
+            self._refresh_access_token()
+        except Exception as exc:  # noqa: BLE001 - never let this break a poll
+            self._next_proactive_refresh_at = (
+                time.monotonic() + _PROACTIVE_REFRESH_RETRY_BACKOFF_SECONDS
+            )
+            log.warning(
+                "digikala_warehouse: proactive token refresh failed (%s); continuing with the "
+                "current token - the 401 path will still refresh if needed",
+                exc,
+            )
 
     @default_retry()
     def _refresh_access_token(self) -> None:
@@ -304,12 +381,20 @@ class DigikalaWarehouseAdapter:
 
     @default_retry()
     def _get(self, path: str, params: dict, _already_refreshed: bool = False) -> dict:
+        if not _already_refreshed:
+            self._refresh_if_expiring()
         resp = self._client.get(
             path, params=params, headers={"Authorization": f"Bearer {self._access_token}"}
         )
         if resp.status_code == 401 and not _already_refreshed:
-            log.info("digikala_warehouse: access token expired (401), refreshing")
-            self._refresh_access_token()
+            if self._adopt_cached_tokens(current_known_bad=True):
+                log.info(
+                    "digikala_warehouse: access token rejected (401) but the shared token cache "
+                    "already holds a newer pair, using it instead of refreshing"
+                )
+            else:
+                log.info("digikala_warehouse: access token expired (401), refreshing")
+                self._refresh_access_token()
             return self._get(path, params, _already_refreshed=True)
         raise_for_status_with_body(resp)
         return resp.json()

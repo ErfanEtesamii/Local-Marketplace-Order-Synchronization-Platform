@@ -510,6 +510,18 @@ class Settings:
     digikala_warehouse_enabled: bool = field(
         default_factory=lambda: _get("DIGIKALA_WAREHOUSE_ENABLED", "false").lower() == "true"
     )
+    # Proactive Digikala access-token refresh lead time (2026-09 token fix).
+    # The Digikala adapters (digikala.py, digikala2.py, digikala_warehouse.py)
+    # refresh the access token while it still has less than this many
+    # seconds of life left, instead of only after a 401. Access tokens live
+    # ~2h, and Faraz-Honar reads the shared data/digikala*_tokens.json
+    # cache but may not refresh itself, so the cache must never hold an
+    # (almost) expired token. 900 = refresh in the last 15 minutes; must be
+    # comfortably larger than POLL_INTERVAL_SECONDS. 0 disables proactive
+    # refresh entirely (old, 401-only behaviour).
+    digikala_token_refresh_lead_seconds: int = field(
+        default_factory=lambda: int(_get("DIGIKALA_TOKEN_REFRESH_LEAD_SECONDS", "900"))
+    )
     tapsishop: TapsiShopConfig = field(default_factory=TapsiShopConfig)
     digikala: DigikalaConfig = field(default_factory=DigikalaConfig)
     # Second Digikala store - see _build_digikala2_config's and
