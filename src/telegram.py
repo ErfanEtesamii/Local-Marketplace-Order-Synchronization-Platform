@@ -49,19 +49,21 @@ DESIGN CHOICES:
   still exist, unused by any report now, purely so historical local
   figures remain queryable if ever needed.)
 
-  Both report families now go through DidarDealClient.
-  get_created_date_stats()/get_created_date_stats_for_label() (every
-  deal whose own RegisterTime falls in the window, regardless of
-  Status) rather than get_won_stats() (Status="Won" only) - see
-  _aggregate_live()'s own docstring for the 2026-09 bugfix this was:
-  get_won_stats()'s Status filter makes Didar's SearchFromTime/
-  SearchToTime match when a deal was TOUCHED into that status, not
-  when it was created, which made the daily/weekly/monthly/yearly
-  reports diverge from a live Didar export filtered by "تاریخ ایجاد
-  معامله" (and from the custom-range /report picker, which was fixed
-  for this earlier). get_won_stats() itself is kept only for its
-  docstring's explanation of the missing products/shipping split
-  above and is otherwise unused now.
+  EVERY aggregate report - daily/weekly/monthly/yearly and the
+  custom-range /report picker - now goes through ONE path:
+  _build_channel_report() -> DidarDealClient.get_channel_report() ->
+  src/didar/deal_channel_report.py (2026-09, client request). It is
+  Deal-level (each Didar Deal once, priced from Deal.Price, counted only
+  if its own RegisterTime is in the window - never by Status, which made
+  Didar's SearchFromTime/SearchToTime match when a deal was TOUCHED, not
+  created), broken down by marketplace Channel (the Deal's LabelIds)
+  instead of Pending/Won/Lost, with Total always == sum of Channels +
+  "سایر". Read that module's docstring for the rules. The earlier
+  per-label/per-source implementations (_aggregate_live,
+  _aggregate_live_breakdown and their formatters) were removed so no
+  period can carry its own copy of the logic. get_won_stats() is kept
+  only for its docstring's explanation of the missing products/shipping
+  split above and is otherwise unused now.
 
 - Report scheduling is a per-poll-cycle rollover check
   (check_and_send_reports(), called from main.py's _poll_cycle), not a
@@ -131,7 +133,8 @@ import jdatetime
 
 from src.config import settings
 from src.db.repository import Repository
-from src.didar.deal_client import DealStatusBreakdown, DidarDealClient
+from src.didar.deal_channel_report import DealChannelReport, DealReportError, format_channel_report
+from src.didar.deal_client import DidarDealClient
 from src.http_utils import default_retry, raise_for_status_with_body
 from src.logger import get_logger
 from src.shipping_fees import shipping_fee_rial
@@ -396,40 +399,6 @@ def _boxed_title(label: str) -> str:
         + (" " * left) + label + (" " * right) + "\n"
         + "╚" + "═" * _BOX_WIDTH + "╝"
     )
-
-
-# The only platforms the custom-range /report picker's per-label
-# breakdown shows (client request, 2026-09 follow-up 3: drop the
-# شخصیت*/سازمانی/تلفنی labels Didar also returns via
-# list_deal_labels() and show just these 5, in this fixed order) - see
-# _select_range_report_platforms() and
-# TelegramNotifier._format_live_range_report_message().
-_RANGE_REPORT_PLATFORM_KEYWORDS = ["اسنپ", "تپسی", "فرازهنر", "دیجی", "سلام"]
-
-
-def _select_range_report_platforms(
-    per_label: list[tuple[str, "DealStatusBreakdown"]]
-) -> list[tuple[str, "DealStatusBreakdown"]]:
-    """Filters+reorders the live per-label breakdown from
-    DidarDealClient.list_deal_labels() down to just the 5 marketplaces
-    in _RANGE_REPORT_PLATFORM_KEYWORDS, in that fixed order - everything
-    else Didar returns (شخصیت i/C/D/S, سازمانی, تلفنی, ...) is dropped.
-
-    Matches by substring against the live Didar label Title rather
-    than an exact string, since the confirmed real titles vary
-    slightly from the plain platform name (e.g. "سایت فرازهنر" for
-    فرازهنر, "با سلام" with a space for باسلام) - the first per_label
-    entry whose Title contains the keyword wins. A keyword with no
-    matching label in this Didar account is simply skipped rather than
-    shown as a fabricated zero row, so this never invents a platform
-    Didar didn't actually return."""
-    selected: list[tuple[str, "DealStatusBreakdown"]] = []
-    for keyword in _RANGE_REPORT_PLATFORM_KEYWORDS:
-        for title, breakdown in per_label:
-            if keyword in title:
-                selected.append((title, breakdown))
-                break
-    return selected
 
 
 @dataclass(frozen=True)
@@ -980,100 +949,25 @@ class TelegramNotifier:
         self._send_yearly_report(repository, source_names, ended_year_first_day)
         repository.set_report_marker("year", key)
 
-    def _aggregate_live(self, source_names: list[str], since: datetime, until: datetime) -> tuple[int, Decimal]:
-        """Live count/total straight from Didar via
-        DidarDealClient.get_created_date_stats() - client request
-        2026-09: every report (daily/weekly/monthly/yearly, same as
-        the custom-range /report picker) must reflect Didar itself,
-        the account's real source of truth, rather than only the
-        orders this program's own sync engine happened to see locally
-        (which can undercount if a poll cycle was ever missed - see
-        _sync_source()'s 5-hour window).
-
-        2026-09 bugfix: this used to call get_won_stats() (Status=
-        "Won" only). Per get_created_date_stats_for_label()'s
-        docstring/block comment, filtering by Status makes Didar's
-        SearchFromTime/SearchToTime match when a deal was TOUCHED into
-        that status, not when it was created - so a deal created on an
-        earlier day and only confirmed/Won today was silently counted
-        into "today"'s periodic report, inflating count/total well
-        above a live Didar export filtered by "تاریخ ایجاد معامله" (the
-        exact mismatch reported between "گزارش پایان روز" and "گزارش
-        بازه دلخواه" for the same day). The custom-range /report picker
-        was already fixed for this (_aggregate_live_breakdown ->
-        get_created_date_stats_for_label) but the fix was never
-        propagated here. Now counts every deal (any status) whose own
-        RegisterTime falls in [since, until), same semantics as the
-        custom-range picker - client request: "فقط سفارش‌هایی که همون
-        روز ثبت شدن".
-
-        Deliberately count+total only, no products/shipping split - see
-        get_won_stats()'s docstring for why that breakdown isn't
-        retrievable from Didar at all once a deal is saved. Returns
-        (0, Decimal('0')) if no Didar client could be constructed,
-        mirroring _send_custom_range_report's own degrade-to-zero
-        behaviour rather than raising into the caller."""
+    def _build_channel_report(
+        self, title: str, period_line: str, since: datetime, until: datetime,
+    ) -> tuple[str, DealChannelReport]:
+        """THE single path every aggregate report (daily/weekly/monthly/
+        yearly AND the custom-range /report picker) takes: Deal-level,
+        per-Channel numbers from DidarDealClient.get_channel_report()
+        formatted by format_channel_report() - see
+        src/didar/deal_channel_report.py for the rules (each Deal once,
+        Deal.Price only, Total == sum of Channels + "سایر"). The
+        callers below only choose `title` and the [since, until)
+        window. Raises DealReportError - never returns zeros - if Didar
+        can't be queried completely, so a wrong report is never sent.
+        (Replaces _aggregate_live/_aggregate_live_breakdown, which were
+        two separate per-label implementations.)"""
         didar_client = self._get_didar_client()
-        count = 0
-        total = Decimal("0")
         if didar_client is None:
-            log.error(
-                "telegram: no Didar client available for periodic report - "
-                "reporting zero results"
-            )
-            return count, total
-        for source in source_names:
-            breakdown = didar_client.get_created_date_stats(source, since, until)
-            count += breakdown.all_count
-            total += breakdown.all_total
-        return count, total
-
-    def _aggregate_live_breakdown(
-        self, since: datetime, until: datetime
-    ) -> tuple[DealStatusBreakdown, list[tuple[str, DealStatusBreakdown]]]:
-        """Overall total AND a breakdown per Didar Deal Label - EVERY
-        label configured in the Didar account itself
-        (DidarDealClient.list_deal_labels()), not just the marketplaces
-        this local deployment happens to have an adapter/credentials
-        for (client request, 2026-09 follow-up: "کل لیبل هارو از
-        گزارش خود دیدار بگیره" - a label like اسنپ must still show up
-        even when SNAPPSHOP_ENABLED is false locally, since Didar's own
-        label list is the actual source of truth here, not this
-        project's .env/source_names). Order matches whatever
-        list_deal_labels() itself returns from Didar. Returns (zero
-        total, []) if no Didar client could be constructed or the label
-        list itself couldn't be fetched - degrade-to-empty rather than
-        raising into the caller, same as _aggregate_live above.
-
-        Uses DidarDealClient.get_created_date_stats_for_label() (client
-        request, 2026-09 follow-up 5: "بازه‌ای که میگیرم بر اساس تاریخ
-        ایجاد سفارشات باشه، کاری ندارم وضعیتش چیه") - NOT
-        get_status_breakdown_for_label(). The Status-based version
-        counts a deal into a window if it was TOUCHED (won/lost/updated)
-        during that window, which silently pulled in deals created
-        outside the requested range and made this report diverge from a
-        plain Didar export filtered by "تاریخ ایجاد معامله" - see
-        get_created_date_stats_for_label()'s own docstring for the full
-        root-cause writeup. Each label's breakdown here only ever has
-        all_count/all_total populated (status is intentionally
-        collapsed), which is exactly what
-        _format_live_range_report_message() already reads."""
-        didar_client = self._get_didar_client()
-        total = DealStatusBreakdown()
-        per_label: list[tuple[str, DealStatusBreakdown]] = []
-        if didar_client is None:
-            log.error(
-                "telegram: no Didar client available for custom-range "
-                "report - reporting all-zero breakdown"
-            )
-            return total, per_label
-        for title, label_id in didar_client.list_deal_labels():
-            label_breakdown = didar_client.get_created_date_stats_for_label(
-                label_id, since, until
-            )
-            per_label.append((title, label_breakdown))
-            total = total + label_breakdown
-        return total, per_label
+            raise DealReportError("no Didar client available")
+        report = didar_client.get_channel_report(since, until)
+        return format_channel_report(title, period_line, report, _format_rial), report
 
     def _aggregate_new_stage_breakdown(
         self, repository: Repository, since: datetime, until: datetime | None = None
@@ -1083,10 +977,8 @@ class TelegramNotifier:
         (`Repository.get_new_stage_deals()` -
         `new_customer_stage_deals`, step 3 of that feature - see the
         table's docstring in `db/repository.py`). Unlike
-        `_aggregate_live`/`_aggregate_live_breakdown` above, this makes
-        no Didar API call - it reads purely from the local append-only
-        log, so it never returns a degrade-to-zero result the way those
-        two do on a Didar-client failure.
+        `_build_channel_report` above, this makes no Didar API call - it
+        reads purely from the local append-only log.
 
         `label_title` rows with no resolved label (deal seen before its
         Label could be looked up, or the Deal genuinely has none) are
@@ -1172,50 +1064,20 @@ class TelegramNotifier:
             "#گزارش"
         )
 
-    def _format_live_report_message(
-        self, title_line: str, box_label: str, period_line: str, count: int, total,
-    ) -> str:
-        """Used by the periodic live-from-Didar reports - daily/weekly/
-        monthly/yearly (see _aggregate_live above). NOT used by the
-        custom-range /report picker any more - that one shows a fuller
-        per-label breakdown instead, see
-        _format_live_range_report_message below. No products/shipping
-        split here - see _aggregate_live()'s docstring.
-
-        2026-09 bugfix: wording changed from "سفارش‌های موفق"/"معامله‌های
-        موفق ثبت‌شده" (successful/Won-only deals) to plain "سفارش‌ها"/
-        "معامله‌های ثبت‌شده" (deals registered [that day]), matching
-        _format_live_range_report_message's footer - now that
-        _aggregate_live counts by RegisterTime regardless of Status
-        (see _aggregate_live's own docstring), "موفق" would misdescribe
-        what's actually being counted."""
-        return (
-            f"{title_line}\n"
-            f"{_boxed_title(box_label)}\n"
-            f"{period_line}\n"
-            "🛒 تعداد سفارش‌ها\n"
-            f"└─ {count} سفارش\n"
-            "💰 مبلغ فروش\n"
-            f"└─ {_format_rial(total)} ریال\n"
-            "━━━━━━━━━━━━━━━━━━━━\n"
-            "🟢 برگرفته از معامله‌های ثبت‌شده در دیدار\n"
-            "(بدون احتساب هزینه ارسال).\n"
-            "#گزارش"
-        )
-
     def _send_daily_report(self, repository, source_names, day) -> None:
         if not self.is_configured():
             return
         try:
             since = _iran_midnight_utc(day)
             until = _iran_midnight_utc(day + timedelta(days=1))
-            count, total = self._aggregate_live(source_names, since, until)
             period_line = f"📅 {_WEEKDAY_FA[_iranian_weekday(day)]} {_jalali_date_str(day)}"
-            message = self._format_live_report_message(
-                "📊 گزارش پایان روز", "📊 گزارش روزانه", period_line, count, total,
+            message, _report = self._build_channel_report(
+                "📊 گزارش روزانه", period_line, since, until,
             )
             self._send(message)
             log.info("telegram: sent daily report for %s", _jalali_key(day))
+        except DealReportError as exc:
+            log.error("telegram: daily report NOT sent - Didar data incomplete: %s", exc)
         except TelegramError as exc:
             log.error("telegram: failed to send daily report: %s", exc)
         except Exception:
@@ -1228,16 +1090,17 @@ class TelegramNotifier:
             week_end = week_start + timedelta(days=6)  # Friday
             since = _iran_midnight_utc(week_start)
             until = _iran_midnight_utc(week_end + timedelta(days=1))
-            count, total = self._aggregate_live(source_names, since, until)
             period_line = f"📅 {_jalali_date_str(week_start)} تا {_jalali_date_str(week_end)}"
-            message = self._format_live_report_message(
-                "📊 گزارش پایان هفته", "📊 گزارش هفتگی", period_line, count, total,
+            message, _report = self._build_channel_report(
+                "📊 گزارش هفتگی", period_line, since, until,
             )
             self._send(message)
             log.info(
                 "telegram: sent weekly report %s..%s",
                 _jalali_key(week_start), _jalali_key(week_end),
             )
+        except DealReportError as exc:
+            log.error("telegram: weekly report NOT sent - Didar data incomplete: %s", exc)
         except TelegramError as exc:
             log.error("telegram: failed to send weekly report: %s", exc)
         except Exception:
@@ -1253,18 +1116,19 @@ class TelegramNotifier:
                 next_month_first = jdatetime.date(month_first_day.year, month_first_day.month + 1, 1)
             since = _iran_midnight_utc(month_first_day)
             until = _iran_midnight_utc(next_month_first)
-            count, total = self._aggregate_live(source_names, since, until)
             month_label = (
                 f"{_MONTH_NAMES_FA[month_first_day.month]} "
                 f"{_to_persian_digits(str(month_first_day.year))}"
             )
             period_line = f"📅 {month_label}"
-            message = self._format_live_report_message(
-                "📊 گزارش پایان ماه", "📊 گزارش ماهانه", period_line, count, total,
+            message, _report = self._build_channel_report(
+                "📊 گزارش ماهانه", period_line, since, until,
             )
             self._send(message)
             log.info("telegram: sent monthly report for %04d-%02d",
                       month_first_day.year, month_first_day.month)
+        except DealReportError as exc:
+            log.error("telegram: monthly report NOT sent - Didar data incomplete: %s", exc)
         except TelegramError as exc:
             log.error("telegram: failed to send monthly report: %s", exc)
         except Exception:
@@ -1277,13 +1141,14 @@ class TelegramNotifier:
             next_year_first = jdatetime.date(year_first_day.year + 1, 1, 1)
             since = _iran_midnight_utc(year_first_day)
             until = _iran_midnight_utc(next_year_first)
-            count, total = self._aggregate_live(source_names, since, until)
             period_line = f"📅 سال {_to_persian_digits(str(year_first_day.year))}"
-            message = self._format_live_report_message(
-                "📊 گزارش پایان سال", "📊 گزارش سالانه", period_line, count, total,
+            message, _report = self._build_channel_report(
+                "📊 گزارش سالانه", period_line, since, until,
             )
             self._send(message)
             log.info("telegram: sent yearly report for %04d", year_first_day.year)
+        except DealReportError as exc:
+            log.error("telegram: yearly report NOT sent - Didar data incomplete: %s", exc)
         except TelegramError as exc:
             log.error("telegram: failed to send yearly report: %s", exc)
         except Exception:
@@ -1486,72 +1351,6 @@ class TelegramNotifier:
                 return None
         return self._didar_client
 
-    def _format_live_range_report_message(
-        self,
-        period_line: str,
-        total: DealStatusBreakdown,
-        per_label: list[tuple[str, DealStatusBreakdown]],
-    ) -> str:
-        """Custom-range /report format - LIVE from Didar (see
-        _send_custom_range_report). Shows the overall total (کل
-        سفارشات, still summed across every Didar label - unaffected by
-        the platform filter below) followed by one line per SELECTED
-        platform - only the 5 marketplaces in
-        _RANGE_REPORT_PLATFORM_KEYWORDS (client request, 2026-09
-        follow-up 3: "نیازی به شخصیت‌ها نیست" - drop the شخصیت*/
-        سازمانی/تلفنی labels Didar also returns and show just
-        اسنپ/تپسی/فرازهنر/دیجی‌کالا/باسلام, in that fixed order), with
-        that label's own count + total sale amount (all_count/
-        all_total - every status, not just Won, matching what "کل
-        سفارشات" always meant here). See
-        _select_range_report_platforms() for the matching/ordering
-        logic.
-
-        Replaced the earlier Pending/Won/Lost status split (client
-        request, 2026-09 follow-up: drop سفارشات جاری/موفق/ناموفق, show
-        each platform instead), then changed again (2026-09 follow-up
-        2: "کل لیبل هارو از گزارش خود دیدار بگیره") from a per-source
-        breakdown keyed by this project's own configured marketplaces
-        to a per-LABEL breakdown read straight from Didar, so a label
-        with no locally-enabled adapter (e.g. اسنپ while
-        SNAPPSHOP_ENABLED=false) still appears - and then narrowed
-        again (this follow-up 3) to just the 5 platforms above. Same as
-        before, deliberately without the products/shipping split: Didar
-        has no way to return a saved shipping figure (see
-        DidarDealClient.get_won_stats()'s docstring), so each line here
-        only ever shows count + total sale amount.
-
-        A blank line separates every platform block (client request,
-        2026-09 follow-up 3: "بین هر مودوم هم یه اینتر بزن که قابل
-        تشخیص باشن") so they're visually distinguishable in the
-        Telegram message. A selected platform with zero matching deals
-        in this window still shows a "0 سفارش" line rather than being
-        hidden, same as before - it's only labels OUTSIDE the 5-
-        platform list that are dropped now, not zero-count ones within
-        it."""
-        lines = [
-            "📊 گزارش بازه دلخواه",
-            _boxed_title("📊 گزارش بازه‌ای (زنده از دیدار)"),
-            period_line,
-            "📦 کل سفارشات",
-            f"└─ {total.all_count} سفارش - {_format_rial(total.all_total)} ریال",
-        ]
-        for title, label_breakdown in _select_range_report_platforms(per_label):
-            lines.append("")
-            lines.append(f"🛍 {title}")
-            lines.append(
-                f"└─ {label_breakdown.all_count} سفارش - "
-                f"{_format_rial(label_breakdown.all_total)} ریال"
-            )
-        lines.extend([
-            "",
-            "━━━━━━━━━━━━━━━━━━━━",
-            "🟢 برگرفته از معامله‌های ثبت‌شده در دیدار",
-            "(بدون احتساب هزینه ارسال).",
-            "#گزارش",
-        ])
-        return "\n".join(lines)
-
     def _send_custom_range_report(
         self,
         chat_id,
@@ -1560,17 +1359,13 @@ class TelegramNotifier:
         end_date: "jdatetime.date",
         repository: Repository,
     ) -> None:
-        """Same live-from-Didar aggregation as the daily/weekly/monthly/
-        yearly reports (see _aggregate_live), just for whatever custom
-        range the operator picked via the /report picker (client
-        request, 2026-09) instead of a fixed calendar period.
-
-        No longer takes source_names (client request, 2026-09 follow-up
-        2: "کل لیبل هارو از گزارش خود دیدار بگیره") - the per-label
-        breakdown now comes straight from DidarDealClient.
-        list_deal_labels() via _aggregate_live_breakdown(), independent
-        of which marketplaces this local deployment has adapters/
-        credentials for."""
+        """Same shared aggregation and message layout as the daily/weekly/
+        monthly/yearly reports (see _build_channel_report), just for
+        whatever custom range the operator picked via the /report picker
+        (client request, 2026-09) instead of a fixed calendar period.
+        Doesn't depend on which marketplaces this local deployment has
+        adapters/credentials for - Channels come from the Deals' own
+        Didar labels."""
         start_date = _jalali_from_key(start_key)
         if end_date < start_date:
             self._edit_message(
@@ -1582,15 +1377,24 @@ class TelegramNotifier:
         since = _iran_midnight_utc(start_date)
         until = _iran_midnight_utc(end_date + timedelta(days=1))
 
-        total, per_label = self._aggregate_live_breakdown(since, until)
-
         period_line = f"📅 از {_jalali_date_str(start_date)} تا {_jalali_date_str(end_date)}"
-        message = self._format_live_range_report_message(period_line, total, per_label)
+        try:
+            message, report = self._build_channel_report(
+                "📊 گزارش بازه دلخواه", period_line, since, until,
+            )
+        except DealReportError as exc:
+            log.error("telegram: custom-range report NOT sent - Didar data incomplete: %s", exc)
+            self._edit_message(
+                chat_id, message_id,
+                "⚠️ دریافت کامل اطلاعات از دیدار ناموفق بود؛ گزارش ارسال نشد.\n"
+                "لطفاً کمی بعد دوباره دستور /report را بفرستید.",
+            )
+            return
         self._edit_message(chat_id, message_id, message)
         log.info(
             "telegram: sent live custom-range report %s..%s (source: Didar CRM, "
-            "%d total across %d label(s))",
-            start_key, _jalali_key(end_date), total.all_count, len(per_label),
+            "%d deal(s) total)",
+            start_key, _jalali_key(end_date), report.total.count,
         )
         # Let every other admin know who just pulled this report -
         # client request 2026-09 (see _broadcast_report_notice()).

@@ -1140,16 +1140,18 @@ def test_warehouse_items_never_go_through_the_customer_order_pipeline(repo, sync
     assert repo.is_already_synced("digikala_warehouse", "1") is False
 
 
-def test_warehouse_deals_are_left_for_the_generic_deal_poller(repo, synced_ids_file):
-    """Client decision: FBD deals DO get a Telegram message, but the
-    generic "a new deal was registered" one from DidarDealPoller - so
-    mark_deal_notified() must NOT be called for them (unlike
-    _sync_one_order, which does call it)."""
+def test_warehouse_deals_are_marked_notified_so_the_deal_poller_skips_them(repo, synced_ids_file):
+    """Supersedes the earlier client decision (FBD deals left for the
+    generic DidarDealPoller message): that made the poller send them via
+    the \"ثبت دستی در دیدار\" template (production incident, deal #6108,
+    2026-09 - commit 3561426, see
+    test_warehouse_end_to_end.py). FBD deals are now marked notified
+    up front, like customer orders."""
     adapter = FakeWarehouseAdapter(items=[_warehouse_item("1")])
 
     _warehouse_engine(repo, synced_ids_file, adapter, FakeWarehouseService()).run_once()
 
-    assert repo.is_deal_notified("wdeal-1") is False
+    assert repo.is_deal_notified("wdeal-1") is True
 
 
 def test_warehouse_source_stays_out_of_adapter_names(repo, synced_ids_file):

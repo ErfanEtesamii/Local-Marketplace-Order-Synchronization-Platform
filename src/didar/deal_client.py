@@ -51,6 +51,11 @@ import httpx
 
 from src.config import DidarConfig, settings
 from src.didar.category_mapping import _normalize_fa
+from src.didar.deal_channel_report import (
+    DealChannelReport,
+    DealReportError,
+    aggregate_deals,
+)
 from src.didar.contact_client import DidarApiError
 from src.didar.product_client import DidarProductClient
 from src.http_utils import default_retry, raise_for_status_with_body
@@ -886,6 +891,73 @@ class DidarDealClient:
                 pass
 
         return DealStatusBreakdown(all_count=count, all_total=total)
+
+    def get_channel_report(self, since: datetime, until: datetime) -> DealChannelReport:
+        """THE data source for every Telegram aggregate report (daily/
+        weekly/monthly/yearly/custom range) - see
+        src/didar/deal_channel_report.py for the rules and why.
+
+        One label-less pass over this project's pipeline
+        (Criteria.PipelineId), NOT one query per label: each Deal row is
+        fetched once (deduped by Id, RegisterTime re-checked against
+        [since, until)), priced from its own `Price`, and only then
+        classified into a Channel from its `LabelIds`. Unlike the
+        fire-and-forget stats methods above, this RAISES DealReportError
+        on any failure (no pipeline configured, label list or a page
+        failing, pagination cap hit) - a report built from a partial
+        fetch would look plausible but be wrong, which is worse than no
+        report."""
+        if not self._config.pipeline_id:
+            raise DealReportError(
+                "DIDAR_PIPELINE_ID is not configured - refusing to count deals "
+                "account-wide across every pipeline"
+            )
+        try:
+            labels_payload = self._get(self._config.get_deal_labels_path)
+        except Exception as exc:
+            raise DealReportError(f"could not fetch Deal Labels: {exc}") from exc
+        title_by_id = {
+            str(item["Id"]): str(item["Title"])
+            for item in labels_payload.get("Response", [])
+            if isinstance(item, dict)
+            and item.get("Id")
+            and item.get("Title")
+            and item.get("Type") == "Deal"
+        }
+
+        criteria = {
+            "SearchFromTime": _iso(since),
+            "SearchToTime": _iso(until),
+            "PipelineId": self._config.pipeline_id,
+            "Sort": 0,  # 0 = تاریخ ثبت (register time) - same as deal_poller.py
+        }
+        rows: list[dict] = []
+        offset = 0
+        for _page in range(_CREATED_RANGE_MAX_PAGES):
+            try:
+                payload = self._post(
+                    "/deal/search_v2",
+                    json={"Criteria": criteria, "From": offset,
+                          "Limit": _CREATED_RANGE_PAGE_SIZE},
+                )
+            except Exception as exc:
+                raise DealReportError(
+                    f"deal search failed at offset={offset}: {exc}"
+                ) from exc
+            response = payload.get("Response") if isinstance(payload, dict) else None
+            page = response.get("List", []) if isinstance(response, dict) else []
+            page = [item for item in (page or []) if isinstance(item, dict) and item.get("Id")]
+            rows.extend(page)
+            if len(page) < _CREATED_RANGE_PAGE_SIZE:
+                break
+            offset += _CREATED_RANGE_PAGE_SIZE
+        else:
+            raise DealReportError(
+                f"hit the {_CREATED_RANGE_MAX_PAGES}-page pagination cap for "
+                f"{since}..{until} - the deal list would be incomplete"
+            )
+
+        return aggregate_deals(rows, title_by_id, since, until, _parse_didar_datetime)
 
     # ------------------------------------------------------------------
     # Live snapshot of the "new customer" ("مشتری جدید") pipeline stage

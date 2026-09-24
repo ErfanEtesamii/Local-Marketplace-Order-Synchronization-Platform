@@ -11,7 +11,6 @@ the first-run backlog fast-forward).
 from __future__ import annotations
 
 from datetime import timedelta
-from decimal import Decimal
 from unittest.mock import patch
 
 import httpx
@@ -20,7 +19,6 @@ import pytest
 import respx
 
 from src.db.repository import Repository
-from src.didar.deal_client import DealStatusBreakdown
 from src.telegram import (
     TelegramNotifier,
     _current_jalali_year,
@@ -151,29 +149,25 @@ def test_full_range_pick_sends_report_with_correct_period(repo):
 
     # The custom-range /report queries Didar live rather than Repository's
     # local cache - fake out the Didar client entirely so this test never
-    # makes a real HTTP call.
-    fake_breakdown = DealStatusBreakdown(
-        all_count=4, all_total=Decimal("525000"),
-        pending_count=2, pending_total=Decimal("200000"),
-        won_count=1, won_total=Decimal("225000"),
-        lost_count=1, lost_total=Decimal("100000"),
-    )
-    # _aggregate_live_breakdown() (used by the custom-range picker since
-    # the 2026-09 "کل لیبل هارو از گزارش خود دیدار بگیره" refactor - see
-    # _send_custom_range_report's docstring) calls list_deal_labels() then
-    # get_created_date_stats_for_label() per label (2026-09 follow-up 5:
-    # switched from the Status-based get_status_breakdown_for_label(),
-    # which counted a deal into a window if it was merely touched during
-    # it rather than created in it - see that method's docstring), not
-    # get_status_breakdown() per source any more. Two labels ("دیجی‌کالا"/
-    # "باسلام" - both match _RANGE_REPORT_PLATFORM_KEYWORDS, see
-    # _select_range_report_platforms), each returning the same
-    # fake_breakdown.
+    # makes a real HTTP call. It goes through the shared
+    # get_channel_report() path (Deal-level, per-Channel - see
+    # src/didar/deal_channel_report.py): 4 deals, 2 marketplaces.
+    from src.didar.deal_channel_report import aggregate_deals
+    from tests.test_deal_channel_report import TITLE_BY_ID, _parse, _row
+
+    def _rows(since, until):
+        mid = since + (until - since) / 2
+        return [
+            _row(1, mid, 100_000, ["L-digi"]), _row(2, mid, 125_000, ["L-digi"]),
+            _row(3, mid, 150_000, ["L-basalam"]), _row(4, mid, 150_000, ["L-basalam"]),
+        ]
+
     fake_didar = type(
         "FakeDidarClient", (),
         {
-            "list_deal_labels": lambda self: [("دیجی‌کالا", "L1"), ("باسلام", "L2")],
-            "get_created_date_stats_for_label": lambda self, label_id, since, until: fake_breakdown,
+            "get_channel_report": lambda self, since, until: aggregate_deals(
+                _rows(since, until), TITLE_BY_ID, since, until, _parse
+            ),
         },
     )()
 
@@ -201,14 +195,12 @@ def test_full_range_pick_sends_report_with_correct_period(repo):
     assert final_message_id == 42
     assert "از" in final_text and "تا" in final_text
     assert "1405" not in final_text  # dates are rendered in Persian digits
-    # _format_live_range_report_message() (current format, 2026-09 follow-up
-    # 3) shows the overall total, then one "🛍 <label>" block per matched
-    # platform - no Pending/Won/Lost split any more. Two labels summed:
-    # 4+4=8 total; each platform block repeats its own 4-count/525,000-total.
-    assert "└─ 8 سفارش - 1,050,000 ریال" in final_text
-    assert "🛍 دیجی‌کالا" in final_text
-    assert "🛍 باسلام" in final_text
-    assert final_text.count("└─ 4 سفارش - 525,000 ریال") == 2
+    # Shared layout (format_channel_report): total block, then one block
+    # per fixed Channel - no Pending/Won/Lost split.
+    assert final_text.startswith("📊 گزارش بازه دلخواه")
+    assert "└─ 4 معامله\n└─ 525,000 ریال" in final_text
+    assert "دیجی‌کالا\n└─ 2 سفارش - 225,000 ریال" in final_text
+    assert "با سلام\n└─ 2 سفارش - 300,000 ریال" in final_text
 
 
 def test_end_before_start_shows_error_instead_of_report(repo):

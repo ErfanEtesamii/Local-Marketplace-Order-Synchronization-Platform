@@ -2,7 +2,7 @@
 Tests for TelegramNotifier._aggregate_new_stage_breakdown() (src/telegram.py)
 - step 3 of the "تفکیک سفارش‌های مرحله «مشتری جدید»" feature.
 
-Unlike _aggregate_live/_aggregate_live_breakdown (which call out to
+Unlike _build_channel_report (which calls out to
 Didar live), this function reads purely from
 Repository.get_new_stage_deals(), so these tests use a real (temp-file)
 Repository seeded via record_new_stage_deal() - no Didar client, no
@@ -108,9 +108,8 @@ def test_until_none_means_no_upper_bound(repo, notifier):
 
 
 def test_does_not_touch_won_pending_lost_report_paths(notifier):
-    """Purely a sanity check that this feature is additive: the
-    existing live-Didar aggregation methods are still present and
-    distinct from the new local one."""
-    assert hasattr(notifier, "_aggregate_live")
-    assert hasattr(notifier, "_aggregate_live_breakdown")
-    assert notifier._aggregate_new_stage_breakdown is not notifier._aggregate_live_breakdown
+    """Purely a sanity check that this feature is additive: the shared
+    live-Didar Deal/Channel report path is still present and distinct
+    from the new local one."""
+    assert hasattr(notifier, "_build_channel_report")
+    assert notifier._aggregate_new_stage_breakdown is not notifier._build_channel_report
