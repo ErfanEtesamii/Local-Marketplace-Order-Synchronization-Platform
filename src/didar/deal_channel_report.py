@@ -34,7 +34,8 @@ why the rules below exist.
 RULES (each one is a decision to confirm with the client, not a fact
 Didar gave us):
   - A Deal is counted once, keyed by its Deal Id, only if its own
-    RegisterTime is inside [since, until).
+    RegisterTime is inside [since, until) and its Status is not "Lost"
+    (see EXCLUDED_STATUSES). Pending and Won are both counted.
   - Its amount is `Price` only. A missing/invalid Price counts the Deal
     with amount 0 (and logs a warning) rather than dropping it.
   - Exactly one marketplace label -> that Channel (other, non-marketplace
@@ -75,6 +76,17 @@ CHANNELS: tuple[tuple[str, str], ...] = (
     ("با سلام", "سلام"),
 )
 OTHER_NAME = "سایر"
+
+# Deal.Status values that are NOT part of the report. Validated against
+# Didar's own export for 1405/06/01..1405/06/31: it holds exactly the
+# Pending (32 / 1,463,834,400) + Won (130 / 7,390,695,000) deals = 162 /
+# 8,854,529,400; the 3 Lost deals (210,905,000) are absent from it. This
+# is observed Didar behaviour, not a documented contract.
+EXCLUDED_STATUSES = frozenset({"lost"})
+
+
+def is_excluded_status(status: object) -> bool:
+    return isinstance(status, str) and status.strip().lower() in EXCLUDED_STATUSES
 
 _SEPARATOR = "━" * 20
 
@@ -145,6 +157,8 @@ def aggregate_deals(
         deal_id = str(deal_id)
         if deal_id in seen:
             continue  # a Deal is counted exactly once
+        if is_excluded_status(row.get("Status")):
+            continue  # Lost deals are not in Didar's own reference numbers
         registered = parse_datetime(row.get("RegisterTime"))
         if registered is None:
             log.warning("deal report: dropping Deal %s - missing/unparseable RegisterTime %r",

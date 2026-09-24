@@ -52,6 +52,7 @@ import httpx
 from src.config import DidarConfig, settings
 from src.didar.category_mapping import _normalize_fa
 from src.didar.deal_channel_report import (
+    is_excluded_status,
     DealChannelReport,
     DealReportError,
     aggregate_deals,
@@ -310,6 +311,28 @@ def _iso(dt: datetime) -> str:
     copy rather than a cross-module import, same tradeoff as this
     file's own `_format_rial()` below."""
     return dt.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
+
+
+def _search_to_time(until: datetime, now: datetime | None = None) -> datetime:
+    """SearchToTime to send for a report that is scoped by RegisterTime.
+
+    OBSERVED API BEHAVIOUR (validated against a real report, 2026-09,
+    not a documented contract): /deal/search_v2's SearchFromTime/
+    SearchToTime window is not keyed to RegisterTime alone. A Deal
+    created inside the window whose ChangeToWonTime falls AFTER the
+    window's end (e.g. created in Shahrivar, won on 1405/07/01) is
+    silently omitted from the response. For 1405/06/01..1405/06/31 that
+    dropped exactly 26 of the 162 Deals the client's Didar export shows.
+
+    So the upper bound is widened to max(until, now): the server may
+    return extra, later-touched rows, and the caller's own
+    `since <= RegisterTime < until` check (aggregate_deals()) remains
+    the ONLY thing that decides whether a Deal belongs in the report.
+    """
+    now = now or datetime.now(timezone.utc)
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=timezone.utc)
+    return max(until, now)
 
 
 def _parse_didar_datetime(value) -> datetime | None:
@@ -818,7 +841,9 @@ class DidarDealClient:
 
         criteria = {
             "SearchFromTime": _iso(since),
-            "SearchToTime": _iso(until),
+            # Widened on purpose - see _search_to_time(). The exact
+            # [since, until) cut is applied client-side on RegisterTime.
+            "SearchToTime": _iso(_search_to_time(until)),
             "PipelineId": self._config.pipeline_id,
             "LabelIds": [label_id],
             "Sort": 0,  # 0 = تاریخ ثبت (register time) - same as deal_poller.py
@@ -872,6 +897,8 @@ class DidarDealClient:
                     label_id, row.get("Id"), row.get("RegisterTime"), since, until,
                 )
                 continue
+            if is_excluded_status(row.get("Status")):
+                continue  # Lost deals are not part of Didar's reference numbers
             if not (since <= register_time < until):
                 # Didar returned this row anyway - exactly the leak this
                 # method exists to guard against. Drop it silently (not a
@@ -892,7 +919,9 @@ class DidarDealClient:
 
         return DealStatusBreakdown(all_count=count, all_total=total)
 
-    def get_channel_report(self, since: datetime, until: datetime) -> DealChannelReport:
+    def get_channel_report(
+        self, since: datetime, until: datetime, now: datetime | None = None
+    ) -> DealChannelReport:
         """THE data source for every Telegram aggregate report (daily/
         weekly/monthly/yearly/custom range) - see
         src/didar/deal_channel_report.py for the rules and why.
@@ -927,7 +956,9 @@ class DidarDealClient:
 
         criteria = {
             "SearchFromTime": _iso(since),
-            "SearchToTime": _iso(until),
+            # Widened on purpose - see _search_to_time(). The exact
+            # [since, until) cut is applied client-side on RegisterTime.
+            "SearchToTime": _iso(_search_to_time(until, now)),
             "PipelineId": self._config.pipeline_id,
             "Sort": 0,  # 0 = تاریخ ثبت (register time) - same as deal_poller.py
         }
