@@ -343,6 +343,16 @@ def _report_cancel_row() -> list:
     return [("❌ لغو", f"{_REPORT_CALLBACK_PREFIX}cancel")]
 
 
+def _report_start_keyboard() -> dict:
+    """Single-button keyboard that kicks off the /report picker from a
+    button press (callback_data "rpt:begin") instead of the operator
+    having to type the /report command by hand. Reused on /start and on
+    every "picker ended" message (cancelled, error, or a finished
+    report) so there's always a friendly way back in - see
+    _handle_report_callback's "begin" action."""
+    return _inline_keyboard([[("📊 دریافت گزارش بازه دلخواه", f"{_REPORT_CALLBACK_PREFIX}begin")]])
+
+
 def _report_year_keyboard(next_prefix: str) -> dict:
     """`next_prefix` is e.g. "rpt:sy" or "rpt:ey:1405-04-03" - the year
     picked gets appended as ":<year>"."""
@@ -535,6 +545,7 @@ class TelegramNotifier:
             self._request(
                 client, "setMyCommands",
                 commands=[
+                    {"command": "start", "description": "شروع کار با بات"},
                     {"command": "report", "description": "گزارش عملکرد یک بازه دلخواه"},
                 ],
             )
@@ -1249,9 +1260,14 @@ class TelegramNotifier:
                 chat_id, "📅 سال شروع بازه را انتخاب کنید:", reply_markup
             )
         elif command == "/start":
-            self._post_message(
+            self._send_message_with_keyboard(
                 chat_id,
-                "سلام! برای گرفتن گزارش یک بازه‌ی دلخواه دستور /report را بفرستید.",
+                "👋 سلام و خوش‌آمدید!\n\n"
+                "این بات گزارش فروش هر بازه‌ی دلخواه رو به‌صورت زنده و لحظه‌ای "
+                "از سیستم براتون می‌سازه.\n\n"
+                "برای شروع، کافیه روی دکمه‌ی زیر بزنید 👇\n"
+                "(یا هر زمان که خواستید، دستور /report را بفرستید)",
+                _report_start_keyboard(),
             )
 
     def _handle_report_callback(
@@ -1271,10 +1287,17 @@ class TelegramNotifier:
         parts = data[len(_REPORT_CALLBACK_PREFIX):].split(":")
         action = parts[0] if parts else ""
         try:
-            if action == "cancel":
+            if action == "begin":
+                self._edit_message(
+                    chat_id, message_id, "📅 سال شروع بازه را انتخاب کنید:",
+                    _report_year_keyboard(f"{_REPORT_CALLBACK_PREFIX}sy"),
+                )
+            elif action == "cancel":
                 self._edit_message(
                     chat_id, message_id,
-                    "❌ انتخاب بازه لغو شد.\nبرای شروع دوباره دستور /report را بفرستید.",
+                    "❌ انتخاب بازه لغو شد.\n\n"
+                    "هر وقت خواستید، با دکمه‌ی زیر یک گزارش تازه بسازید 👇",
+                    _report_start_keyboard(),
                 )
             elif action == "sy":
                 year = int(parts[1])
@@ -1328,7 +1351,8 @@ class TelegramNotifier:
             log.warning("telegram: malformed report-picker callback data %r", data)
             self._edit_message(
                 chat_id, message_id,
-                "⚠️ خطایی رخ داد. لطفاً دوباره دستور /report را بفرستید.",
+                "⚠️ خطایی رخ داد.\n\nبرای تلاش دوباره روی دکمه‌ی زیر بزنید 👇",
+                _report_start_keyboard(),
             )
         finally:
             self._answer_callback_query(query_id)
@@ -1370,8 +1394,9 @@ class TelegramNotifier:
         if end_date < start_date:
             self._edit_message(
                 chat_id, message_id,
-                "⚠️ تاریخ پایان نمی‌تواند قبل از تاریخ شروع باشد.\n"
-                "لطفاً دوباره دستور /report را بفرستید.",
+                "⚠️ تاریخ پایان نمی‌تواند قبل از تاریخ شروع باشد.\n\n"
+                "برای تلاش دوباره روی دکمه‌ی زیر بزنید 👇",
+                _report_start_keyboard(),
             )
             return
         since = _iran_midnight_utc(start_date)
@@ -1386,11 +1411,12 @@ class TelegramNotifier:
             log.error("telegram: custom-range report NOT sent - Didar data incomplete: %s", exc)
             self._edit_message(
                 chat_id, message_id,
-                "⚠️ دریافت کامل اطلاعات از دیدار ناموفق بود؛ گزارش ارسال نشد.\n"
-                "لطفاً کمی بعد دوباره دستور /report را بفرستید.",
+                "⚠️ دریافت کامل اطلاعات از دیدار ناموفق بود؛ گزارش ارسال نشد.\n\n"
+                "لطفاً کمی بعد دوباره تلاش کنید 👇",
+                _report_start_keyboard(),
             )
             return
-        self._edit_message(chat_id, message_id, message)
+        self._edit_message(chat_id, message_id, message, _report_start_keyboard())
         log.info(
             "telegram: sent live custom-range report %s..%s (source: Didar CRM, "
             "%d deal(s) total)",
@@ -1620,4 +1646,4 @@ class TelegramNotifier:
     def _post_message(self, chat_id: Union[int, str], text: str) -> None:
         """sendMessage for one chat_id/chunk - see _request()."""
         assert self._client is not None  # only called after is_configured()
-        self._request(self._client, "sendMessage", chat_id=chat_id, text=text)
+        self._request(self._client, "sendMessage", chat_id=chat_id, text=text)
