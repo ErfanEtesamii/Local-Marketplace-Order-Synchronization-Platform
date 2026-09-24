@@ -244,6 +244,13 @@ _BOX_WIDTH = 26
 # used here ("rpt:ed:1405-04-03:1405-09-06") is well under that.
 _REPORT_CALLBACK_PREFIX = "rpt:"
 
+# Label of the persistent bottom-of-chat button (see
+# _report_reply_keyboard() below). Checked verbatim against incoming
+# message text in _handle_report_message(), same as the "/report"
+# command text - so this string must stay in sync between the keyboard
+# builder and the handler.
+_REPORT_MENU_BUTTON_TEXT = "📊 دریافت گزارش بازه دلخواه"
+
 # Key under which the getUpdates offset is persisted, via Repository's
 # report_progress table (see get/set_report_marker) - reused as the
 # generic key-value store it already is rather than adding a dedicated
@@ -350,7 +357,24 @@ def _report_start_keyboard() -> dict:
     every "picker ended" message (cancelled, error, or a finished
     report) so there's always a friendly way back in - see
     _handle_report_callback's "begin" action."""
-    return _inline_keyboard([[("📊 دریافت گزارش بازه دلخواه", f"{_REPORT_CALLBACK_PREFIX}begin")]])
+    return _inline_keyboard([[(_REPORT_MENU_BUTTON_TEXT, f"{_REPORT_CALLBACK_PREFIX}begin")]])
+
+
+def _report_reply_keyboard() -> dict:
+    """Persistent bottom-of-chat menu (Telegram ReplyKeyboardMarkup) with
+    the same single button as _report_start_keyboard(), but pinned above
+    the message box on every screen instead of attached to one message -
+    client request 2026-09: wants this bot's home screen to look like
+    the button-grid on the Price Manager bot instead of relying on
+    typing /report or finding the inline button in an old message.
+    Sent once (on /start); Telegram keeps a ReplyKeyboardMarkup visible
+    for every later message in the chat until it's explicitly replaced
+    or removed, so nothing needs to re-send it on each reply."""
+    return {
+        "keyboard": [[{"text": _REPORT_MENU_BUTTON_TEXT}]],
+        "resize_keyboard": True,
+        "is_persistent": True,
+    }
 
 
 def _report_year_keyboard(next_prefix: str) -> dict:
@@ -1254,19 +1278,32 @@ class TelegramNotifier:
             return
         text = (message.get("text") or "").strip()
         command = text.split("@", 1)[0].split()[0] if text else ""
-        if command == "/report":
+        # The persistent bottom-menu button (_report_reply_keyboard())
+        # sends its label back as plain message text, not a callback -
+        # so it starts the exact same picker as typing /report by hand.
+        if command == "/report" or text == _REPORT_MENU_BUTTON_TEXT:
             reply_markup = _report_year_keyboard(f"{_REPORT_CALLBACK_PREFIX}sy")
             self._send_message_with_keyboard(
                 chat_id, "📅 سال شروع بازه را انتخاب کنید:", reply_markup
             )
         elif command == "/start":
+            # Pin the persistent bottom menu first (its own sendMessage,
+            # since a ReplyKeyboardMarkup and an inline keyboard can't
+            # share one message) so the button-grid look is there from
+            # the very first screen, then send the welcome text with
+            # its usual inline "begin" button as a second, immediate
+            # way in.
+            self._send_message_with_keyboard(
+                chat_id, "منوی بات:", _report_reply_keyboard()
+            )
             self._send_message_with_keyboard(
                 chat_id,
                 "👋 سلام و خوش‌آمدید!\n\n"
                 "این بات گزارش فروش هر بازه‌ی دلخواه رو به‌صورت زنده و لحظه‌ای "
                 "از سیستم براتون می‌سازه.\n\n"
                 "برای شروع، کافیه روی دکمه‌ی زیر بزنید 👇\n"
-                "(یا هر زمان که خواستید، دستور /report را بفرستید)",
+                "(یا هر زمان که خواستید، دکمه‌ی «📊 دریافت گزارش بازه دلخواه» "
+                "پایین صفحه رو بزنید)",
                 _report_start_keyboard(),
             )
 
@@ -1646,4 +1683,4 @@ class TelegramNotifier:
     def _post_message(self, chat_id: Union[int, str], text: str) -> None:
         """sendMessage for one chat_id/chunk - see _request()."""
         assert self._client is not None  # only called after is_configured()
-        self._request(self._client, "sendMessage", chat_id=chat_id, text=text)
+        self._request(self._client, "sendMessage", chat_id=chat_id, text=text)
