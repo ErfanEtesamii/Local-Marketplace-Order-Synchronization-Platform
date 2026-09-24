@@ -199,8 +199,8 @@ def test_full_range_pick_sends_report_with_correct_period(repo):
     # per fixed Channel - no Pending/Won/Lost split.
     assert final_text.startswith("📊 گزارش بازه دلخواه")
     assert "└─ 4 معامله\n└─ 525,000 ریال" in final_text
-    assert "دیجی‌کالا\n└─ 2 سفارش - 225,000 ریال" in final_text
-    assert "با سلام\n└─ 2 سفارش - 300,000 ریال" in final_text
+    assert "🔴 دیجی‌کالا\n└─ 2 سفارش - 225,000 ریال" in final_text
+    assert "🔵 با سلام\n└─ 2 سفارش - 300,000 ریال" in final_text
 
 
 def test_end_before_start_shows_error_instead_of_report(repo):

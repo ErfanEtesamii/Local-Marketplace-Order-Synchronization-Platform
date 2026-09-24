@@ -77,6 +77,19 @@ CHANNELS: tuple[tuple[str, str], ...] = (
 )
 OTHER_NAME = "سایر"
 
+# Fixed color-coding for every Telegram report, one circle emoji per
+# marketplace (client request, 2026-09): اسنپ=بنفش, تپسی=نارنجی,
+# سایت فراز=سبز, دیجی=قرمز, باسلام=آبی, سایر=طوسی. Keyed by the exact
+# display names in CHANNELS/OTHER_NAME above.
+CHANNEL_EMOJI: dict[str, str] = {
+    "اسنپ": "🟣",
+    "تپسی": "🟠",
+    "سایت فرازهنر": "🟢",
+    "دیجی‌کالا": "🔴",
+    "با سلام": "🔵",
+    OTHER_NAME: "⚫",
+}
+
 # Deal.Status values that are NOT part of the report. Validated against
 # Didar's own export for 1405/06/01..1405/06/31: it holds exactly the
 # Pending (32 / 1,463,834,400) + Won (130 / 7,390,695,000) deals = 162 /
@@ -234,7 +247,8 @@ def format_channel_report(
     if report.other.count:
         rows.append((OTHER_NAME, report.other))
     for name, stat in rows:
-        lines.extend(["", name, f"└─ {stat.count} سفارش - {format_rial(stat.total)} ریال"])
+        label = f"{CHANNEL_EMOJI.get(name, '')} {name}".strip()
+        lines.extend(["", label, f"└─ {stat.count} سفارش - {format_rial(stat.total)} ریال"])
     lines.extend([
         "",
         _SEPARATOR,
