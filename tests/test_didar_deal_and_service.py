@@ -1,3 +1,4 @@
+import json
 from dataclasses import replace
 from datetime import datetime, timezone
 from decimal import Decimal
@@ -740,6 +741,72 @@ def test_deal_item_discount_never_goes_negative_when_final_price_is_higher():
 
     deal_body = route.calls[0].request.content
     assert b'"Discount":0' in deal_body
+
+
+@respx.mock
+def test_deal_item_final_amount_equals_goods_total_minus_discount_total():
+    """Regression test (client feedback, 2026-09, re: the "افزودن محصول
+    به معامله" modal's "مبلغ نهایی" column): for EVERY product on the
+    invoice, independently, مبلغ نهایی (final amount) must equal مبلغ کل
+    کالا (UnitPrice x Quantity, i.e. goods total) minus مقدار کل تخفیفات
+    (Discount x Quantity, i.e. total discount) - which is exactly what
+    Didar itself computes server-side from the UnitPrice/Discount pair
+    on each DealItem (see _build_deal_item()).
+
+    Two differently-priced, differently-discounted, differently-quantity
+    products are sent in the SAME order, specifically so a bug that
+    leaked one item's numbers into another's (e.g. reusing quantity,
+    discount, or product id across items) would fail this test even
+    though each item looks correct in isolation.
+    """
+    _mock_categories()
+    _mock_product_search_no_match()
+    respx.post("https://app.didar.me/api/product/save").mock(
+        return_value=httpx.Response(200, json={"Response": {"Product": {"Id": "p-1"}}})
+    )
+    route = respx.post("https://app.didar.me/api/deal/save_v2").mock(
+        return_value=httpx.Response(200, json={"Response": {"Deal": {"Id": "d-1"}}})
+    )
+    order = NormalizedOrder(**{
+        **_ORDER.__dict__,
+        "items": [
+            # 2 x 100,000 = 200,000 goods total, settled for 180,000 ->
+            # 20,000 total discount -> 10,000/unit.
+            OrderItem(
+                sku="SKU-1", title="Product A", quantity=2,
+                unit_price=Decimal("100000"), final_price=Decimal("180000"),
+            ),
+            # 3 x 60,000 = 180,000 goods total, settled for 165,000 ->
+            # 15,000 total discount -> 5,000/unit. Deliberately different
+            # quantity/price/discount from item 1 above.
+            OrderItem(
+                sku="SKU-2", title="Product B", quantity=3,
+                unit_price=Decimal("60000"), final_price=Decimal("165000"),
+            ),
+        ],
+    })
+
+    client = DidarDealClient(config=_CFG)
+    client.create_deal(contact_id="c-1", display_name="Someone", order=order)
+
+    deal_body = json.loads(route.calls[0].request.content)
+    deal_items = deal_body["DealItems"]
+    assert len(deal_items) == 2
+
+    expected = {
+        2: {"UnitPrice": 100000, "Discount": 10000, "final_amount": 180000},
+        3: {"UnitPrice": 60000, "Discount": 5000, "final_amount": 165000},
+    }
+    for deal_item in deal_items:
+        quantity = deal_item["Quantity"]
+        want = expected.pop(quantity)
+        assert deal_item["UnitPrice"] == want["UnitPrice"]
+        assert deal_item["Discount"] == want["Discount"]
+        # The actual invariant the client cares about: goods total minus
+        # discount total, computed independently per product.
+        final_amount = quantity * (deal_item["UnitPrice"] - deal_item["Discount"])
+        assert final_amount == want["final_amount"]
+    assert expected == {}  # both quantities (both items) were seen
 
 
 @respx.mock
