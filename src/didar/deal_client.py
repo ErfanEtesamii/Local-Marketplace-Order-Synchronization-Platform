@@ -1345,7 +1345,36 @@ class DidarDealClient:
             # existing no-SKU-at-all fallback, making an accidental
             # collision with some unrelated existing product
             # astronomically less likely.
-            code, title = item.title, item.title
+            if item.title:
+                code, title = item.title, item.title
+            elif item.sku:
+                # BUGFIX (production incident, 2026-09-26 - SnappShop
+                # orders 978906224, 1530025871, 319753582, 848530437
+                # stuck in permanent retry): sources with NO item title
+                # at all (SnappShop / SnappShop2 - confirmed in their
+                # adapters' module docstrings, item.title is always "")
+                # used to fall through to `code, title = item.title,
+                # item.title` above, i.e. code = "". EVERY item from
+                # EVERY snappshop/snappshop2 order collapses onto that
+                # same empty Code, so the first order to reach here
+                # creates a Didar product with Code="" and every
+                # following one gets "duplicate product code" - forever,
+                # because product_client.py's duplicate-recovery search
+                # (_lookup_by_codes) itself filters out any product
+                # whose Code is falsy, so it can never find the existing
+                # ""-coded product either. The bare SKU alone still
+                # isn't safe here (same collision-with-the-client's-own-
+                # manually-numbered-catalog risk as above), so prefix it
+                # with the order's source - same prefixing already used
+                # for Didar contact CustomerCode elsewhere in this file.
+                code = f"{order.source}-{item.sku}"
+                title = f"{order.source} item {item.sku}"
+            else:
+                # No title AND no SKU - nothing to build a stable Code
+                # from. Not currently reachable by any source, but keep
+                # the old (safe, if uninformative) behavior rather than
+                # crash.
+                code, title = item.title, item.title
 
         product_id = self._products.upsert_product(
             code=code,
