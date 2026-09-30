@@ -441,3 +441,23 @@ def test_fetch_new_orders_filters_by_modified_date_not_created_date():
     assert "after" not in params
     assert params["dates_are_gmt"] == "true"
     assert adapter.fetches_by_modified_time is True
+
+
+@respx.mock
+def test_coupon_discount_is_exposed_as_gap_between_unit_price_and_final_price():
+    """WooCommerce line_item "price" is post-discount; the original price
+    is subtotal/quantity. unit_price must be the ORIGINAL one so Didar's
+    per-unit Discount (unit_price - final_price/quantity) is non-zero."""
+    raw = {
+        **_RAW_ORDER,
+        "line_items": [
+            {"sku": "SKU-A", "name": "جعبه خاتم", "quantity": 2,
+             "price": "135000", "subtotal": "300000", "total": "270000"},
+        ],
+    }
+    respx.get("https://farazhonar.com/wp-json/wc/v3/orders").mock(
+        return_value=httpx.Response(200, json=[raw], headers={"X-WP-TotalPages": "1"})
+    )
+    item = FarazHonarAdapter(config=_CFG).fetch_new_orders(since=None)[0].items[0]
+    assert item.unit_price == 1_500_000   # 150000 toman x 10
+    assert item.final_price == 2_700_000  # line total after discount

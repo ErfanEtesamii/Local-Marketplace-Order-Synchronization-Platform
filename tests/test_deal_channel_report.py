@@ -24,6 +24,7 @@ import pytest
 
 from src.didar.deal_channel_report import (
     CHANNELS,
+    CHANNEL_EMOJI,
     OTHER_NAME,
     aggregate_deals,
     channel_for_titles,
@@ -264,7 +265,8 @@ def test_layout_is_identical_across_periods_except_title_and_period(period):
         f"└─ {report.total.count} معامله", f"└─ {_fmt(report.total.total)} ریال", "",
     ]
     # Channel names appear in the fixed order.
-    positions = [text.index("\n" + name + "\n") for name, _ in CHANNELS]
+    # Each channel label is prefixed with its fixed color emoji (CHANNEL_EMOJI).
+    positions = [text.index("\n" + f"{CHANNEL_EMOJI[name]} {name}" + "\n") for name, _ in CHANNELS]
     assert positions == sorted(positions)
     assert lines[-4:] == [
         "━━━━━━━━━━━━━━━━━━━━", "🟢 برگرفته از معامله‌های ثبت‌شده در دیدار",

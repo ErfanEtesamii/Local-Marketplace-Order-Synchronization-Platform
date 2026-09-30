@@ -250,12 +250,29 @@ class FarazHonarAdapter(MarketplaceAdapter):
         items = []
         for item in raw.get("line_items", []):
             category, image_url = self._resolve_product_meta(item.get("product_id"))
+            quantity = int(item.get("quantity", 1)) or 1
+            # BUGFIX (client feedback, 2026-09 - Didar invoices for
+            # Faraz Honar showed no original price / no discount, unlike
+            # Digikala): WooCommerce's line_item "price" is the
+            # POST-discount per-unit price (total / quantity), so using it
+            # as unit_price made unit_price == final_price/quantity and
+            # DidarDealClient._build_deal_item computed Discount = 0
+            # for every order, even with a coupon applied. The
+            # PRE-discount line amount is "subtotal" (officially
+            # documented, same schema as "total"), so the original
+            # per-unit price is subtotal / quantity. Falls back to
+            # "price" only if "subtotal" is missing from the payload.
+            raw_subtotal = item.get("subtotal")
+            if raw_subtotal in (None, ""):
+                original_unit = _to_decimal(item.get("price"))
+            else:
+                original_unit = _to_decimal(raw_subtotal) / Decimal(quantity)
             items.append(
                 OrderItem(
                     sku=str(item.get("sku") or item.get("product_id", "")),
                     title=str(item.get("name", "")),
-                    quantity=int(item.get("quantity", 1)),
-                    unit_price=to_rial(_to_decimal(item.get("price")), self._config.price_unit),
+                    quantity=quantity,
+                    unit_price=to_rial(original_unit, self._config.price_unit),
                     final_price=to_rial(_to_decimal(item.get("total")), self._config.price_unit),
                     category=category,
                     product_image_url=image_url,
