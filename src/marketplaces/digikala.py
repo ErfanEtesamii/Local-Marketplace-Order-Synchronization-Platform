@@ -137,6 +137,7 @@ from src.db.repository import Repository
 from src.http_utils import default_retry, raise_for_status_with_body
 from src.logger import get_logger
 from src.marketplaces.base import MarketplaceAdapter, NormalizedOrder, OrderItem
+from src.marketplaces.digikala_nearby import NearbyStoresMixin
 from src.token_utils import (
     jwt_seconds_left,
     prefer_cached_token,
@@ -222,7 +223,7 @@ def _parse_history_date(value: str | None) -> datetime:
         return datetime.now(timezone.utc)
 
 
-class DigikalaAdapter(MarketplaceAdapter):
+class DigikalaAdapter(NearbyStoresMixin, MarketplaceAdapter):
     name = "digikala"
 
     # Tells SyncEngine._sync_source to bypass its generic created_at /
@@ -484,6 +485,9 @@ class DigikalaAdapter(MarketplaceAdapter):
             self._normalize_sbs_row(row, promotion_map=self._build_promotion_map(row))
             for row in rows
         ]
+        # 3-hour (near-by-stores) orders live on a separate endpoint - see
+        # digikala_nearby.py. Never raises; SBS orders above are unaffected.
+        orders.extend(self.fetch_new_nearby_orders())
         log.info(
             "digikala: fetched %d new shipment(s) since watermark %d", len(orders), watermark
         )
@@ -531,7 +535,19 @@ class DigikalaAdapter(MarketplaceAdapter):
         first time it's re-fetched here (e.g. the retry path, or a caller
         that never went through fetch_new_orders for this id).
         """
-        data = self._fetch_shipment_row(source_order_id)
+        sbs_error = None
+        try:
+            data = self._fetch_shipment_row(source_order_id)
+        except Exception as exc:
+            data, sbs_error = {}, exc
+        if not data:
+            # Not a normal SBS shipment - it may be a 3-hour order (see
+            # digikala_nearby.py). Re-raise the original outcome if not.
+            nearby = self._lookup_nearby_for_detail(source_order_id)
+            if nearby:
+                return self._normalize_nearby_row(self._confirm_nearby_if_pending(nearby))
+            if sbs_error is not None:
+                raise sbs_error
         if not data:
             raise ValueError(f"digikala: shipment {source_order_id} not found")
         data = self._confirm_if_pending(data)

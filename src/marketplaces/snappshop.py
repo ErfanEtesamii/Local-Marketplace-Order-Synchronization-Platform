@@ -133,6 +133,19 @@ log = get_logger(__name__)
 
 _SCHEMA_CONFIRMED = True  # confirmed 2026-09 - see module docstring; flip back to False if a future SnappShop API change is suspected
 
+_EMPTY_IDS = {"", "0", "none", "null"}
+_TITLE_KEYS = ("title", "name", "product_title", "product_name", "title_fa", "name_fa")
+_ID_KEYS = ("id", "product_number", "parent_product_number", "vendor_product_info_id", "inventory_product_id", "sku")
+_TITLE_CACHE_TTL_S = 600
+_MAX_PRODUCT_PAGES = 100
+
+
+def _clean_id(value) -> str:
+    """SnappShop sends a placeholder sku of "0" on real orders (seen 2026-09-29/30:
+    every item collapsed onto one Didar product "snappshop item 0"). Treat it as absent."""
+    text = "" if value is None else str(value).strip()
+    return "" if text.lower() in _EMPTY_IDS else text
+
 
 def _to_decimal(value) -> Decimal:
     try:
@@ -313,6 +326,53 @@ class SnappShopAdapter(MarketplaceAdapter):
             shipping_method=raw.get("delivery_type") or None,
         )
 
+    def _load_product_titles(self) -> dict[str, str]:
+        """Vendor catalog (GET /vendors/{id}/products?page=N) -> {any known id: title}.
+        Best effort: field names for the title are NOT confirmed in this repo, so several
+        candidates are tried. Any failure returns what was loaded so far (never raises)."""
+        import time
+        now = time.monotonic()
+        cache = getattr(self, "_title_cache", None)
+        if cache is not None and now - self._title_cache_at < _TITLE_CACHE_TTL_S:
+            return cache
+        titles: dict[str, str] = {}
+        seen_first: str | None = None
+        try:
+            for page in range(1, _MAX_PRODUCT_PAGES + 1):
+                payload = self._get(f"/vendors/{self._config.vendor_id}/products", params={"page": page})
+                rows = payload.get("data", []) if isinstance(payload, dict) else []
+                if not rows:
+                    break
+                marker = str(rows[0].get("id") or rows[0].get("product_number"))
+                if marker == seen_first:
+                    break  # API ignored the page param - avoid looping forever
+                seen_first = seen_first or marker
+                for row in rows:
+                    title = next((str(row[k]).strip() for k in _TITLE_KEYS if row.get(k)), "")
+                    if not title:
+                        continue
+                    for k in _ID_KEYS:
+                        key = _clean_id(row.get(k))
+                        if key:
+                            titles.setdefault(key, title)
+                if len(rows) < 20:
+                    break
+        except Exception:
+            log.warning("snappshop: could not load product titles for item naming", exc_info=True)
+        if not titles:
+            log.warning("snappshop: product catalog gave no usable titles - items will fall back to id-based names")
+        self._title_cache, self._title_cache_at = titles, now
+        return titles
+
+    def _lookup_title(self, item: dict) -> str:
+        titles = self._load_product_titles()
+        for k in ("product_number", "vendor_product_info_id", "inventory_product_id", "parent_product_number", "sku"):
+            key = _clean_id(item.get(k))
+            if key and key in titles:
+                return titles[key]
+        log.warning("snappshop: no title found for item keys=%s product_number=%s", sorted(item), item.get("product_number"))
+        return ""
+
     def _normalize_items(self, raw_items: list[dict]) -> list[OrderItem]:
         """
         Shared item-normalization for the confirmed `items[]` shape used
@@ -363,14 +423,14 @@ class SnappShopAdapter(MarketplaceAdapter):
 
             items.append(
                 OrderItem(
-                    sku=str(item.get("sku") or item.get("vendor_product_info_id") or item.get("product_number") or ""),
+                    sku=_clean_id(item.get("sku")) or _clean_id(item.get("vendor_product_info_id")) or _clean_id(item.get("product_number")),
                     # Confirmed: neither orders endpoint returns an item
                     # title/name field at all - only product identifiers
                     # (see module docstring). A real title would need a
                     # separate GET /vendors/{vendor_id}/products/{id}
                     # lookup keyed on product_number - not yet
                     # implemented, tracked as a follow-up.
-                    title="",
+                    title=self._lookup_title(item),
                     quantity=quantity,
                     unit_price=unit_price,
                     final_price=final_price,
