@@ -16,6 +16,7 @@ from logging.handlers import TimedRotatingFileHandler
 from pathlib import Path
 
 from src.config import settings
+from src.log_redaction import redact_secrets
 
 _LOG_DIR = Path(__file__).resolve().parent.parent / "logs"
 _LOG_DIR.mkdir(exist_ok=True)
@@ -49,6 +50,15 @@ class _ReadableFormatter(logging.Formatter):
     the one that mattered. See _CondensedConsoleFormatter below for the
     version meant for a human skimming the live console.
     """
+
+    def format(self, record: logging.LogRecord) -> str:
+        # Last line of defence against secrets in log output (Didar's
+        # ?apikey=... and the Telegram bot token both travel inside the
+        # request URL, which httpx puts in exception messages) - see
+        # src/log_redaction.py. Applied to the FINAL string so it also
+        # covers the traceback text. _CondensedConsoleFormatter calls
+        # this via super().format(), so console output is covered too.
+        return redact_secrets(super().format(record))
 
     def formatException(self, ei) -> str:  # noqa: N802 (stdlib name)
         original = super().formatException(ei)

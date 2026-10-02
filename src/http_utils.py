@@ -13,6 +13,8 @@ from __future__ import annotations
 import httpx
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception
 
+from src.log_redaction import redact_secrets
+
 
 def is_retryable_http_error(exc: BaseException) -> bool:
     """
@@ -35,7 +37,9 @@ def raise_for_status_with_body(resp: httpx.Response) -> None:
     """
     if resp.is_success:
         return
-    message = (
+    # The URL can carry the API key (Didar: ?apikey=...) - redact it so the
+    # secret never lands in logs or in sync_failures.error_message.
+    message = redact_secrets(
         f"{resp.status_code} {resp.reason_phrase} for url '{resp.url}': {resp.text}"
     )
     raise httpx.HTTPStatusError(message, request=resp.request, response=resp)
