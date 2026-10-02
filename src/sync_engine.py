@@ -444,6 +444,14 @@ class SyncEngine:
                 total_amount=item.unit_price * item.quantity,
             )
 
+            # Telegram message for the new FBD item (2026-10). Placed
+            # AFTER mark_warehouse_shipment_synced() so a Telegram
+            # failure can never cause the item to be re-synced; the
+            # notifier catches its own errors and queues them for
+            # retry_pending_notifications(), same contract as
+            # notify_new_order() in _sync_one_order().
+            self._telegram.notify_new_warehouse_shipment(item, deal_id, self._repo)
+
         # Same reasoning as the "completed poll" line in _sync_source:
         # this fires every poll regardless of activity, so only promote
         # it to INFO when there was actually an item to report.

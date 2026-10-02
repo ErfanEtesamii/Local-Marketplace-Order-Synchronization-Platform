@@ -788,6 +788,67 @@ class TelegramNotifier:
         )
 
     # ------------------------------------------------------------------
+    # Digikala warehouse (FBD, "ارسال به انبار دیجی‌کالا") notification
+    # (2026-10). FBD items are not customer orders (no customer, not
+    # counted in reports - see marketplaces/warehouse_base.py), so they
+    # get their own message and are deliberately NOT in _PLATFORM_DISPLAY
+    # (that map also feeds the report titles/emoji lookups).
+    # ------------------------------------------------------------------
+    def notify_new_warehouse_shipment(self, item, deal_id: str, repository: Repository) -> None:
+        """Send the Persian RTL message for a newly synced FBD item.
+        `item` is a WarehouseShipmentItem; `deal_id` is the Didar Deal Id
+        (logging only). Same fire-and-forget + retry-queue contract as
+        notify_new_order(): never raises, and a send failure (or an
+        unreachable Telegram) is queued via the notification_failures
+        table under a stable ref_id so retry_pending_notifications()
+        delivers it later. Safe with unconfigured credentials - no-op."""
+        ref_id = f"warehouse:{item.source}:{item.source_shipment_id}"
+        description = (
+            f"warehouse notification for {item.source} item "
+            f"{item.source_shipment_id} (deal {deal_id})"
+        )
+        try:
+            if not self.is_configured():
+                if self._has_credentials():
+                    message = self._format_new_warehouse_message(item)
+                    log.error(
+                        "telegram: not reachable right now - queuing %s for retry",
+                        description,
+                    )
+                    repository.record_notification_failure(
+                        ref_id, message, "telegram unreachable (is_configured() failed)"
+                    )
+                return
+            message = self._format_new_warehouse_message(item)
+            self._deliver(ref_id, message, repository, description)
+        except Exception:  # pragma: no cover - defensive, must never break the sync
+            log.exception("telegram: failed to build/send %s", description)
+
+    def _format_new_warehouse_message(self, item) -> str:
+        total = item.unit_price * item.quantity
+        when = self._format_jalali_datetime(item.created_at)
+        lines = [
+            "🟣 سفارش جدید ارسال به انبار دیجی‌کالا در دیدار ثبت شد",
+            "🛍 پلتفرم:",
+            "🟣 دیجی‌کالا (ارسال به انبار)",
+            "📦 محصول:",
+            f"{item.product_title}",
+            f"   └─ {_format_rial(item.unit_price)} ریال × {item.quantity}",
+        ]
+        if item.order_id:
+            lines += ["🔢 شماره سفارش دیجی‌کالا:", f"{item.order_id}"]
+        lines += [
+            "━━━━━━━━━━━━━━━━━━━━",
+            "💳 مبلغ کل:",
+            f"{_format_rial(total)} ریال",
+            "━━━━━━━━━━━━━━━━━━━━",
+            f"🕐 {when}",
+            "🟢 ثبت موفق در دیدار",
+            "#ارسال_به_انبار_دیجی‌کالا",
+        ]
+        return "\n".join(lines)
+
+    # ------------------------------------------------------------------
     # "Any deal" notification - every Deal registered in Didar, manual
     # or automatic (client requirement, 2026-09; see
     # src/didar/deal_poller.py for how these are discovered/deduped)
