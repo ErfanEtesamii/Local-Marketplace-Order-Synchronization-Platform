@@ -211,12 +211,13 @@ def test_fetch_new_orders_normalizes_real_history_sample():
     assert order.source_order_id == "1885177654"
     assert order.order_number == "1885177654"
     assert order.status == "CONFIRMED"
-    assert order.created_at == datetime(2025, 10, 4, 13, 32, 27, tzinfo=timezone.utc)
+    # naive created_at is Iran local time (UTC+3:30) -> 10:02:27 UTC
+    assert order.created_at == datetime(2025, 10, 4, 10, 2, 27, tzinfo=timezone.utc)
     # Persian names pass through persianize_name() unchanged.
     assert order.customer_full_name == "مهسا رضایی"
     assert order.customer_mobile is None  # "phone": null -> buyer-info visibility not enabled
     assert order.customer_address is None  # "address": [] -> SnappShop itself handles delivery
-    assert order.ship_time == datetime(2025, 10, 4, 13, 0, 0, tzinfo=timezone.utc)  # pickup_time.start
+    assert order.ship_time == datetime(2025, 10, 4, 9, 30, 0, tzinfo=timezone.utc)  # pickup_time.start
 
     assert len(order.items) == 1
     item = order.items[0]
@@ -245,7 +246,7 @@ def test_fetch_order_detail_normalizes_real_detail_sample():
     assert order.customer_full_name == "مهسا رضایی"
     assert order.customer_mobile is None
     assert order.customer_address is None  # no "address" key on this sample at all
-    assert order.ship_time == datetime(2025, 11, 1, 11, 0, 0, tzinfo=timezone.utc)
+    assert order.ship_time == datetime(2025, 11, 1, 7, 30, 0, tzinfo=timezone.utc)
 
     assert len(order.items) == 1
     item = order.items[0]

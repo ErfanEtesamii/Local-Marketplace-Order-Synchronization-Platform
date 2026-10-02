@@ -157,7 +157,7 @@ with the first account since both talk to the identical API.
 """
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 
 import httpx
@@ -479,6 +479,13 @@ class SnappShop2Adapter(MarketplaceAdapter):
         return items
 
 
+# SnappShop sends created_at as a NAIVE wall-clock string (e.g. "2026-10-01 00:52:50")
+# in Iran local time (UTC+3:30, no DST since 2022). Confirmed from production logs:
+# order 551790613 was synced at 00:54 Iran time with created_at "00:52:50".
+# Treating it as UTC made Telegram (which converts UTC -> Iran) show it 3.5h late.
+_SNAPP_NAIVE_TZ = timezone(timedelta(hours=3, minutes=30))
+
+
 def _parse_date(value: str | None) -> datetime:
     if not value:
         return datetime.now(timezone.utc)
@@ -491,6 +498,6 @@ def _parse_date(value: str | None) -> datetime:
         # comparison every poll for as long as the order stays in the
         # fetch window. Assume UTC, same as SnappShop's documented/
         # observed offset-aware timestamps.
-        return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+        return dt if dt.tzinfo else dt.replace(tzinfo=_SNAPP_NAIVE_TZ).astimezone(timezone.utc)
     except ValueError:
         return datetime.now(timezone.utc)
