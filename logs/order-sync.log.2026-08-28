@@ -52,7 +52,7 @@ Traceback (most recent call last):
     ~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
   File "C:\Users\OMEN\Desktop\Local Marketplace Order Synchronization Platform\src\http_utils.py", line 41, in raise_for_status_with_body
     raise httpx.HTTPStatusError(message, request=resp.request, response=resp)
-httpx.HTTPStatusError: 400 Bad Request for url 'https://app.didar.me/api/product/save?apikey=h0xv02a1yxvvzzked09caf1bfu3avdv3': {"Error":"Product Not Exist"}
+httpx.HTTPStatusError: 400 Bad Request for url 'https://app.didar.me/api/product/save?apikey=<redacted>': {"Error":"Product Not Exist"}
 2026-08-25 03:05:29,186 | INFO     | src.didar.contact_client | didar: upserted contact CustomerCode=digikala-370913477 -> Id=7edbb74d-2ba7-4881-a140-55b717278634
 2026-08-25 03:05:29,321 | ERROR    | src.sync_engine | sync_engine: failed to sync digikala order 370913477
 Traceback (most recent call last):
@@ -92,7 +92,7 @@ Traceback (most recent call last):
     ~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
   File "C:\Users\OMEN\Desktop\Local Marketplace Order Synchronization Platform\src\http_utils.py", line 41, in raise_for_status_with_body
     raise httpx.HTTPStatusError(message, request=resp.request, response=resp)
-httpx.HTTPStatusError: 400 Bad Request for url 'https://app.didar.me/api/product/save?apikey=h0xv02a1yxvvzzked09caf1bfu3avdv3': {"Error":"Product Not Exist"}
+httpx.HTTPStatusError: 400 Bad Request for url 'https://app.didar.me/api/product/save?apikey=<redacted>': {"Error":"Product Not Exist"}
 2026-08-25 03:05:30,236 | INFO     | src.didar.contact_client | didar: upserted contact CustomerCode=digikala-370097816 -> Id=6ac754ce-10a9-4844-917d-96daa7d3efc8
 2026-08-25 03:05:30,365 | ERROR    | src.sync_engine | sync_engine: failed to sync digikala order 370097816
 Traceback (most recent call last):
@@ -132,7 +132,7 @@ Traceback (most recent call last):
     ~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
   File "C:\Users\OMEN\Desktop\Local Marketplace Order Synchronization Platform\src\http_utils.py", line 41, in raise_for_status_with_body
     raise httpx.HTTPStatusError(message, request=resp.request, response=resp)
-httpx.HTTPStatusError: 400 Bad Request for url 'https://app.didar.me/api/product/save?apikey=h0xv02a1yxvvzzked09caf1bfu3avdv3': {"Error":"duplicate product code."}
+httpx.HTTPStatusError: 400 Bad Request for url 'https://app.didar.me/api/product/save?apikey=<redacted>': {"Error":"duplicate product code."}
 2026-08-25 03:05:30,725 | INFO     | src.didar.contact_client | didar: upserted contact CustomerCode=digikala-368292139 -> Id=d6e47667-440c-4332-9eb2-43dcd6451ad5
 2026-08-25 03:05:30,832 | ERROR    | src.sync_engine | sync_engine: failed to sync digikala order 368292139
 Traceback (most recent call last):
@@ -172,7 +172,7 @@ Traceback (most recent call last):
     ~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
   File "C:\Users\OMEN\Desktop\Local Marketplace Order Synchronization Platform\src\http_utils.py", line 41, in raise_for_status_with_body
     raise httpx.HTTPStatusError(message, request=resp.request, response=resp)
-httpx.HTTPStatusError: 400 Bad Request for url 'https://app.didar.me/api/product/save?apikey=h0xv02a1yxvvzzked09caf1bfu3avdv3': {"Error":"Product Not Exist"}
+httpx.HTTPStatusError: 400 Bad Request for url 'https://app.didar.me/api/product/save?apikey=<redacted>': {"Error":"Product Not Exist"}
 2026-08-25 03:05:31,199 | INFO     | src.didar.contact_client | didar: upserted contact CustomerCode=digikala-368258930 -> Id=150d3518-5901-4997-9b78-a4a4007dec8a
 2026-08-25 03:05:31,322 | ERROR    | src.sync_engine | sync_engine: failed to sync digikala order 368258930
 Traceback (most recent call last):
@@ -212,7 +212,7 @@ Traceback (most recent call last):
     ~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
   File "C:\Users\OMEN\Desktop\Local Marketplace Order Synchronization Platform\src\http_utils.py", line 41, in raise_for_status_with_body
     raise httpx.HTTPStatusError(message, request=resp.request, response=resp)
-httpx.HTTPStatusError: 400 Bad Request for url 'https://app.didar.me/api/product/save?apikey=h0xv02a1yxvvzzked09caf1bfu3avdv3': {"Error":"Product Not Exist"}
+httpx.HTTPStatusError: 400 Bad Request for url 'https://app.didar.me/api/product/save?apikey=<redacted>': {"Error":"Product Not Exist"}
 2026-08-25 03:05:31,706 | INFO     | src.didar.contact_client | didar: upserted contact CustomerCode=digikala-368219279 -> Id=c5335df9-e155-42f7-ace0-ffd7592f6d59
 2026-08-25 03:05:31,802 | ERROR    | src.sync_engine | sync_engine: failed to sync digikala order 368219279
 Traceback (most recent call last):
@@ -252,7 +252,7 @@ Traceback (most recent call last):
     ~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
   File "C:\Users\OMEN\Desktop\Local Marketplace Order Synchronization Platform\src\http_utils.py", line 41, in raise_for_status_with_body
     raise httpx.HTTPStatusError(message, request=resp.request, response=resp)
-httpx.HTTPStatusError: 400 Bad Request for url 'https://app.didar.me/api/product/save?apikey=h0xv02a1yxvvzzked09caf1bfu3avdv3': {"Error":"Product Not Exist"}
+httpx.HTTPStatusError: 400 Bad Request for url 'https://app.didar.me/api/product/save?apikey=<redacted>': {"Error":"Product Not Exist"}
 2026-08-25 03:05:32,192 | INFO     | src.didar.contact_client | didar: upserted contact CustomerCode=digikala-368102277 -> Id=68bcf285-b576-4f73-a91f-4174ce1fe15e
 2026-08-25 03:05:32,317 | ERROR    | src.sync_engine | sync_engine: failed to sync digikala order 368102277
 Traceback (most recent call last):
@@ -292,7 +292,7 @@ Traceback (most recent call last):
     ~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
   File "C:\Users\OMEN\Desktop\Local Marketplace Order Synchronization Platform\src\http_utils.py", line 41, in raise_for_status_with_body
     raise httpx.HTTPStatusError(message, request=resp.request, response=resp)
-httpx.HTTPStatusError: 400 Bad Request for url 'https://app.didar.me/api/product/save?apikey=h0xv02a1yxvvzzked09caf1bfu3avdv3': {"Error":"Product Not Exist"}
+httpx.HTTPStatusError: 400 Bad Request for url 'https://app.didar.me/api/product/save?apikey=<redacted>': {"Error":"Product Not Exist"}
 2026-08-25 03:05:32,724 | INFO     | src.didar.contact_client | didar: upserted contact CustomerCode=digikala-367302809 -> Id=e0bf4f99-cb58-4699-a702-71a84c946cde
 2026-08-25 03:05:32,843 | ERROR    | src.sync_engine | sync_engine: failed to sync digikala order 367302809
 Traceback (most recent call last):
@@ -332,7 +332,7 @@ Traceback (most recent call last):
     ~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
   File "C:\Users\OMEN\Desktop\Local Marketplace Order Synchronization Platform\src\http_utils.py", line 41, in raise_for_status_with_body
     raise httpx.HTTPStatusError(message, request=resp.request, response=resp)
-httpx.HTTPStatusError: 400 Bad Request for url 'https://app.didar.me/api/product/save?apikey=h0xv02a1yxvvzzked09caf1bfu3avdv3': {"Error":"Product Not Exist"}
+httpx.HTTPStatusError: 400 Bad Request for url 'https://app.didar.me/api/product/save?apikey=<redacted>': {"Error":"Product Not Exist"}
 2026-08-25 03:05:33,250 | INFO     | src.didar.contact_client | didar: upserted contact CustomerCode=digikala-369575920 -> Id=85ed4f75-9d0a-4dc2-8c7e-1cf96e23edf4
 2026-08-25 03:05:33,386 | ERROR    | src.sync_engine | sync_engine: failed to sync digikala order 369575920
 Traceback (most recent call last):
@@ -372,7 +372,7 @@ Traceback (most recent call last):
     ~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
   File "C:\Users\OMEN\Desktop\Local Marketplace Order Synchronization Platform\src\http_utils.py", line 41, in raise_for_status_with_body
     raise httpx.HTTPStatusError(message, request=resp.request, response=resp)
-httpx.HTTPStatusError: 400 Bad Request for url 'https://app.didar.me/api/product/save?apikey=h0xv02a1yxvvzzked09caf1bfu3avdv3': {"Error":"Product Not Exist"}
+httpx.HTTPStatusError: 400 Bad Request for url 'https://app.didar.me/api/product/save?apikey=<redacted>': {"Error":"Product Not Exist"}
 2026-08-25 03:05:33,740 | INFO     | src.didar.contact_client | didar: upserted contact CustomerCode=digikala-367117765 -> Id=4fc2f5f3-20b7-49d1-9539-0bccc768a18e
 2026-08-25 03:05:33,842 | ERROR    | src.sync_engine | sync_engine: failed to sync digikala order 367117765
 Traceback (most recent call last):
@@ -412,7 +412,7 @@ Traceback (most recent call last):
     ~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
   File "C:\Users\OMEN\Desktop\Local Marketplace Order Synchronization Platform\src\http_utils.py", line 41, in raise_for_status_with_body
     raise httpx.HTTPStatusError(message, request=resp.request, response=resp)
-httpx.HTTPStatusError: 400 Bad Request for url 'https://app.didar.me/api/product/save?apikey=h0xv02a1yxvvzzked09caf1bfu3avdv3': {"Error":"Product Not Exist"}
+httpx.HTTPStatusError: 400 Bad Request for url 'https://app.didar.me/api/product/save?apikey=<redacted>': {"Error":"Product Not Exist"}
 2026-08-25 03:05:34,231 | INFO     | src.didar.contact_client | didar: upserted contact CustomerCode=digikala-369186723 -> Id=6ece9eae-4647-44b6-a99b-f077204a707f
 2026-08-25 03:05:34,354 | ERROR    | src.sync_engine | sync_engine: failed to sync digikala order 369186723
 Traceback (most recent call last):
@@ -452,7 +452,7 @@ Traceback (most recent call last):
     ~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
   File "C:\Users\OMEN\Desktop\Local Marketplace Order Synchronization Platform\src\http_utils.py", line 41, in raise_for_status_with_body
     raise httpx.HTTPStatusError(message, request=resp.request, response=resp)
-httpx.HTTPStatusError: 400 Bad Request for url 'https://app.didar.me/api/product/save?apikey=h0xv02a1yxvvzzked09caf1bfu3avdv3': {"Error":"duplicate product code."}
+httpx.HTTPStatusError: 400 Bad Request for url 'https://app.didar.me/api/product/save?apikey=<redacted>': {"Error":"duplicate product code."}
 2026-08-25 03:05:34,730 | INFO     | src.didar.contact_client | didar: upserted contact CustomerCode=digikala-368345447 -> Id=de44de67-caf7-4658-83e4-1c6019000ad6
 2026-08-25 03:05:34,833 | ERROR    | src.sync_engine | sync_engine: failed to sync digikala order 368345447
 Traceback (most recent call last):
@@ -492,7 +492,7 @@ Traceback (most recent call last):
     ~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
   File "C:\Users\OMEN\Desktop\Local Marketplace Order Synchronization Platform\src\http_utils.py", line 41, in raise_for_status_with_body
     raise httpx.HTTPStatusError(message, request=resp.request, response=resp)
-httpx.HTTPStatusError: 400 Bad Request for url 'https://app.didar.me/api/product/save?apikey=h0xv02a1yxvvzzked09caf1bfu3avdv3': {"Error":"Product Not Exist"}
+httpx.HTTPStatusError: 400 Bad Request for url 'https://app.didar.me/api/product/save?apikey=<redacted>': {"Error":"Product Not Exist"}
 2026-08-25 03:05:35,178 | INFO     | src.didar.contact_client | didar: upserted contact CustomerCode=digikala-366934225 -> Id=864931d7-85fc-4a51-86e0-06633d70a213
 2026-08-25 03:05:35,295 | ERROR    | src.sync_engine | sync_engine: failed to sync digikala order 366934225
 Traceback (most recent call last):
@@ -532,7 +532,7 @@ Traceback (most recent call last):
     ~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
   File "C:\Users\OMEN\Desktop\Local Marketplace Order Synchronization Platform\src\http_utils.py", line 41, in raise_for_status_with_body
     raise httpx.HTTPStatusError(message, request=resp.request, response=resp)
-httpx.HTTPStatusError: 400 Bad Request for url 'https://app.didar.me/api/product/save?apikey=h0xv02a1yxvvzzked09caf1bfu3avdv3': {"Error":"Product Not Exist"}
+httpx.HTTPStatusError: 400 Bad Request for url 'https://app.didar.me/api/product/save?apikey=<redacted>': {"Error":"Product Not Exist"}
 2026-08-25 03:05:35,739 | INFO     | src.didar.contact_client | didar: upserted contact CustomerCode=digikala-366816499 -> Id=ad0b5ec4-e5eb-409b-8c59-8dece766f6b2
 2026-08-25 03:05:35,739 | INFO     | src.didar.product_client | didar: no keyword in category_mapping.py matched item title 'رومیزی سنتی طرح یلدا کد ۱۰۰ | چند رنگ | گارانتی اصالت و سلامت فیزیکی کالا' - falling back to the default category
 2026-08-25 03:05:35,852 | ERROR    | src.sync_engine | sync_engine: failed to sync digikala order 366816499
@@ -573,7 +573,7 @@ Traceback (most recent call last):
     ~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
   File "C:\Users\OMEN\Desktop\Local Marketplace Order Synchronization Platform\src\http_utils.py", line 41, in raise_for_status_with_body
     raise httpx.HTTPStatusError(message, request=resp.request, response=resp)
-httpx.HTTPStatusError: 400 Bad Request for url 'https://app.didar.me/api/product/save?apikey=h0xv02a1yxvvzzked09caf1bfu3avdv3': {"Error":"Product Not Exist"}
+httpx.HTTPStatusError: 400 Bad Request for url 'https://app.didar.me/api/product/save?apikey=<redacted>': {"Error":"Product Not Exist"}
 2026-08-25 03:05:36,214 | INFO     | src.didar.contact_client | didar: upserted contact CustomerCode=digikala-368079757 -> Id=e321f344-67fe-4d55-98f0-ad3affa52751
 2026-08-25 03:05:36,337 | ERROR    | src.sync_engine | sync_engine: failed to sync digikala order 368079757
 Traceback (most recent call last):
@@ -613,7 +613,7 @@ Traceback (most recent call last):
     ~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
   File "C:\Users\OMEN\Desktop\Local Marketplace Order Synchronization Platform\src\http_utils.py", line 41, in raise_for_status_with_body
     raise httpx.HTTPStatusError(message, request=resp.request, response=resp)
-httpx.HTTPStatusError: 400 Bad Request for url 'https://app.didar.me/api/product/save?apikey=h0xv02a1yxvvzzked09caf1bfu3avdv3': {"Error":"duplicate product code."}
+httpx.HTTPStatusError: 400 Bad Request for url 'https://app.didar.me/api/product/save?apikey=<redacted>': {"Error":"duplicate product code."}
 2026-08-25 03:05:36,735 | INFO     | src.didar.contact_client | didar: upserted contact CustomerCode=digikala-366574459 -> Id=3ab62732-f5cb-4275-ab0d-b88a0e12c8c0
 2026-08-25 03:05:36,735 | INFO     | src.didar.product_client | didar: no keyword in category_mapping.py matched item title 'رومیزی قلمکار مدل چاپا کد 04 | چند رنگ | گارانتی اصالت و سلامت فیزیکی کالا' - falling back to the default category
 2026-08-25 03:05:36,840 | ERROR    | src.sync_engine | sync_engine: failed to sync digikala order 366574459
@@ -654,7 +654,7 @@ Traceback (most recent call last):
     ~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
   File "C:\Users\OMEN\Desktop\Local Marketplace Order Synchronization Platform\src\http_utils.py", line 41, in raise_for_status_with_body
     raise httpx.HTTPStatusError(message, request=resp.request, response=resp)
-httpx.HTTPStatusError: 400 Bad Request for url 'https://app.didar.me/api/product/save?apikey=h0xv02a1yxvvzzked09caf1bfu3avdv3': {"Error":"Product Not Exist"}
+httpx.HTTPStatusError: 400 Bad Request for url 'https://app.didar.me/api/product/save?apikey=<redacted>': {"Error":"Product Not Exist"}
 2026-08-25 03:05:37,194 | INFO     | src.didar.contact_client | didar: upserted contact CustomerCode=digikala-366500371 -> Id=2813debc-a196-44c9-9fb2-e1da76c60511
 2026-08-25 03:05:37,325 | ERROR    | src.sync_engine | sync_engine: failed to sync digikala order 366500371
 Traceback (most recent call last):
@@ -694,7 +694,7 @@ Traceback (most recent call last):
     ~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
   File "C:\Users\OMEN\Desktop\Local Marketplace Order Synchronization Platform\src\http_utils.py", line 41, in raise_for_status_with_body
     raise httpx.HTTPStatusError(message, request=resp.request, response=resp)
-httpx.HTTPStatusError: 400 Bad Request for url 'https://app.didar.me/api/product/save?apikey=h0xv02a1yxvvzzked09caf1bfu3avdv3': {"Error":"Product Not Exist"}
+httpx.HTTPStatusError: 400 Bad Request for url 'https://app.didar.me/api/product/save?apikey=<redacted>': {"Error":"Product Not Exist"}
 2026-08-25 03:05:37,664 | INFO     | src.didar.contact_client | didar: upserted contact CustomerCode=digikala-366407177 -> Id=f20c9f88-403d-40bd-8044-1f292d9e4bf1
 2026-08-25 03:05:37,790 | ERROR    | src.sync_engine | sync_engine: failed to sync digikala order 366407177
 Traceback (most recent call last):
@@ -734,7 +734,7 @@ Traceback (most recent call last):
     ~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
   File "C:\Users\OMEN\Desktop\Local Marketplace Order Synchronization Platform\src\http_utils.py", line 41, in raise_for_status_with_body
     raise httpx.HTTPStatusError(message, request=resp.request, response=resp)
-httpx.HTTPStatusError: 400 Bad Request for url 'https://app.didar.me/api/product/save?apikey=h0xv02a1yxvvzzked09caf1bfu3avdv3': {"Error":"Product Not Exist"}
+httpx.HTTPStatusError: 400 Bad Request for url 'https://app.didar.me/api/product/save?apikey=<redacted>': {"Error":"Product Not Exist"}
 2026-08-25 03:05:38,148 | INFO     | src.didar.contact_client | didar: upserted contact CustomerCode=digikala-366453996 -> Id=297f26e4-9846-4467-81fa-05281e7147ad
 2026-08-25 03:05:38,256 | ERROR    | src.sync_engine | sync_engine: failed to sync digikala order 366453996
 Traceback (most recent call last):
@@ -774,7 +774,7 @@ Traceback (most recent call last):
     ~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
   File "C:\Users\OMEN\Desktop\Local Marketplace Order Synchronization Platform\src\http_utils.py", line 41, in raise_for_status_with_body
     raise httpx.HTTPStatusError(message, request=resp.request, response=resp)
-httpx.HTTPStatusError: 400 Bad Request for url 'https://app.didar.me/api/product/save?apikey=h0xv02a1yxvvzzked09caf1bfu3avdv3': {"Error":"Product Not Exist"}
+httpx.HTTPStatusError: 400 Bad Request for url 'https://app.didar.me/api/product/save?apikey=<redacted>': {"Error":"Product Not Exist"}
 2026-08-25 03:05:38,620 | INFO     | src.didar.contact_client | didar: upserted contact CustomerCode=digikala-366266033 -> Id=6f975c60-b18a-4a38-8997-b6897dc62065
 2026-08-25 03:05:38,752 | ERROR    | src.sync_engine | sync_engine: failed to sync digikala order 366266033
 Traceback (most recent call last):
@@ -814,7 +814,7 @@ Traceback (most recent call last):
     ~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
   File "C:\Users\OMEN\Desktop\Local Marketplace Order Synchronization Platform\src\http_utils.py", line 41, in raise_for_status_with_body
     raise httpx.HTTPStatusError(message, request=resp.request, response=resp)
-httpx.HTTPStatusError: 400 Bad Request for url 'https://app.didar.me/api/product/save?apikey=h0xv02a1yxvvzzked09caf1bfu3avdv3': {"Error":"Product Not Exist"}
+httpx.HTTPStatusError: 400 Bad Request for url 'https://app.didar.me/api/product/save?apikey=<redacted>': {"Error":"Product Not Exist"}
 2026-08-25 03:05:39,119 | INFO     | src.didar.contact_client | didar: upserted contact CustomerCode=digikala-366110290 -> Id=d5ca9281-b457-4b8c-853a-5b2b7c42cd8f
 2026-08-25 03:05:39,230 | ERROR    | src.sync_engine | sync_engine: failed to sync digikala order 366110290
 Traceback (most recent call last):
@@ -854,7 +854,7 @@ Traceback (most recent call last):
     ~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
   File "C:\Users\OMEN\Desktop\Local Marketplace Order Synchronization Platform\src\http_utils.py", line 41, in raise_for_status_with_body
     raise httpx.HTTPStatusError(message, request=resp.request, response=resp)
-httpx.HTTPStatusError: 400 Bad Request for url 'https://app.didar.me/api/product/save?apikey=h0xv02a1yxvvzzked09caf1bfu3avdv3': {"Error":"Product Not Exist"}
+httpx.HTTPStatusError: 400 Bad Request for url 'https://app.didar.me/api/product/save?apikey=<redacted>': {"Error":"Product Not Exist"}
 2026-08-25 03:05:39,596 | INFO     | src.didar.contact_client | didar: upserted contact CustomerCode=digikala-365995509 -> Id=3bb9d933-ac2c-455b-8d2d-0a0226ba29b8
 2026-08-25 03:05:39,702 | ERROR    | src.sync_engine | sync_engine: failed to sync digikala order 365995509
 Traceback (most recent call last):
@@ -894,7 +894,7 @@ Traceback (most recent call last):
     ~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
   File "C:\Users\OMEN\Desktop\Local Marketplace Order Synchronization Platform\src\http_utils.py", line 41, in raise_for_status_with_body
     raise httpx.HTTPStatusError(message, request=resp.request, response=resp)
-httpx.HTTPStatusError: 400 Bad Request for url 'https://app.didar.me/api/product/save?apikey=h0xv02a1yxvvzzked09caf1bfu3avdv3': {"Error":"Product Not Exist"}
+httpx.HTTPStatusError: 400 Bad Request for url 'https://app.didar.me/api/product/save?apikey=<redacted>': {"Error":"Product Not Exist"}
 2026-08-25 03:05:40,067 | INFO     | src.didar.contact_client | didar: upserted contact CustomerCode=digikala-367476469 -> Id=f92a5e63-7bf4-419c-b3dd-1531ebce3fb2
 2026-08-25 03:05:40,180 | ERROR    | src.sync_engine | sync_engine: failed to sync digikala order 367476469
 Traceback (most recent call last):
@@ -934,7 +934,7 @@ Traceback (most recent call last):
     ~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
   File "C:\Users\OMEN\Desktop\Local Marketplace Order Synchronization Platform\src\http_utils.py", line 41, in raise_for_status_with_body
     raise httpx.HTTPStatusError(message, request=resp.request, response=resp)
-httpx.HTTPStatusError: 400 Bad Request for url 'https://app.didar.me/api/product/save?apikey=h0xv02a1yxvvzzked09caf1bfu3avdv3': {"Error":"Product Not Exist"}
+httpx.HTTPStatusError: 400 Bad Request for url 'https://app.didar.me/api/product/save?apikey=<redacted>': {"Error":"Product Not Exist"}
 2026-08-25 03:05:40,550 | INFO     | src.didar.contact_client | didar: upserted contact CustomerCode=digikala-366141906 -> Id=89413268-f8af-48d2-81e0-77ebede5253e
 2026-08-25 03:05:40,714 | ERROR    | src.sync_engine | sync_engine: failed to sync digikala order 366141906
 Traceback (most recent call last):
@@ -974,7 +974,7 @@ Traceback (most recent call last):
     ~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
   File "C:\Users\OMEN\Desktop\Local Marketplace Order Synchronization Platform\src\http_utils.py", line 41, in raise_for_status_with_body
     raise httpx.HTTPStatusError(message, request=resp.request, response=resp)
-httpx.HTTPStatusError: 400 Bad Request for url 'https://app.didar.me/api/product/save?apikey=h0xv02a1yxvvzzked09caf1bfu3avdv3': {"Error":"Product Not Exist"}
+httpx.HTTPStatusError: 400 Bad Request for url 'https://app.didar.me/api/product/save?apikey=<redacted>': {"Error":"Product Not Exist"}
 2026-08-25 03:05:41,062 | INFO     | src.didar.contact_client | didar: upserted contact CustomerCode=digikala-367459300 -> Id=acd7b1c5-9bff-4130-847b-ac3003f5e3ba
 2026-08-25 03:05:41,163 | ERROR    | src.sync_engine | sync_engine: failed to sync digikala order 367459300
 Traceback (most recent call last):
@@ -1014,7 +1014,7 @@ Traceback (most recent call last):
     ~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
   File "C:\Users\OMEN\Desktop\Local Marketplace Order Synchronization Platform\src\http_utils.py", line 41, in raise_for_status_with_body
     raise httpx.HTTPStatusError(message, request=resp.request, response=resp)
-httpx.HTTPStatusError: 400 Bad Request for url 'https://app.didar.me/api/product/save?apikey=h0xv02a1yxvvzzked09caf1bfu3avdv3': {"Error":"duplicate product code."}
+httpx.HTTPStatusError: 400 Bad Request for url 'https://app.didar.me/api/product/save?apikey=<redacted>': {"Error":"duplicate product code."}
 2026-08-25 03:05:41,533 | INFO     | src.didar.contact_client | didar: upserted contact CustomerCode=digikala-365966285 -> Id=006e2792-fea2-4f1b-b8da-2d21b30e2d6d
 2026-08-25 03:05:41,534 | INFO     | src.didar.product_client | didar: no keyword in category_mapping.py matched item title 'رومیزی قلمکار مدل ممتاز کد 15 | چند رنگ | گارانتی اصالت و سلامت فیزیکی کالا' - falling back to the default category
 2026-08-25 03:05:41,665 | ERROR    | src.sync_engine | sync_engine: failed to sync digikala order 365966285
@@ -1055,7 +1055,7 @@ Traceback (most recent call last):
     ~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
   File "C:\Users\OMEN\Desktop\Local Marketplace Order Synchronization Platform\src\http_utils.py", line 41, in raise_for_status_with_body
     raise httpx.HTTPStatusError(message, request=resp.request, response=resp)
-httpx.HTTPStatusError: 400 Bad Request for url 'https://app.didar.me/api/product/save?apikey=h0xv02a1yxvvzzked09caf1bfu3avdv3': {"Error":"Product Not Exist"}
+httpx.HTTPStatusError: 400 Bad Request for url 'https://app.didar.me/api/product/save?apikey=<redacted>': {"Error":"Product Not Exist"}
 2026-08-25 03:05:42,013 | INFO     | src.didar.contact_client | didar: upserted contact CustomerCode=digikala-365862446 -> Id=f1532b11-8cd7-4388-997c-3711bf10a53e
 2026-08-25 03:05:42,126 | ERROR    | src.sync_engine | sync_engine: failed to sync digikala order 365862446
 Traceback (most recent call last):
@@ -1095,7 +1095,7 @@ Traceback (most recent call last):
     ~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
   File "C:\Users\OMEN\Desktop\Local Marketplace Order Synchronization Platform\src\http_utils.py", line 41, in raise_for_status_with_body
     raise httpx.HTTPStatusError(message, request=resp.request, response=resp)
-httpx.HTTPStatusError: 400 Bad Request for url 'https://app.didar.me/api/product/save?apikey=h0xv02a1yxvvzzked09caf1bfu3avdv3': {"Error":"Product Not Exist"}
+httpx.HTTPStatusError: 400 Bad Request for url 'https://app.didar.me/api/product/save?apikey=<redacted>': {"Error":"Product Not Exist"}
 2026-08-25 03:05:42,496 | INFO     | src.didar.contact_client | didar: upserted contact CustomerCode=digikala-366154291 -> Id=557e935f-3552-44d7-8b83-a18c45ae32cf
 2026-08-25 03:05:42,605 | ERROR    | src.sync_engine | sync_engine: failed to sync digikala order 366154291
 Traceback (most recent call last):
@@ -1135,7 +1135,7 @@ Traceback (most recent call last):
     ~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
   File "C:\Users\OMEN\Desktop\Local Marketplace Order Synchronization Platform\src\http_utils.py", line 41, in raise_for_status_with_body
     raise httpx.HTTPStatusError(message, request=resp.request, response=resp)
-httpx.HTTPStatusError: 400 Bad Request for url 'https://app.didar.me/api/product/save?apikey=h0xv02a1yxvvzzked09caf1bfu3avdv3': {"Error":"Product Not Exist"}
+httpx.HTTPStatusError: 400 Bad Request for url 'https://app.didar.me/api/product/save?apikey=<redacted>': {"Error":"Product Not Exist"}
 2026-08-25 03:05:42,941 | INFO     | src.didar.contact_client | didar: upserted contact CustomerCode=digikala-365725447 -> Id=f22678eb-5831-4b24-a8e2-1a1a647b30fd
 2026-08-25 03:05:43,110 | ERROR    | src.sync_engine | sync_engine: failed to sync digikala order 365725447
 Traceback (most recent call last):
@@ -1175,7 +1175,7 @@ Traceback (most recent call last):
     ~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
   File "C:\Users\OMEN\Desktop\Local Marketplace Order Synchronization Platform\src\http_utils.py", line 41, in raise_for_status_with_body
     raise httpx.HTTPStatusError(message, request=resp.request, response=resp)
-httpx.HTTPStatusError: 400 Bad Request for url 'https://app.didar.me/api/product/save?apikey=h0xv02a1yxvvzzked09caf1bfu3avdv3': {"Error":"Product Not Exist"}
+httpx.HTTPStatusError: 400 Bad Request for url 'https://app.didar.me/api/product/save?apikey=<redacted>': {"Error":"Product Not Exist"}
 2026-08-25 03:05:43,460 | INFO     | src.didar.contact_client | didar: upserted contact CustomerCode=digikala-365607838 -> Id=8ab20afd-888a-421f-81b9-d021bcdf22bf
 2026-08-25 03:05:43,568 | ERROR    | src.sync_engine | sync_engine: failed to sync digikala order 365607838
 Traceback (most recent call last):
@@ -1215,7 +1215,7 @@ Traceback (most recent call last):
     ~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
   File "C:\Users\OMEN\Desktop\Local Marketplace Order Synchronization Platform\src\http_utils.py", line 41, in raise_for_status_with_body
     raise httpx.HTTPStatusError(message, request=resp.request, response=resp)
-httpx.HTTPStatusError: 400 Bad Request for url 'https://app.didar.me/api/product/save?apikey=h0xv02a1yxvvzzked09caf1bfu3avdv3': {"Error":"Product Not Exist"}
+httpx.HTTPStatusError: 400 Bad Request for url 'https://app.didar.me/api/product/save?apikey=<redacted>': {"Error":"Product Not Exist"}
 2026-08-25 03:05:43,952 | INFO     | src.didar.contact_client | didar: upserted contact CustomerCode=digikala-365459849 -> Id=7286965f-01bd-4bd7-bd58-9b8517d643f6
 2026-08-25 03:05:44,048 | ERROR    | src.sync_engine | sync_engine: failed to sync digikala order 365459849
 Traceback (most recent call last):
@@ -1255,7 +1255,7 @@ Traceback (most recent call last):
     ~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
   File "C:\Users\OMEN\Desktop\Local Marketplace Order Synchronization Platform\src\http_utils.py", line 41, in raise_for_status_with_body
     raise httpx.HTTPStatusError(message, request=resp.request, response=resp)
-httpx.HTTPStatusError: 400 Bad Request for url 'https://app.didar.me/api/product/save?apikey=h0xv02a1yxvvzzked09caf1bfu3avdv3': {"Error":"Product Not Exist"}
+httpx.HTTPStatusError: 400 Bad Request for url 'https://app.didar.me/api/product/save?apikey=<redacted>': {"Error":"Product Not Exist"}
 2026-08-25 03:05:44,454 | INFO     | src.didar.contact_client | didar: upserted contact CustomerCode=digikala-365463743 -> Id=5f14f4b6-5ee9-4042-abec-fd9352f0f7ff
 2026-08-25 03:05:44,573 | ERROR    | src.sync_engine | sync_engine: failed to sync digikala order 365463743
 Traceback (most recent call last):
@@ -1295,7 +1295,7 @@ Traceback (most recent call last):
     ~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
   File "C:\Users\OMEN\Desktop\Local Marketplace Order Synchronization Platform\src\http_utils.py", line 41, in raise_for_status_with_body
     raise httpx.HTTPStatusError(message, request=resp.request, response=resp)
-httpx.HTTPStatusError: 400 Bad Request for url 'https://app.didar.me/api/product/save?apikey=h0xv02a1yxvvzzked09caf1bfu3avdv3': {"Error":"Product Not Exist"}
+httpx.HTTPStatusError: 400 Bad Request for url 'https://app.didar.me/api/product/save?apikey=<redacted>': {"Error":"Product Not Exist"}
 2026-08-25 03:05:44,996 | INFO     | src.didar.contact_client | didar: upserted contact CustomerCode=digikala-365370481 -> Id=dbd72b82-937b-467d-bc3d-f69758fe0d98
 2026-08-25 03:05:44,997 | INFO     | src.didar.product_client | didar: no keyword in category_mapping.py matched item title 'رومیزی قلمکار مدل ساده کد 50 | چند رنگ | گارانتی اصالت و سلامت فیزیکی کالا' - falling back to the default category
 2026-08-25 03:05:45,114 | ERROR    | src.sync_engine | sync_engine: failed to sync digikala order 365370481
@@ -1336,7 +1336,7 @@ Traceback (most recent call last):
     ~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
   File "C:\Users\OMEN\Desktop\Local Marketplace Order Synchronization Platform\src\http_utils.py", line 41, in raise_for_status_with_body
     raise httpx.HTTPStatusError(message, request=resp.request, response=resp)
-httpx.HTTPStatusError: 400 Bad Request for url 'https://app.didar.me/api/product/save?apikey=h0xv02a1yxvvzzked09caf1bfu3avdv3': {"Error":"Product Not Exist"}
+httpx.HTTPStatusError: 400 Bad Request for url 'https://app.didar.me/api/product/save?apikey=<redacted>': {"Error":"Product Not Exist"}
 2026-08-25 03:05:45,461 | INFO     | src.didar.contact_client | didar: upserted contact CustomerCode=digikala-366284426 -> Id=6d59d41f-1fd2-4373-b657-3d7d8994efe1
 2026-08-25 03:05:45,567 | ERROR    | src.sync_engine | sync_engine: failed to sync digikala order 366284426
 Traceback (most recent call last):
@@ -1376,7 +1376,7 @@ Traceback (most recent call last):
     ~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
   File "C:\Users\OMEN\Desktop\Local Marketplace Order Synchronization Platform\src\http_utils.py", line 41, in raise_for_status_with_body
     raise httpx.HTTPStatusError(message, request=resp.request, response=resp)
-httpx.HTTPStatusError: 400 Bad Request for url 'https://app.didar.me/api/product/save?apikey=h0xv02a1yxvvzzked09caf1bfu3avdv3': {"Error":"Product Not Exist"}
+httpx.HTTPStatusError: 400 Bad Request for url 'https://app.didar.me/api/product/save?apikey=<redacted>': {"Error":"Product Not Exist"}
 2026-08-25 03:05:45,923 | INFO     | src.didar.contact_client | didar: upserted contact CustomerCode=digikala-365314163 -> Id=87403912-50d2-4a67-9e80-b932e9ec9623
 2026-08-25 03:05:46,022 | ERROR    | src.sync_engine | sync_engine: failed to sync digikala order 365314163
 Traceback (most recent call last):
@@ -1416,7 +1416,7 @@ Traceback (most recent call last):
     ~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
   File "C:\Users\OMEN\Desktop\Local Marketplace Order Synchronization Platform\src\http_utils.py", line 41, in raise_for_status_with_body
     raise httpx.HTTPStatusError(message, request=resp.request, response=resp)
-httpx.HTTPStatusError: 400 Bad Request for url 'https://app.didar.me/api/product/save?apikey=h0xv02a1yxvvzzked09caf1bfu3avdv3': {"Error":"Product Not Exist"}
+httpx.HTTPStatusError: 400 Bad Request for url 'https://app.didar.me/api/product/save?apikey=<redacted>': {"Error":"Product Not Exist"}
 2026-08-25 03:05:46,406 | INFO     | src.didar.contact_client | didar: upserted contact CustomerCode=digikala-365645986 -> Id=88da081e-a1d1-4ca1-a6bd-128aa02b8bb1
 2026-08-25 03:05:46,500 | ERROR    | src.sync_engine | sync_engine: failed to sync digikala order 365645986
 Traceback (most recent call last):
@@ -1456,7 +1456,7 @@ Traceback (most recent call last):
     ~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
   File "C:\Users\OMEN\Desktop\Local Marketplace Order Synchronization Platform\src\http_utils.py", line 41, in raise_for_status_with_body
     raise httpx.HTTPStatusError(message, request=resp.request, response=resp)
-httpx.HTTPStatusError: 400 Bad Request for url 'https://app.didar.me/api/product/save?apikey=h0xv02a1yxvvzzked09caf1bfu3avdv3': {"Error":"duplicate product code."}
+httpx.HTTPStatusError: 400 Bad Request for url 'https://app.didar.me/api/product/save?apikey=<redacted>': {"Error":"duplicate product code."}
 2026-08-25 03:05:46,861 | INFO     | src.didar.contact_client | didar: upserted contact CustomerCode=digikala-365186457 -> Id=a6f30e99-4191-433a-9eeb-6e3046270406
 2026-08-25 03:05:46,982 | ERROR    | src.sync_engine | sync_engine: failed to sync digikala order 365186457
 Traceback (most recent call last):
@@ -1496,7 +1496,7 @@ Traceback (most recent call last):
     ~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
   File "C:\Users\OMEN\Desktop\Local Marketplace Order Synchronization Platform\src\http_utils.py", line 41, in raise_for_status_with_body
     raise httpx.HTTPStatusError(message, request=resp.request, response=resp)
-httpx.HTTPStatusError: 400 Bad Request for url 'https://app.didar.me/api/product/save?apikey=h0xv02a1yxvvzzked09caf1bfu3avdv3': {"Error":"Product Not Exist"}
+httpx.HTTPStatusError: 400 Bad Request for url 'https://app.didar.me/api/product/save?apikey=<redacted>': {"Error":"Product Not Exist"}
 2026-08-25 03:05:47,571 | INFO     | src.didar.contact_client | didar: upserted contact CustomerCode=digikala-365156678 -> Id=bcb70e2f-d50c-40bc-a421-17641f478d5f
 2026-08-25 03:05:47,683 | ERROR    | src.sync_engine | sync_engine: failed to sync digikala order 365156678
 Traceback (most recent call last):
@@ -1536,7 +1536,7 @@ Traceback (most recent call last):
     ~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
   File "C:\Users\OMEN\Desktop\Local Marketplace Order Synchronization Platform\src\http_utils.py", line 41, in raise_for_status_with_body
     raise httpx.HTTPStatusError(message, request=resp.request, response=resp)
-httpx.HTTPStatusError: 400 Bad Request for url 'https://app.didar.me/api/product/save?apikey=h0xv02a1yxvvzzked09caf1bfu3avdv3': {"Error":"Product Not Exist"}
+httpx.HTTPStatusError: 400 Bad Request for url 'https://app.didar.me/api/product/save?apikey=<redacted>': {"Error":"Product Not Exist"}
 2026-08-25 03:05:48,131 | INFO     | src.didar.contact_client | didar: upserted contact CustomerCode=digikala-365099356 -> Id=1f04fd8c-9641-4ce2-ba30-a5fa56b3030d
 2026-08-25 03:05:48,258 | ERROR    | src.sync_engine | sync_engine: failed to sync digikala order 365099356
 Traceback (most recent call last):
@@ -1576,7 +1576,7 @@ Traceback (most recent call last):
     ~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
   File "C:\Users\OMEN\Desktop\Local Marketplace Order Synchronization Platform\src\http_utils.py", line 41, in raise_for_status_with_body
     raise httpx.HTTPStatusError(message, request=resp.request, response=resp)
-httpx.HTTPStatusError: 400 Bad Request for url 'https://app.didar.me/api/product/save?apikey=h0xv02a1yxvvzzked09caf1bfu3avdv3': {"Error":"Product Not Exist"}
+httpx.HTTPStatusError: 400 Bad Request for url 'https://app.didar.me/api/product/save?apikey=<redacted>': {"Error":"Product Not Exist"}
 2026-08-25 03:05:48,631 | INFO     | src.didar.contact_client | didar: upserted contact CustomerCode=digikala-364956333 -> Id=e683cc14-b579-4eab-95a2-78cf70f62287
 2026-08-25 03:05:48,632 | INFO     | src.didar.product_client | didar: no keyword in category_mapping.py matched item title 'رومیزی قلمکار مدل چاپا کد 04 | چند رنگ | گارانتی اصالت و سلامت فیزیکی کالا' - falling back to the default category
 2026-08-25 03:05:48,757 | ERROR    | src.sync_engine | sync_engine: failed to sync digikala order 364956333
@@ -1617,7 +1617,7 @@ Traceback (most recent call last):
     ~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
   File "C:\Users\OMEN\Desktop\Local Marketplace Order Synchronization Platform\src\http_utils.py", line 41, in raise_for_status_with_body
     raise httpx.HTTPStatusError(message, request=resp.request, response=resp)
-httpx.HTTPStatusError: 400 Bad Request for url 'https://app.didar.me/api/product/save?apikey=h0xv02a1yxvvzzked09caf1bfu3avdv3': {"Error":"Product Not Exist"}
+httpx.HTTPStatusError: 400 Bad Request for url 'https://app.didar.me/api/product/save?apikey=<redacted>': {"Error":"Product Not Exist"}
 2026-08-25 03:05:49,255 | INFO     | src.didar.contact_client | didar: upserted contact CustomerCode=digikala-365017828 -> Id=62543bf7-71bb-4138-819a-1751a6c0f862
 2026-08-25 03:05:49,255 | INFO     | src.didar.product_client | didar: no keyword in category_mapping.py matched item title 'رومیزی قلمکار مدل ساده کد 50 | چند رنگ | گارانتی اصالت و سلامت فیزیکی کالا' - falling back to the default category
 2026-08-25 03:05:49,356 | ERROR    | src.sync_engine | sync_engine: failed to sync digikala order 365017828
@@ -1658,7 +1658,7 @@ Traceback (most recent call last):
     ~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
   File "C:\Users\OMEN\Desktop\Local Marketplace Order Synchronization Platform\src\http_utils.py", line 41, in raise_for_status_with_body
     raise httpx.HTTPStatusError(message, request=resp.request, response=resp)
-httpx.HTTPStatusError: 400 Bad Request for url 'https://app.didar.me/api/product/save?apikey=h0xv02a1yxvvzzked09caf1bfu3avdv3': {"Error":"Product Not Exist"}
+httpx.HTTPStatusError: 400 Bad Request for url 'https://app.didar.me/api/product/save?apikey=<redacted>': {"Error":"Product Not Exist"}
 2026-08-25 03:05:49,718 | INFO     | src.didar.contact_client | didar: upserted contact CustomerCode=digikala-365560278 -> Id=47087686-f8ad-4280-bef9-24f318ec1854
 2026-08-25 03:05:49,836 | ERROR    | src.sync_engine | sync_engine: failed to sync digikala order 365560278
 Traceback (most recent call last):
@@ -1698,7 +1698,7 @@ Traceback (most recent call last):
     ~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
   File "C:\Users\OMEN\Desktop\Local Marketplace Order Synchronization Platform\src\http_utils.py", line 41, in raise_for_status_with_body
     raise httpx.HTTPStatusError(message, request=resp.request, response=resp)
-httpx.HTTPStatusError: 400 Bad Request for url 'https://app.didar.me/api/product/save?apikey=h0xv02a1yxvvzzked09caf1bfu3avdv3': {"Error":"Product Not Exist"}
+httpx.HTTPStatusError: 400 Bad Request for url 'https://app.didar.me/api/product/save?apikey=<redacted>': {"Error":"Product Not Exist"}
 2026-08-25 03:05:50,218 | INFO     | src.didar.contact_client | didar: upserted contact CustomerCode=digikala-364538924 -> Id=77d0d004-0d06-4561-aa3c-fea9f7c2ea7a
 2026-08-25 03:05:50,375 | ERROR    | src.sync_engine | sync_engine: failed to sync digikala order 364538924
 Traceback (most recent call last):
@@ -1738,7 +1738,7 @@ Traceback (most recent call last):
     ~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
   File "C:\Users\OMEN\Desktop\Local Marketplace Order Synchronization Platform\src\http_utils.py", line 41, in raise_for_status_with_body
     raise httpx.HTTPStatusError(message, request=resp.request, response=resp)
-httpx.HTTPStatusError: 400 Bad Request for url 'https://app.didar.me/api/product/save?apikey=h0xv02a1yxvvzzked09caf1bfu3avdv3': {"Error":"duplicate product code."}
+httpx.HTTPStatusError: 400 Bad Request for url 'https://app.didar.me/api/product/save?apikey=<redacted>': {"Error":"duplicate product code."}
 2026-08-25 03:05:50,804 | INFO     | src.didar.contact_client | didar: upserted contact CustomerCode=digikala-364538596 -> Id=d2753ac6-8b47-4681-a11b-29335a18567e
 2026-08-25 03:05:50,934 | ERROR    | src.sync_engine | sync_engine: failed to sync digikala order 364538596
 Traceback (most recent call last):
@@ -1778,7 +1778,7 @@ Traceback (most recent call last):
     ~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
   File "C:\Users\OMEN\Desktop\Local Marketplace Order Synchronization Platform\src\http_utils.py", line 41, in raise_for_status_with_body
     raise httpx.HTTPStatusError(message, request=resp.request, response=resp)
-httpx.HTTPStatusError: 400 Bad Request for url 'https://app.didar.me/api/product/save?apikey=h0xv02a1yxvvzzked09caf1bfu3avdv3': {"Error":"Product Not Exist"}
+httpx.HTTPStatusError: 400 Bad Request for url 'https://app.didar.me/api/product/save?apikey=<redacted>': {"Error":"Product Not Exist"}
 2026-08-25 03:05:51,291 | INFO     | src.didar.contact_client | didar: upserted contact CustomerCode=digikala-364474273 -> Id=2a063dd5-b5ac-4f9f-a4b8-b7e4c8deedcf
 2026-08-25 03:05:51,291 | INFO     | src.didar.product_client | didar: no keyword in category_mapping.py matched item title 'جعبه مضراب سنتور فراز هنر کد 01 | چند رنگ | گارانتی اصالت و سلامت فیزیکی کالا' - falling back to the default category
 2026-08-25 03:05:51,412 | ERROR    | src.sync_engine | sync_engine: failed to sync digikala order 364474273
@@ -1819,7 +1819,7 @@ Traceback (most recent call last):
     ~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
   File "C:\Users\OMEN\Desktop\Local Marketplace Order Synchronization Platform\src\http_utils.py", line 41, in raise_for_status_with_body
     raise httpx.HTTPStatusError(message, request=resp.request, response=resp)
-httpx.HTTPStatusError: 400 Bad Request for url 'https://app.didar.me/api/product/save?apikey=h0xv02a1yxvvzzked09caf1bfu3avdv3': {"Error":"Product Not Exist"}
+httpx.HTTPStatusError: 400 Bad Request for url 'https://app.didar.me/api/product/save?apikey=<redacted>': {"Error":"Product Not Exist"}
 2026-08-25 03:05:51,802 | INFO     | src.didar.contact_client | didar: upserted contact CustomerCode=digikala-364397024 -> Id=b11b146b-95f3-4406-86cd-3a07208020f2
 2026-08-25 03:05:51,922 | ERROR    | src.sync_engine | sync_engine: failed to sync digikala order 364397024
 Traceback (most recent call last):
@@ -1859,7 +1859,7 @@ Traceback (most recent call last):
     ~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
   File "C:\Users\OMEN\Desktop\Local Marketplace Order Synchronization Platform\src\http_utils.py", line 41, in raise_for_status_with_body
     raise httpx.HTTPStatusError(message, request=resp.request, response=resp)
-httpx.HTTPStatusError: 400 Bad Request for url 'https://app.didar.me/api/product/save?apikey=h0xv02a1yxvvzzked09caf1bfu3avdv3': {"Error":"Product Not Exist"}
+httpx.HTTPStatusError: 400 Bad Request for url 'https://app.didar.me/api/product/save?apikey=<redacted>': {"Error":"Product Not Exist"}
 2026-08-25 03:05:52,290 | INFO     | src.didar.contact_client | didar: upserted contact CustomerCode=digikala-364322464 -> Id=b8cfeabc-5fcd-4b28-8099-dd289ebadf8a
 2026-08-25 03:05:52,397 | ERROR    | src.sync_engine | sync_engine: failed to sync digikala order 364322464
 Traceback (most recent call last):
@@ -1899,7 +1899,7 @@ Traceback (most recent call last):
     ~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
   File "C:\Users\OMEN\Desktop\Local Marketplace Order Synchronization Platform\src\http_utils.py", line 41, in raise_for_status_with_body
     raise httpx.HTTPStatusError(message, request=resp.request, response=resp)
-httpx.HTTPStatusError: 400 Bad Request for url 'https://app.didar.me/api/product/save?apikey=h0xv02a1yxvvzzked09caf1bfu3avdv3': {"Error":"Product Not Exist"}
+httpx.HTTPStatusError: 400 Bad Request for url 'https://app.didar.me/api/product/save?apikey=<redacted>': {"Error":"Product Not Exist"}
 2026-08-25 03:05:52,784 | INFO     | src.didar.contact_client | didar: upserted contact CustomerCode=digikala-365356276 -> Id=8fed48f0-6d6d-4c44-ab49-6b2980a1ef84
 2026-08-25 03:05:52,884 | ERROR    | src.sync_engine | sync_engine: failed to sync digikala order 365356276
 Traceback (most recent call last):
@@ -1939,7 +1939,7 @@ Traceback (most recent call last):
     ~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
   File "C:\Users\OMEN\Desktop\Local Marketplace Order Synchronization Platform\src\http_utils.py", line 41, in raise_for_status_with_body
     raise httpx.HTTPStatusError(message, request=resp.request, response=resp)
-httpx.HTTPStatusError: 400 Bad Request for url 'https://app.didar.me/api/product/save?apikey=h0xv02a1yxvvzzked09caf1bfu3avdv3': {"Error":"Product Not Exist"}
+httpx.HTTPStatusError: 400 Bad Request for url 'https://app.didar.me/api/product/save?apikey=<redacted>': {"Error":"Product Not Exist"}
 2026-08-25 03:05:53,283 | INFO     | src.didar.contact_client | didar: upserted contact CustomerCode=digikala-364276660 -> Id=7a03c8c5-c39d-4cde-a731-6054c40d5d4e
 2026-08-25 03:05:53,391 | ERROR    | src.sync_engine | sync_engine: failed to sync digikala order 364276660
 Traceback (most recent call last):
@@ -1979,7 +1979,7 @@ Traceback (most recent call last):
     ~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
   File "C:\Users\OMEN\Desktop\Local Marketplace Order Synchronization Platform\src\http_utils.py", line 41, in raise_for_status_with_body
     raise httpx.HTTPStatusError(message, request=resp.request, response=resp)
-httpx.HTTPStatusError: 400 Bad Request for url 'https://app.didar.me/api/product/save?apikey=h0xv02a1yxvvzzked09caf1bfu3avdv3': {"Error":"Product Not Exist"}
+httpx.HTTPStatusError: 400 Bad Request for url 'https://app.didar.me/api/product/save?apikey=<redacted>': {"Error":"Product Not Exist"}
 2026-08-25 03:05:53,758 | INFO     | src.didar.contact_client | didar: upserted contact CustomerCode=digikala-364275207 -> Id=ff65abbb-5763-4e2f-b6c4-f896c0813aa3
 2026-08-25 03:05:53,864 | ERROR    | src.sync_engine | sync_engine: failed to sync digikala order 364275207
 Traceback (most recent call last):
@@ -2019,7 +2019,7 @@ Traceback (most recent call last):
     ~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
   File "C:\Users\OMEN\Desktop\Local Marketplace Order Synchronization Platform\src\http_utils.py", line 41, in raise_for_status_with_body
     raise httpx.HTTPStatusError(message, request=resp.request, response=resp)
-httpx.HTTPStatusError: 400 Bad Request for url 'https://app.didar.me/api/product/save?apikey=h0xv02a1yxvvzzked09caf1bfu3avdv3': {"Error":"Product Not Exist"}
+httpx.HTTPStatusError: 400 Bad Request for url 'https://app.didar.me/api/product/save?apikey=<redacted>': {"Error":"Product Not Exist"}
 2026-08-25 03:05:54,232 | INFO     | src.didar.contact_client | didar: upserted contact CustomerCode=digikala-364255738 -> Id=422e0f26-002b-4817-a238-16add1a6d946
 2026-08-25 03:05:54,232 | INFO     | src.didar.product_client | didar: no keyword in category_mapping.py matched item title 'رومیزی ترمه مدل چاپا پلاس کد 05 | چند رنگ | گارانتی اصالت و سلامت فیزیکی کالا' - falling back to the default category
 2026-08-25 03:05:54,332 | ERROR    | src.sync_engine | sync_engine: failed to sync digikala order 364255738
@@ -2060,7 +2060,7 @@ Traceback (most recent call last):
     ~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
   File "C:\Users\OMEN\Desktop\Local Marketplace Order Synchronization Platform\src\http_utils.py", line 41, in raise_for_status_with_body
     raise httpx.HTTPStatusError(message, request=resp.request, response=resp)
-httpx.HTTPStatusError: 400 Bad Request for url 'https://app.didar.me/api/product/save?apikey=h0xv02a1yxvvzzked09caf1bfu3avdv3': {"Error":"Product Not Exist"}
+httpx.HTTPStatusError: 400 Bad Request for url 'https://app.didar.me/api/product/save?apikey=<redacted>': {"Error":"Product Not Exist"}
 2026-08-25 03:05:54,710 | INFO     | src.didar.contact_client | didar: upserted contact CustomerCode=digikala-365858849 -> Id=252f246c-e0b8-43d4-a416-9bcf0dae624b
 2026-08-25 03:05:54,816 | ERROR    | src.sync_engine | sync_engine: failed to sync digikala order 365858849
 Traceback (most recent call last):
@@ -2100,7 +2100,7 @@ Traceback (most recent call last):
     ~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
   File "C:\Users\OMEN\Desktop\Local Marketplace Order Synchronization Platform\src\http_utils.py", line 41, in raise_for_status_with_body
     raise httpx.HTTPStatusError(message, request=resp.request, response=resp)
-httpx.HTTPStatusError: 400 Bad Request for url 'https://app.didar.me/api/product/save?apikey=h0xv02a1yxvvzzked09caf1bfu3avdv3': {"Error":"duplicate product code."}
+httpx.HTTPStatusError: 400 Bad Request for url 'https://app.didar.me/api/product/save?apikey=<redacted>': {"Error":"duplicate product code."}
 2026-08-25 03:05:55,170 | INFO     | src.didar.contact_client | didar: upserted contact CustomerCode=digikala-365666236 -> Id=5a0df7cf-7aa7-41e4-955f-8cc7bfd61b66
 2026-08-25 03:05:55,272 | ERROR    | src.sync_engine | sync_engine: failed to sync digikala order 365666236
 Traceback (most recent call last):
@@ -2140,7 +2140,7 @@ Traceback (most recent call last):
     ~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
   File "C:\Users\OMEN\Desktop\Local Marketplace Order Synchronization Platform\src\http_utils.py", line 41, in raise_for_status_with_body
     raise httpx.HTTPStatusError(message, request=resp.request, response=resp)
-httpx.HTTPStatusError: 400 Bad Request for url 'https://app.didar.me/api/product/save?apikey=h0xv02a1yxvvzzked09caf1bfu3avdv3': {"Error":"Product Not Exist"}
+httpx.HTTPStatusError: 400 Bad Request for url 'https://app.didar.me/api/product/save?apikey=<redacted>': {"Error":"Product Not Exist"}
 2026-08-25 03:05:55,647 | INFO     | src.didar.contact_client | didar: upserted contact CustomerCode=digikala-365664928 -> Id=07594d7f-3258-4b29-b15e-82514e0b430c
 2026-08-25 03:05:55,739 | ERROR    | src.sync_engine | sync_engine: failed to sync digikala order 365664928
 Traceback (most recent call last):
@@ -2180,7 +2180,7 @@ Traceback (most recent call last):
     ~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
   File "C:\Users\OMEN\Desktop\Local Marketplace Order Synchronization Platform\src\http_utils.py", line 41, in raise_for_status_with_body
     raise httpx.HTTPStatusError(message, request=resp.request, response=resp)
-httpx.HTTPStatusError: 400 Bad Request for url 'https://app.didar.me/api/product/save?apikey=h0xv02a1yxvvzzked09caf1bfu3avdv3': {"Error":"Product Not Exist"}
+httpx.HTTPStatusError: 400 Bad Request for url 'https://app.didar.me/api/product/save?apikey=<redacted>': {"Error":"Product Not Exist"}
 2026-08-25 03:05:56,085 | INFO     | src.didar.contact_client | didar: upserted contact CustomerCode=digikala-365113494 -> Id=5b537ba0-90d3-44ad-ac01-cee36b7c59f7
 2026-08-25 03:05:56,191 | ERROR    | src.sync_engine | sync_engine: failed to sync digikala order 365113494
 Traceback (most recent call last):
@@ -2220,7 +2220,7 @@ Traceback (most recent call last):
     ~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
   File "C:\Users\OMEN\Desktop\Local Marketplace Order Synchronization Platform\src\http_utils.py", line 41, in raise_for_status_with_body
     raise httpx.HTTPStatusError(message, request=resp.request, response=resp)
-httpx.HTTPStatusError: 400 Bad Request for url 'https://app.didar.me/api/product/save?apikey=h0xv02a1yxvvzzked09caf1bfu3avdv3': {"Error":"duplicate product code."}
+httpx.HTTPStatusError: 400 Bad Request for url 'https://app.didar.me/api/product/save?apikey=<redacted>': {"Error":"duplicate product code."}
 2026-08-25 03:05:56,568 | INFO     | src.didar.contact_client | didar: upserted contact CustomerCode=digikala-363788852 -> Id=328173aa-383b-470a-9dc5-fbd9f7447746
 2026-08-25 03:05:56,686 | ERROR    | src.sync_engine | sync_engine: failed to sync digikala order 363788852
 Traceback (most recent call last):
@@ -2260,7 +2260,7 @@ Traceback (most recent call last):
     ~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
   File "C:\Users\OMEN\Desktop\Local Marketplace Order Synchronization Platform\src\http_utils.py", line 41, in raise_for_status_with_body
     raise httpx.HTTPStatusError(message, request=resp.request, response=resp)
-httpx.HTTPStatusError: 400 Bad Request for url 'https://app.didar.me/api/product/save?apikey=h0xv02a1yxvvzzked09caf1bfu3avdv3': {"Error":"Product Not Exist"}
+httpx.HTTPStatusError: 400 Bad Request for url 'https://app.didar.me/api/product/save?apikey=<redacted>': {"Error":"Product Not Exist"}
 2026-08-25 03:05:57,018 | INFO     | src.didar.contact_client | didar: upserted contact CustomerCode=digikala-363761684 -> Id=68c3b8a3-e991-4fde-bc2c-ea4a77a46ced
 2026-08-25 03:05:57,115 | ERROR    | src.sync_engine | sync_engine: failed to sync digikala order 363761684
 Traceback (most recent call last):
@@ -2300,7 +2300,7 @@ Traceback (most recent call last):
     ~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
   File "C:\Users\OMEN\Desktop\Local Marketplace Order Synchronization Platform\src\http_utils.py", line 41, in raise_for_status_with_body
     raise httpx.HTTPStatusError(message, request=resp.request, response=resp)
-httpx.HTTPStatusError: 400 Bad Request for url 'https://app.didar.me/api/product/save?apikey=h0xv02a1yxvvzzked09caf1bfu3avdv3': {"Error":"Product Not Exist"}
+httpx.HTTPStatusError: 400 Bad Request for url 'https://app.didar.me/api/product/save?apikey=<redacted>': {"Error":"Product Not Exist"}
 2026-08-25 03:15:08,280 | INFO     | src.marketplaces.basalam | basalam: fetched 1 new orders since 2026-08-01T00:00:00+00:00
 2026-08-25 03:15:09,010 | INFO     | src.marketplaces.basalam | basalam: fetched 0 new orders since 2026-08-01T00:00:00+00:00
 2026-08-25 03:15:09,378 | INFO     | src.marketplaces.basalam | basalam: fetched 0 new orders since 2026-08-01T00:00:00+00:00
@@ -2522,7 +2522,7 @@ Traceback (most recent call last):
     ~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
   File "C:\Users\OMEN\Desktop\Local Marketplace Order Synchronization Platform\src\http_utils.py", line 41, in raise_for_status_with_body
     raise httpx.HTTPStatusError(message, request=resp.request, response=resp)
-httpx.HTTPStatusError: 400 Bad Request for url 'https://app.didar.me/api/product/save?apikey=h0xv02a1yxvvzzked09caf1bfu3avdv3': {"Error":"Product Not Exist"}
+httpx.HTTPStatusError: 400 Bad Request for url 'https://app.didar.me/api/product/save?apikey=<redacted>': {"Error":"Product Not Exist"}
 2026-08-25 03:18:24,361 | INFO     | src.didar.contact_client | didar: upserted contact CustomerCode=digikala-370913477 -> Id=7edbb74d-2ba7-4881-a140-55b717278634
 2026-08-25 03:18:24,652 | ERROR    | src.sync_engine | sync_engine: failed to sync digikala order 370913477
 Traceback (most recent call last):
@@ -2562,7 +2562,7 @@ Traceback (most recent call last):
     ~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
   File "C:\Users\OMEN\Desktop\Local Marketplace Order Synchronization Platform\src\http_utils.py", line 41, in raise_for_status_with_body
     raise httpx.HTTPStatusError(message, request=resp.request, response=resp)
-httpx.HTTPStatusError: 400 Bad Request for url 'https://app.didar.me/api/product/save?apikey=h0xv02a1yxvvzzked09caf1bfu3avdv3': {"Error":"Product Not Exist"}
+httpx.HTTPStatusError: 400 Bad Request for url 'https://app.didar.me/api/product/save?apikey=<redacted>': {"Error":"Product Not Exist"}
 2026-08-25 03:18:26,772 | INFO     | src.didar.contact_client | didar: upserted contact CustomerCode=digikala-370097816 -> Id=6ac754ce-10a9-4844-917d-96daa7d3efc8
 2026-08-25 03:18:29,245 | INFO     | src.didar.product_client | didar: found existing product Code=11 -> Id=2862acdc-355b-46bf-9fca-85b87d5c24aa (skipping create)
 2026-08-25 03:18:31,927 | INFO     | src.didar.deal_client | didar: created deal for digikala order 370097816 -> Id=d703ebea-355f-4fe9-83c2-b82c2464a5ff
@@ -2606,7 +2606,7 @@ Traceback (most recent call last):
     ~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
   File "C:\Users\OMEN\Desktop\Local Marketplace Order Synchronization Platform\src\http_utils.py", line 41, in raise_for_status_with_body
     raise httpx.HTTPStatusError(message, request=resp.request, response=resp)
-httpx.HTTPStatusError: 400 Bad Request for url 'https://app.didar.me/api/product/save?apikey=h0xv02a1yxvvzzked09caf1bfu3avdv3': {"Error":"Product Not Exist"}
+httpx.HTTPStatusError: 400 Bad Request for url 'https://app.didar.me/api/product/save?apikey=<redacted>': {"Error":"Product Not Exist"}
 2026-08-25 03:18:37,043 | INFO     | src.didar.contact_client | didar: upserted contact CustomerCode=digikala-368258930 -> Id=150d3518-5901-4997-9b78-a4a4007dec8a
 2026-08-25 03:18:37,324 | ERROR    | src.sync_engine | sync_engine: failed to sync digikala order 368258930
 Traceback (most recent call last):
@@ -2646,7 +2646,7 @@ Traceback (most recent call last):
     ~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
   File "C:\Users\OMEN\Desktop\Local Marketplace Order Synchronization Platform\src\http_utils.py", line 41, in raise_for_status_with_body
     raise httpx.HTTPStatusError(message, request=resp.request, response=resp)
-httpx.HTTPStatusError: 400 Bad Request for url 'https://app.didar.me/api/product/save?apikey=h0xv02a1yxvvzzked09caf1bfu3avdv3': {"Error":"Product Not Exist"}
+httpx.HTTPStatusError: 400 Bad Request for url 'https://app.didar.me/api/product/save?apikey=<redacted>': {"Error":"Product Not Exist"}
 2026-08-25 03:18:39,605 | INFO     | src.didar.contact_client | didar: upserted contact CustomerCode=digikala-368219279 -> Id=c5335df9-e155-42f7-ace0-ffd7592f6d59
 2026-08-25 03:18:39,876 | ERROR    | src.sync_engine | sync_engine: failed to sync digikala order 368219279
 Traceback (most recent call last):
@@ -2686,7 +2686,7 @@ Traceback (most recent call last):
     ~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
   File "C:\Users\OMEN\Desktop\Local Marketplace Order Synchronization Platform\src\http_utils.py", line 41, in raise_for_status_with_body
     raise httpx.HTTPStatusError(message, request=resp.request, response=resp)
-httpx.HTTPStatusError: 400 Bad Request for url 'https://app.didar.me/api/product/save?apikey=h0xv02a1yxvvzzked09caf1bfu3avdv3': {"Error":"Product Not Exist"}
+httpx.HTTPStatusError: 400 Bad Request for url 'https://app.didar.me/api/product/save?apikey=<redacted>': {"Error":"Product Not Exist"}
 2026-08-25 03:18:42,175 | INFO     | src.didar.contact_client | didar: upserted contact CustomerCode=digikala-368102277 -> Id=68bcf285-b576-4f73-a91f-4174ce1fe15e
 2026-08-25 03:18:42,455 | ERROR    | src.sync_engine | sync_engine: failed to sync digikala order 368102277
 Traceback (most recent call last):
@@ -2726,7 +2726,7 @@ Traceback (most recent call last):
     ~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
   File "C:\Users\OMEN\Desktop\Local Marketplace Order Synchronization Platform\src\http_utils.py", line 41, in raise_for_status_with_body
     raise httpx.HTTPStatusError(message, request=resp.request, response=resp)
-httpx.HTTPStatusError: 400 Bad Request for url 'https://app.didar.me/api/product/save?apikey=h0xv02a1yxvvzzked09caf1bfu3avdv3': {"Error":"Product Not Exist"}
+httpx.HTTPStatusError: 400 Bad Request for url 'https://app.didar.me/api/product/save?apikey=<redacted>': {"Error":"Product Not Exist"}
 2026-08-25 03:18:42,816 | INFO     | src.didar.contact_client | didar: upserted contact CustomerCode=digikala-367302809 -> Id=e0bf4f99-cb58-4699-a702-71a84c946cde
 2026-08-25 03:18:43,067 | ERROR    | src.sync_engine | sync_engine: failed to sync digikala order 367302809
 Traceback (most recent call last):
@@ -2766,7 +2766,7 @@ Traceback (most recent call last):
     ~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
   File "C:\Users\OMEN\Desktop\Local Marketplace Order Synchronization Platform\src\http_utils.py", line 41, in raise_for_status_with_body
     raise httpx.HTTPStatusError(message, request=resp.request, response=resp)
-httpx.HTTPStatusError: 400 Bad Request for url 'https://app.didar.me/api/product/save?apikey=h0xv02a1yxvvzzked09caf1bfu3avdv3': {"Error":"Product Not Exist"}
+httpx.HTTPStatusError: 400 Bad Request for url 'https://app.didar.me/api/product/save?apikey=<redacted>': {"Error":"Product Not Exist"}
 2026-08-25 03:18:43,428 | INFO     | src.didar.contact_client | didar: upserted contact CustomerCode=digikala-369575920 -> Id=85ed4f75-9d0a-4dc2-8c7e-1cf96e23edf4
 2026-08-25 03:18:43,734 | ERROR    | src.sync_engine | sync_engine: failed to sync digikala order 369575920
 Traceback (most recent call last):
@@ -2806,7 +2806,7 @@ Traceback (most recent call last):
     ~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
   File "C:\Users\OMEN\Desktop\Local Marketplace Order Synchronization Platform\src\http_utils.py", line 41, in raise_for_status_with_body
     raise httpx.HTTPStatusError(message, request=resp.request, response=resp)
-httpx.HTTPStatusError: 400 Bad Request for url 'https://app.didar.me/api/product/save?apikey=h0xv02a1yxvvzzked09caf1bfu3avdv3': {"Error":"Product Not Exist"}
+httpx.HTTPStatusError: 400 Bad Request for url 'https://app.didar.me/api/product/save?apikey=<redacted>': {"Error":"Product Not Exist"}
 2026-08-26 20:09:40,543 | INFO     | __main__ | order-sync-platform starting - polling every 120 seconds
 2026-08-26 20:09:41,301 | INFO     | src.marketplaces.tapsishop | tapsishop: fetched 0 new orders since 2026-08-26T16:22:29.696823+00:00
 2026-08-26 20:09:41,312 | INFO     | src.sync_engine | sync_engine: completed poll of tapsishop (0 orders seen)
@@ -3648,7 +3648,7 @@ Traceback (most recent call last):
     raise_for_status_with_body(resp)
   File "/home/claude/project/Local Marketplace Order Synchronization Platform/src/http_utils.py", line 41, in raise_for_status_with_body
     raise httpx.HTTPStatusError(message, request=resp.request, response=resp)
-httpx.HTTPStatusError: 400 Bad Request for url 'https://app.didar.me/api/activity/save?apikey=test-key': {"error":"boom"}
+httpx.HTTPStatusError: 400 Bad Request for url 'https://app.didar.me/api/activity/save?apikey=<redacted>': {"error":"boom"}
 2026-08-26 23:02:01,493 | INFO     | src.didar.activity_client | didar: created activity 'پیامک ۱' on deal deal-1 -> Id=a-x
 2026-08-26 23:02:01,494 | INFO     | src.didar.activity_client | didar: created activity 'ارسال محصول' on deal deal-1 -> Id=a-x
 2026-08-26 23:02:01,494 | INFO     | src.didar.activity_client | didar: created activity 'پیامک ۳' on deal deal-1 -> Id=a-x
@@ -3822,7 +3822,7 @@ Traceback (most recent call last):
     raise_for_status_with_body(resp)
   File "/home/claude/project/Local Marketplace Order Synchronization Platform/src/http_utils.py", line 41, in raise_for_status_with_body
     raise httpx.HTTPStatusError(message, request=resp.request, response=resp)
-httpx.HTTPStatusError: 400 Bad Request for url 'https://app.didar.me/api/activity/save?apikey=test-key': {"error":"boom"}
+httpx.HTTPStatusError: 400 Bad Request for url 'https://app.didar.me/api/activity/save?apikey=<redacted>': {"error":"boom"}
 2026-08-26 23:02:22,109 | INFO     | src.didar.activity_client | didar: created activity 'پیامک ۱' on deal deal-1 -> Id=a-x
 2026-08-26 23:02:22,110 | INFO     | src.didar.activity_client | didar: created activity 'ارسال محصول' on deal deal-1 -> Id=a-x
 2026-08-26 23:02:22,110 | INFO     | src.didar.activity_client | didar: created activity 'پیامک ۳' on deal deal-1 -> Id=a-x
@@ -3996,7 +3996,7 @@ Traceback (most recent call last):
     raise_for_status_with_body(resp)
   File "/home/claude/project/Local Marketplace Order Synchronization Platform/src/http_utils.py", line 41, in raise_for_status_with_body
     raise httpx.HTTPStatusError(message, request=resp.request, response=resp)
-httpx.HTTPStatusError: 400 Bad Request for url 'https://app.didar.me/api/activity/save?apikey=test-key': {"error":"boom"}
+httpx.HTTPStatusError: 400 Bad Request for url 'https://app.didar.me/api/activity/save?apikey=<redacted>': {"error":"boom"}
 2026-08-26 23:08:11,618 | INFO     | src.didar.activity_client | didar: created activity 'پیامک 1' on deal deal-1 -> Id=a-x
 2026-08-26 23:08:11,619 | INFO     | src.didar.activity_client | didar: created activity 'ارسال محصول' on deal deal-1 -> Id=a-x
 2026-08-26 23:08:11,620 | INFO     | src.didar.activity_client | didar: created activity 'پیامک 3' on deal deal-1 -> Id=a-x
@@ -4174,7 +4174,7 @@ Traceback (most recent call last):
     ~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
   File "C:\Users\OMEN\Desktop\Local Marketplace Order Synchronization Platform\src\http_utils.py", line 41, in raise_for_status_with_body
     raise httpx.HTTPStatusError(message, request=resp.request, response=resp)
-httpx.HTTPStatusError: 400 Bad Request for url 'https://app.didar.me/api/activity/save?apikey=test-key': {"error":"boom"}
+httpx.HTTPStatusError: 400 Bad Request for url 'https://app.didar.me/api/activity/save?apikey=<redacted>': {"error":"boom"}
 2026-08-27 02:51:33,662 | INFO     | src.didar.activity_client | didar: created activity 'پیامک 1' on deal deal-1 -> Id=a-x
 2026-08-27 02:51:33,663 | INFO     | src.didar.activity_client | didar: created activity 'ارسال محصول' on deal deal-1 -> Id=a-x
 2026-08-27 02:51:33,664 | INFO     | src.didar.activity_client | didar: created activity 'پیامک 3' on deal deal-1 -> Id=a-x
@@ -5481,7 +5481,7 @@ Traceback (most recent call last):
     ~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
   File "C:\Users\OMEN\Desktop\Local Marketplace Order Synchronization Platform\src\http_utils.py", line 41, in raise_for_status_with_body
     raise httpx.HTTPStatusError(message, request=resp.request, response=resp)
-httpx.HTTPStatusError: 400 Bad Request for url 'https://app.didar.me/api/contact/save?apikey=h0xv02a1yxvvzzked09caf1bfu3avdv3': {
+httpx.HTTPStatusError: 400 Bad Request for url 'https://app.didar.me/api/contact/save?apikey=<redacted>': {
   "Message": "Duplicate contacts is not allowed"
 }
 2026-08-27 02:55:43,001 | ERROR    | src.sync_engine | sync_engine: failed to sync farazhonar order 42001
@@ -5517,7 +5517,7 @@ Traceback (most recent call last):
     ~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
   File "C:\Users\OMEN\Desktop\Local Marketplace Order Synchronization Platform\src\http_utils.py", line 41, in raise_for_status_with_body
     raise httpx.HTTPStatusError(message, request=resp.request, response=resp)
-httpx.HTTPStatusError: 400 Bad Request for url 'https://app.didar.me/api/contact/save?apikey=h0xv02a1yxvvzzked09caf1bfu3avdv3': {
+httpx.HTTPStatusError: 400 Bad Request for url 'https://app.didar.me/api/contact/save?apikey=<redacted>': {
   "Message": "Duplicate contacts is not allowed"
 }
 2026-08-27 02:55:43,021 | INFO     | src.sync_engine | sync_engine: completed poll of farazhonar (2 orders seen)
@@ -5582,7 +5582,7 @@ Traceback (most recent call last):
     ~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
   File "C:\Users\OMEN\Desktop\Local Marketplace Order Synchronization Platform\src\http_utils.py", line 41, in raise_for_status_with_body
     raise httpx.HTTPStatusError(message, request=resp.request, response=resp)
-httpx.HTTPStatusError: 400 Bad Request for url 'https://app.didar.me/api/activity/save?apikey=test-key': {"error":"boom"}
+httpx.HTTPStatusError: 400 Bad Request for url 'https://app.didar.me/api/activity/save?apikey=<redacted>': {"error":"boom"}
 2026-08-27 03:13:39,882 | INFO     | src.didar.activity_client | didar: created activity 'پیامک 1' on deal deal-1 -> Id=a-x
 2026-08-27 03:13:39,883 | INFO     | src.didar.activity_client | didar: created activity 'ارسال محصول' on deal deal-1 -> Id=a-x
 2026-08-27 03:13:39,884 | INFO     | src.didar.activity_client | didar: created activity 'پیامک 3' on deal deal-1 -> Id=a-x
@@ -5713,7 +5713,7 @@ Traceback (most recent call last):
     ~~~~^^^^^^^^^^
   File "C:\Users\OMEN\Desktop\Local Marketplace Order Synchronization Platform\venv\Lib\site-packages\respx\router.py", line 250, in resolver
     raise AllMockedAssertionError(f"RESPX: {request!r} not mocked!")
-respx.models.AllMockedAssertionError: RESPX: <Request('POST', 'https://app.didar.me/api/activity/save?apikey=h0xv02a1yxvvzzked09caf1bfu3avdv3')> not mocked!
+respx.models.AllMockedAssertionError: RESPX: <Request('POST', 'https://app.didar.me/api/activity/save?apikey=<redacted>')> not mocked!
 2026-08-27 03:13:54,408 | ERROR    | src.didar.activity_client | didar: failed to create checklist activity 'پیامک 2' on deal d-42 - continuing with the rest of the checklist
 Traceback (most recent call last):
   File "C:\Users\OMEN\Desktop\Local Marketplace Order Synchronization Platform\src\didar\activity_client.py", line 137, in create_post_sale_checklist
@@ -5797,7 +5797,7 @@ Traceback (most recent call last):
     ~~~~^^^^^^^^^^
   File "C:\Users\OMEN\Desktop\Local Marketplace Order Synchronization Platform\venv\Lib\site-packages\respx\router.py", line 250, in resolver
     raise AllMockedAssertionError(f"RESPX: {request!r} not mocked!")
-respx.models.AllMockedAssertionError: RESPX: <Request('POST', 'https://app.didar.me/api/activity/save?apikey=h0xv02a1yxvvzzked09caf1bfu3avdv3')> not mocked!
+respx.models.AllMockedAssertionError: RESPX: <Request('POST', 'https://app.didar.me/api/activity/save?apikey=<redacted>')> not mocked!
 2026-08-27 03:13:54,412 | ERROR    | src.didar.activity_client | didar: failed to create checklist activity 'پیامک 1' on deal d-42 - continuing with the rest of the checklist
 Traceback (most recent call last):
   File "C:\Users\OMEN\Desktop\Local Marketplace Order Synchronization Platform\src\didar\activity_client.py", line 137, in create_post_sale_checklist
@@ -5881,7 +5881,7 @@ Traceback (most recent call last):
     ~~~~^^^^^^^^^^
   File "C:\Users\OMEN\Desktop\Local Marketplace Order Synchronization Platform\venv\Lib\site-packages\respx\router.py", line 250, in resolver
     raise AllMockedAssertionError(f"RESPX: {request!r} not mocked!")
-respx.models.AllMockedAssertionError: RESPX: <Request('POST', 'https://app.didar.me/api/activity/save?apikey=h0xv02a1yxvvzzked09caf1bfu3avdv3')> not mocked!
+respx.models.AllMockedAssertionError: RESPX: <Request('POST', 'https://app.didar.me/api/activity/save?apikey=<redacted>')> not mocked!
 2026-08-27 03:13:54,416 | ERROR    | src.didar.activity_client | didar: failed to create checklist activity 'ارسال محصول' on deal d-42 - continuing with the rest of the checklist
 Traceback (most recent call last):
   File "C:\Users\OMEN\Desktop\Local Marketplace Order Synchronization Platform\src\didar\activity_client.py", line 137, in create_post_sale_checklist
@@ -5965,7 +5965,7 @@ Traceback (most recent call last):
     ~~~~^^^^^^^^^^
   File "C:\Users\OMEN\Desktop\Local Marketplace Order Synchronization Platform\venv\Lib\site-packages\respx\router.py", line 250, in resolver
     raise AllMockedAssertionError(f"RESPX: {request!r} not mocked!")
-respx.models.AllMockedAssertionError: RESPX: <Request('POST', 'https://app.didar.me/api/activity/save?apikey=h0xv02a1yxvvzzked09caf1bfu3avdv3')> not mocked!
+respx.models.AllMockedAssertionError: RESPX: <Request('POST', 'https://app.didar.me/api/activity/save?apikey=<redacted>')> not mocked!
 2026-08-27 03:13:54,420 | ERROR    | src.didar.activity_client | didar: failed to create checklist activity 'پیامک 3' on deal d-42 - continuing with the rest of the checklist
 Traceback (most recent call last):
   File "C:\Users\OMEN\Desktop\Local Marketplace Order Synchronization Platform\src\didar\activity_client.py", line 137, in create_post_sale_checklist
@@ -6049,7 +6049,7 @@ Traceback (most recent call last):
     ~~~~^^^^^^^^^^
   File "C:\Users\OMEN\Desktop\Local Marketplace Order Synchronization Platform\venv\Lib\site-packages\respx\router.py", line 250, in resolver
     raise AllMockedAssertionError(f"RESPX: {request!r} not mocked!")
-respx.models.AllMockedAssertionError: RESPX: <Request('POST', 'https://app.didar.me/api/activity/save?apikey=h0xv02a1yxvvzzked09caf1bfu3avdv3')> not mocked!
+respx.models.AllMockedAssertionError: RESPX: <Request('POST', 'https://app.didar.me/api/activity/save?apikey=<redacted>')> not mocked!
 2026-08-27 03:13:54,425 | ERROR    | src.didar.activity_client | didar: failed to create checklist activity 'تماس رضایت' on deal d-42 - continuing with the rest of the checklist
 Traceback (most recent call last):
   File "C:\Users\OMEN\Desktop\Local Marketplace Order Synchronization Platform\src\didar\activity_client.py", line 137, in create_post_sale_checklist
@@ -6133,7 +6133,7 @@ Traceback (most recent call last):
     ~~~~^^^^^^^^^^
   File "C:\Users\OMEN\Desktop\Local Marketplace Order Synchronization Platform\venv\Lib\site-packages\respx\router.py", line 250, in resolver
     raise AllMockedAssertionError(f"RESPX: {request!r} not mocked!")
-respx.models.AllMockedAssertionError: RESPX: <Request('POST', 'https://app.didar.me/api/activity/save?apikey=h0xv02a1yxvvzzked09caf1bfu3avdv3')> not mocked!
+respx.models.AllMockedAssertionError: RESPX: <Request('POST', 'https://app.didar.me/api/activity/save?apikey=<redacted>')> not mocked!
 2026-08-27 03:13:55,755 | INFO     | src.didar.contact_client | didar: upserted contact CustomerCode=tapsishop-999 -> Id=c-42
 2026-08-27 03:13:55,757 | INFO     | src.didar.product_client | didar: no keyword in category_mapping.py matched item title 'Product A' - falling back to the default category
 2026-08-27 03:13:55,758 | INFO     | src.didar.product_client | didar: created product Code=SKU-1 Title=Product A CategoryId=cat-default -> Id=p-1
@@ -6264,7 +6264,7 @@ Traceback (most recent call last):
     ~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
   File "C:\Users\OMEN\Desktop\Local Marketplace Order Synchronization Platform\src\http_utils.py", line 41, in raise_for_status_with_body
     raise httpx.HTTPStatusError(message, request=resp.request, response=resp)
-httpx.HTTPStatusError: 400 Bad Request for url 'https://app.didar.me/api/activity/save?apikey=test-key': {"error":"boom"}
+httpx.HTTPStatusError: 400 Bad Request for url 'https://app.didar.me/api/activity/save?apikey=<redacted>': {"error":"boom"}
 2026-08-27 13:55:55,658 | INFO     | src.didar.activity_client | didar: created activity 'پیامک 1' on deal deal-1 -> Id=a-x
 2026-08-27 13:55:55,659 | INFO     | src.didar.activity_client | didar: created activity 'ارسال محصول' on deal deal-1 -> Id=a-x
 2026-08-27 13:55:55,660 | INFO     | src.didar.activity_client | didar: created activity 'پیامک 3' on deal deal-1 -> Id=a-x
@@ -6399,7 +6399,7 @@ Traceback (most recent call last):
     ~~~~^^^^^^^^^^
   File "C:\Users\OMEN\Desktop\Local Marketplace Order Synchronization Platform\venv\Lib\site-packages\respx\router.py", line 250, in resolver
     raise AllMockedAssertionError(f"RESPX: {request!r} not mocked!")
-respx.models.AllMockedAssertionError: RESPX: <Request('POST', 'https://app.didar.me/api/activity/save?apikey=h0xv02a1yxvvzzked09caf1bfu3avdv3')> not mocked!
+respx.models.AllMockedAssertionError: RESPX: <Request('POST', 'https://app.didar.me/api/activity/save?apikey=<redacted>')> not mocked!
 2026-08-27 13:56:11,021 | ERROR    | src.didar.activity_client | didar: failed to create checklist activity 'پیامک 2' on deal d-42 - continuing with the rest of the checklist
 Traceback (most recent call last):
   File "C:\Users\OMEN\Desktop\Local Marketplace Order Synchronization Platform\src\didar\activity_client.py", line 137, in create_post_sale_checklist
@@ -6483,7 +6483,7 @@ Traceback (most recent call last):
     ~~~~^^^^^^^^^^
   File "C:\Users\OMEN\Desktop\Local Marketplace Order Synchronization Platform\venv\Lib\site-packages\respx\router.py", line 250, in resolver
     raise AllMockedAssertionError(f"RESPX: {request!r} not mocked!")
-respx.models.AllMockedAssertionError: RESPX: <Request('POST', 'https://app.didar.me/api/activity/save?apikey=h0xv02a1yxvvzzked09caf1bfu3avdv3')> not mocked!
+respx.models.AllMockedAssertionError: RESPX: <Request('POST', 'https://app.didar.me/api/activity/save?apikey=<redacted>')> not mocked!
 2026-08-27 13:56:11,026 | ERROR    | src.didar.activity_client | didar: failed to create checklist activity 'پیامک 1' on deal d-42 - continuing with the rest of the checklist
 Traceback (most recent call last):
   File "C:\Users\OMEN\Desktop\Local Marketplace Order Synchronization Platform\src\didar\activity_client.py", line 137, in create_post_sale_checklist
@@ -6567,7 +6567,7 @@ Traceback (most recent call last):
     ~~~~^^^^^^^^^^
   File "C:\Users\OMEN\Desktop\Local Marketplace Order Synchronization Platform\venv\Lib\site-packages\respx\router.py", line 250, in resolver
     raise AllMockedAssertionError(f"RESPX: {request!r} not mocked!")
-respx.models.AllMockedAssertionError: RESPX: <Request('POST', 'https://app.didar.me/api/activity/save?apikey=h0xv02a1yxvvzzked09caf1bfu3avdv3')> not mocked!
+respx.models.AllMockedAssertionError: RESPX: <Request('POST', 'https://app.didar.me/api/activity/save?apikey=<redacted>')> not mocked!
 2026-08-27 13:56:11,030 | ERROR    | src.didar.activity_client | didar: failed to create checklist activity 'ارسال محصول' on deal d-42 - continuing with the rest of the checklist
 Traceback (most recent call last):
   File "C:\Users\OMEN\Desktop\Local Marketplace Order Synchronization Platform\src\didar\activity_client.py", line 137, in create_post_sale_checklist
@@ -6651,7 +6651,7 @@ Traceback (most recent call last):
     ~~~~^^^^^^^^^^
   File "C:\Users\OMEN\Desktop\Local Marketplace Order Synchronization Platform\venv\Lib\site-packages\respx\router.py", line 250, in resolver
     raise AllMockedAssertionError(f"RESPX: {request!r} not mocked!")
-respx.models.AllMockedAssertionError: RESPX: <Request('POST', 'https://app.didar.me/api/activity/save?apikey=h0xv02a1yxvvzzked09caf1bfu3avdv3')> not mocked!
+respx.models.AllMockedAssertionError: RESPX: <Request('POST', 'https://app.didar.me/api/activity/save?apikey=<redacted>')> not mocked!
 2026-08-27 13:56:11,034 | ERROR    | src.didar.activity_client | didar: failed to create checklist activity 'پیامک 3' on deal d-42 - continuing with the rest of the checklist
 Traceback (most recent call last):
   File "C:\Users\OMEN\Desktop\Local Marketplace Order Synchronization Platform\src\didar\activity_client.py", line 137, in create_post_sale_checklist
@@ -6735,7 +6735,7 @@ Traceback (most recent call last):
     ~~~~^^^^^^^^^^
   File "C:\Users\OMEN\Desktop\Local Marketplace Order Synchronization Platform\venv\Lib\site-packages\respx\router.py", line 250, in resolver
     raise AllMockedAssertionError(f"RESPX: {request!r} not mocked!")
-respx.models.AllMockedAssertionError: RESPX: <Request('POST', 'https://app.didar.me/api/activity/save?apikey=h0xv02a1yxvvzzked09caf1bfu3avdv3')> not mocked!
+respx.models.AllMockedAssertionError: RESPX: <Request('POST', 'https://app.didar.me/api/activity/save?apikey=<redacted>')> not mocked!
 2026-08-27 13:56:11,039 | ERROR    | src.didar.activity_client | didar: failed to create checklist activity 'تماس رضایت' on deal d-42 - continuing with the rest of the checklist
 Traceback (most recent call last):
   File "C:\Users\OMEN\Desktop\Local Marketplace Order Synchronization Platform\src\didar\activity_client.py", line 137, in create_post_sale_checklist
@@ -6819,7 +6819,7 @@ Traceback (most recent call last):
     ~~~~^^^^^^^^^^
   File "C:\Users\OMEN\Desktop\Local Marketplace Order Synchronization Platform\venv\Lib\site-packages\respx\router.py", line 250, in resolver
     raise AllMockedAssertionError(f"RESPX: {request!r} not mocked!")
-respx.models.AllMockedAssertionError: RESPX: <Request('POST', 'https://app.didar.me/api/activity/save?apikey=h0xv02a1yxvvzzked09caf1bfu3avdv3')> not mocked!
+respx.models.AllMockedAssertionError: RESPX: <Request('POST', 'https://app.didar.me/api/activity/save?apikey=<redacted>')> not mocked!
 2026-08-27 13:56:12,359 | INFO     | src.didar.contact_client | didar: upserted contact CustomerCode=tapsishop-999 -> Id=c-42
 2026-08-27 13:56:12,361 | INFO     | src.didar.product_client | didar: no keyword in category_mapping.py matched item title 'Product A' - falling back to the default category
 2026-08-27 13:56:12,362 | INFO     | src.didar.product_client | didar: created product Code=SKU-1 Title=Product A CategoryId=cat-default -> Id=p-1
@@ -7018,7 +7018,7 @@ Traceback (most recent call last):
     ~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
   File "C:\Users\OMEN\Desktop\Local Marketplace Order Synchronization Platform\src\http_utils.py", line 41, in raise_for_status_with_body
     raise httpx.HTTPStatusError(message, request=resp.request, response=resp)
-httpx.HTTPStatusError: 400 Bad Request for url 'https://app.didar.me/api/activity/save?apikey=test-key': {"error":"boom"}
+httpx.HTTPStatusError: 400 Bad Request for url 'https://app.didar.me/api/activity/save?apikey=<redacted>': {"error":"boom"}
 2026-08-28 20:25:34,635 | INFO     | src.didar.activity_client | didar: created activity 'پیامک 1' on deal deal-1 -> Id=a-x
 2026-08-28 20:25:34,636 | INFO     | src.didar.activity_client | didar: created activity 'ارسال محصول' on deal deal-1 -> Id=a-x
 2026-08-28 20:25:34,637 | INFO     | src.didar.activity_client | didar: created activity 'پیامک 3' on deal deal-1 -> Id=a-x
@@ -7102,7 +7102,7 @@ Traceback (most recent call last):
     ~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
   File "C:\Users\OMEN\Desktop\Local Marketplace Order Synchronization Platform\src\http_utils.py", line 41, in raise_for_status_with_body
     raise httpx.HTTPStatusError(message, request=resp.request, response=resp)
-httpx.HTTPStatusError: 400 Bad Request for url 'https://app.didar.me/api/activity/save?apikey=test-key': {"error":"boom"}
+httpx.HTTPStatusError: 400 Bad Request for url 'https://app.didar.me/api/activity/save?apikey=<redacted>': {"error":"boom"}
 2026-08-28 20:26:25,687 | INFO     | src.didar.activity_client | didar: created activity 'پیامک 1' on deal deal-1 -> Id=a-x
 2026-08-28 20:26:25,688 | INFO     | src.didar.activity_client | didar: created activity 'ارسال محصول' on deal deal-1 -> Id=a-x
 2026-08-28 20:26:25,689 | INFO     | src.didar.activity_client | didar: created activity 'پیامک 3' on deal deal-1 -> Id=a-x
@@ -7230,7 +7230,7 @@ Traceback (most recent call last):
     ~~~~^^^^^^^^^^
   File "C:\Users\OMEN\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\respx\router.py", line 250, in resolver
     raise AllMockedAssertionError(f"RESPX: {request!r} not mocked!")
-respx.models.AllMockedAssertionError: RESPX: <Request('POST', 'https://app.didar.me/api/activity/save?apikey=h0xv02a1yxvvzzked09caf1bfu3avdv3')> not mocked!
+respx.models.AllMockedAssertionError: RESPX: <Request('POST', 'https://app.didar.me/api/activity/save?apikey=<redacted>')> not mocked!
 2026-08-28 20:27:23,705 | ERROR    | src.didar.activity_client | didar: failed to create checklist activity 'پیامک 2' on deal d-42 - continuing with the rest of the checklist
 Traceback (most recent call last):
   File "C:\Users\OMEN\Desktop\Local Marketplace Order Synchronization Platform\src\didar\activity_client.py", line 137, in create_post_sale_checklist
@@ -7314,7 +7314,7 @@ Traceback (most recent call last):
     ~~~~^^^^^^^^^^
   File "C:\Users\OMEN\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\respx\router.py", line 250, in resolver
     raise AllMockedAssertionError(f"RESPX: {request!r} not mocked!")
-respx.models.AllMockedAssertionError: RESPX: <Request('POST', 'https://app.didar.me/api/activity/save?apikey=h0xv02a1yxvvzzked09caf1bfu3avdv3')> not mocked!
+respx.models.AllMockedAssertionError: RESPX: <Request('POST', 'https://app.didar.me/api/activity/save?apikey=<redacted>')> not mocked!
 2026-08-28 20:27:23,715 | ERROR    | src.didar.activity_client | didar: failed to create checklist activity 'پیامک 1' on deal d-42 - continuing with the rest of the checklist
 Traceback (most recent call last):
   File "C:\Users\OMEN\Desktop\Local Marketplace Order Synchronization Platform\src\didar\activity_client.py", line 137, in create_post_sale_checklist
@@ -7398,7 +7398,7 @@ Traceback (most recent call last):
     ~~~~^^^^^^^^^^
   File "C:\Users\OMEN\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\respx\router.py", line 250, in resolver
     raise AllMockedAssertionError(f"RESPX: {request!r} not mocked!")
-respx.models.AllMockedAssertionError: RESPX: <Request('POST', 'https://app.didar.me/api/activity/save?apikey=h0xv02a1yxvvzzked09caf1bfu3avdv3')> not mocked!
+respx.models.AllMockedAssertionError: RESPX: <Request('POST', 'https://app.didar.me/api/activity/save?apikey=<redacted>')> not mocked!
 2026-08-28 20:27:23,719 | ERROR    | src.didar.activity_client | didar: failed to create checklist activity 'ارسال محصول' on deal d-42 - continuing with the rest of the checklist
 Traceback (most recent call last):
   File "C:\Users\OMEN\Desktop\Local Marketplace Order Synchronization Platform\src\didar\activity_client.py", line 137, in create_post_sale_checklist
@@ -7482,7 +7482,7 @@ Traceback (most recent call last):
     ~~~~^^^^^^^^^^
   File "C:\Users\OMEN\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\respx\router.py", line 250, in resolver
     raise AllMockedAssertionError(f"RESPX: {request!r} not mocked!")
-respx.models.AllMockedAssertionError: RESPX: <Request('POST', 'https://app.didar.me/api/activity/save?apikey=h0xv02a1yxvvzzked09caf1bfu3avdv3')> not mocked!
+respx.models.AllMockedAssertionError: RESPX: <Request('POST', 'https://app.didar.me/api/activity/save?apikey=<redacted>')> not mocked!
 2026-08-28 20:27:23,726 | ERROR    | src.didar.activity_client | didar: failed to create checklist activity 'پیامک 3' on deal d-42 - continuing with the rest of the checklist
 Traceback (most recent call last):
   File "C:\Users\OMEN\Desktop\Local Marketplace Order Synchronization Platform\src\didar\activity_client.py", line 137, in create_post_sale_checklist
@@ -7566,7 +7566,7 @@ Traceback (most recent call last):
     ~~~~^^^^^^^^^^
   File "C:\Users\OMEN\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\respx\router.py", line 250, in resolver
     raise AllMockedAssertionError(f"RESPX: {request!r} not mocked!")
-respx.models.AllMockedAssertionError: RESPX: <Request('POST', 'https://app.didar.me/api/activity/save?apikey=h0xv02a1yxvvzzked09caf1bfu3avdv3')> not mocked!
+respx.models.AllMockedAssertionError: RESPX: <Request('POST', 'https://app.didar.me/api/activity/save?apikey=<redacted>')> not mocked!
 2026-08-28 20:27:23,734 | ERROR    | src.didar.activity_client | didar: failed to create checklist activity 'تماس رضایت' on deal d-42 - continuing with the rest of the checklist
 Traceback (most recent call last):
   File "C:\Users\OMEN\Desktop\Local Marketplace Order Synchronization Platform\src\didar\activity_client.py", line 137, in create_post_sale_checklist
@@ -7650,7 +7650,7 @@ Traceback (most recent call last):
     ~~~~^^^^^^^^^^
   File "C:\Users\OMEN\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\respx\router.py", line 250, in resolver
     raise AllMockedAssertionError(f"RESPX: {request!r} not mocked!")
-respx.models.AllMockedAssertionError: RESPX: <Request('POST', 'https://app.didar.me/api/activity/save?apikey=h0xv02a1yxvvzzked09caf1bfu3avdv3')> not mocked!
+respx.models.AllMockedAssertionError: RESPX: <Request('POST', 'https://app.didar.me/api/activity/save?apikey=<redacted>')> not mocked!
 2026-08-28 20:27:26,925 | INFO     | src.marketplaces.basalam | basalam: fetched 0 new orders since 2026-08-01T00:00:00+00:00
 2026-08-28 20:27:29,062 | INFO     | src.didar.product_client | didar: no keyword in category_mapping.py matched item title 'Product A' - falling back to the default category
 2026-08-28 20:27:29,064 | INFO     | src.didar.product_client | didar: created product Code=SKU-1 Title=Product A CategoryId=cat-default -> Id=p-1
@@ -7717,7 +7717,7 @@ Traceback (most recent call last):
     ~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
   File "C:\Users\OMEN\Desktop\Local Marketplace Order Synchronization Platform\src\http_utils.py", line 41, in raise_for_status_with_body
     raise httpx.HTTPStatusError(message, request=resp.request, response=resp)
-httpx.HTTPStatusError: 400 Bad Request for url 'https://app.didar.me/api/activity/save?apikey=test-key': {"error":"boom"}
+httpx.HTTPStatusError: 400 Bad Request for url 'https://app.didar.me/api/activity/save?apikey=<redacted>': {"error":"boom"}
 2026-08-28 20:27:48,899 | INFO     | src.didar.activity_client | didar: created activity 'پیامک 1' on deal deal-1 -> Id=a-x
 2026-08-28 20:27:48,900 | INFO     | src.didar.activity_client | didar: created activity 'ارسال محصول' on deal deal-1 -> Id=a-x
 2026-08-28 20:27:48,901 | INFO     | src.didar.activity_client | didar: created activity 'پیامک 3' on deal deal-1 -> Id=a-x
@@ -7809,7 +7809,7 @@ Traceback (most recent call last):
     ~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
   File "C:\Users\OMEN\Desktop\Local Marketplace Order Synchronization Platform\src\http_utils.py", line 41, in raise_for_status_with_body
     raise httpx.HTTPStatusError(message, request=resp.request, response=resp)
-httpx.HTTPStatusError: 400 Bad Request for url 'https://app.didar.me/api/activity/save?apikey=test-key': {"error":"boom"}
+httpx.HTTPStatusError: 400 Bad Request for url 'https://app.didar.me/api/activity/save?apikey=<redacted>': {"error":"boom"}
 2026-08-28 20:28:38,473 | INFO     | src.didar.activity_client | didar: created activity 'پیامک 1' on deal deal-1 -> Id=a-x
 2026-08-28 20:28:38,474 | INFO     | src.didar.activity_client | didar: created activity 'ارسال محصول' on deal deal-1 -> Id=a-x
 2026-08-28 20:28:38,475 | INFO     | src.didar.activity_client | didar: created activity 'پیامک 3' on deal deal-1 -> Id=a-x
@@ -7915,7 +7915,7 @@ Traceback (most recent call last):
     ~~~~^^^^^^^^^^
   File "C:\Users\OMEN\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\respx\router.py", line 250, in resolver
     raise AllMockedAssertionError(f"RESPX: {request!r} not mocked!")
-respx.models.AllMockedAssertionError: RESPX: <Request('POST', 'https://app.didar.me/api/activity/save?apikey=h0xv02a1yxvvzzked09caf1bfu3avdv3')> not mocked!
+respx.models.AllMockedAssertionError: RESPX: <Request('POST', 'https://app.didar.me/api/activity/save?apikey=<redacted>')> not mocked!
 2026-08-28 20:28:55,308 | ERROR    | src.didar.activity_client | didar: failed to create checklist activity 'پیامک 2' on deal d-42 - continuing with the rest of the checklist
 Traceback (most recent call last):
   File "C:\Users\OMEN\Desktop\Local Marketplace Order Synchronization Platform\src\didar\activity_client.py", line 137, in create_post_sale_checklist
@@ -7999,7 +7999,7 @@ Traceback (most recent call last):
     ~~~~^^^^^^^^^^
   File "C:\Users\OMEN\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\respx\router.py", line 250, in resolver
     raise AllMockedAssertionError(f"RESPX: {request!r} not mocked!")
-respx.models.AllMockedAssertionError: RESPX: <Request('POST', 'https://app.didar.me/api/activity/save?apikey=h0xv02a1yxvvzzked09caf1bfu3avdv3')> not mocked!
+respx.models.AllMockedAssertionError: RESPX: <Request('POST', 'https://app.didar.me/api/activity/save?apikey=<redacted>')> not mocked!
 2026-08-28 20:28:55,313 | ERROR    | src.didar.activity_client | didar: failed to create checklist activity 'پیامک 1' on deal d-42 - continuing with the rest of the checklist
 Traceback (most recent call last):
   File "C:\Users\OMEN\Desktop\Local Marketplace Order Synchronization Platform\src\didar\activity_client.py", line 137, in create_post_sale_checklist
@@ -8083,7 +8083,7 @@ Traceback (most recent call last):
     ~~~~^^^^^^^^^^
   File "C:\Users\OMEN\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\respx\router.py", line 250, in resolver
     raise AllMockedAssertionError(f"RESPX: {request!r} not mocked!")
-respx.models.AllMockedAssertionError: RESPX: <Request('POST', 'https://app.didar.me/api/activity/save?apikey=h0xv02a1yxvvzzked09caf1bfu3avdv3')> not mocked!
+respx.models.AllMockedAssertionError: RESPX: <Request('POST', 'https://app.didar.me/api/activity/save?apikey=<redacted>')> not mocked!
 2026-08-28 20:28:55,318 | ERROR    | src.didar.activity_client | didar: failed to create checklist activity 'ارسال محصول' on deal d-42 - continuing with the rest of the checklist
 Traceback (most recent call last):
   File "C:\Users\OMEN\Desktop\Local Marketplace Order Synchronization Platform\src\didar\activity_client.py", line 137, in create_post_sale_checklist
@@ -8167,7 +8167,7 @@ Traceback (most recent call last):
     ~~~~^^^^^^^^^^
   File "C:\Users\OMEN\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\respx\router.py", line 250, in resolver
     raise AllMockedAssertionError(f"RESPX: {request!r} not mocked!")
-respx.models.AllMockedAssertionError: RESPX: <Request('POST', 'https://app.didar.me/api/activity/save?apikey=h0xv02a1yxvvzzked09caf1bfu3avdv3')> not mocked!
+respx.models.AllMockedAssertionError: RESPX: <Request('POST', 'https://app.didar.me/api/activity/save?apikey=<redacted>')> not mocked!
 2026-08-28 20:28:55,322 | ERROR    | src.didar.activity_client | didar: failed to create checklist activity 'پیامک 3' on deal d-42 - continuing with the rest of the checklist
 Traceback (most recent call last):
   File "C:\Users\OMEN\Desktop\Local Marketplace Order Synchronization Platform\src\didar\activity_client.py", line 137, in create_post_sale_checklist
@@ -8251,7 +8251,7 @@ Traceback (most recent call last):
     ~~~~^^^^^^^^^^
   File "C:\Users\OMEN\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\respx\router.py", line 250, in resolver
     raise AllMockedAssertionError(f"RESPX: {request!r} not mocked!")
-respx.models.AllMockedAssertionError: RESPX: <Request('POST', 'https://app.didar.me/api/activity/save?apikey=h0xv02a1yxvvzzked09caf1bfu3avdv3')> not mocked!
+respx.models.AllMockedAssertionError: RESPX: <Request('POST', 'https://app.didar.me/api/activity/save?apikey=<redacted>')> not mocked!
 2026-08-28 20:28:55,327 | ERROR    | src.didar.activity_client | didar: failed to create checklist activity 'تماس رضایت' on deal d-42 - continuing with the rest of the checklist
 Traceback (most recent call last):
   File "C:\Users\OMEN\Desktop\Local Marketplace Order Synchronization Platform\src\didar\activity_client.py", line 137, in create_post_sale_checklist
@@ -8335,7 +8335,7 @@ Traceback (most recent call last):
     ~~~~^^^^^^^^^^
   File "C:\Users\OMEN\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\respx\router.py", line 250, in resolver
     raise AllMockedAssertionError(f"RESPX: {request!r} not mocked!")
-respx.models.AllMockedAssertionError: RESPX: <Request('POST', 'https://app.didar.me/api/activity/save?apikey=h0xv02a1yxvvzzked09caf1bfu3avdv3')> not mocked!
+respx.models.AllMockedAssertionError: RESPX: <Request('POST', 'https://app.didar.me/api/activity/save?apikey=<redacted>')> not mocked!
 2026-08-28 20:28:55,350 | INFO     | src.didar.contact_client | didar: upserted contact CustomerCode=basalam-42 -> Id=c-1
 2026-08-28 20:28:56,585 | INFO     | src.didar.product_client | didar: no keyword in category_mapping.py matched item title 'Product A' - falling back to the default category
 2026-08-28 20:28:56,586 | INFO     | src.didar.product_client | didar: created product Code=SKU-1 Title=Product A CategoryId=cat-default -> Id=p-1
@@ -8523,7 +8523,7 @@ Traceback (most recent call last):
     ~~~~^^^^^^^^^^
   File "C:\Users\OMEN\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\respx\router.py", line 250, in resolver
     raise AllMockedAssertionError(f"RESPX: {request!r} not mocked!")
-respx.models.AllMockedAssertionError: RESPX: <Request('POST', 'https://app.didar.me/api/activity/save?apikey=h0xv02a1yxvvzzked09caf1bfu3avdv3')> not mocked!
+respx.models.AllMockedAssertionError: RESPX: <Request('POST', 'https://app.didar.me/api/activity/save?apikey=<redacted>')> not mocked!
 2026-08-28 20:30:29,742 | ERROR    | src.didar.activity_client | didar: failed to create checklist activity 'پیامک 2' on deal d-42 - continuing with the rest of the checklist
 Traceback (most recent call last):
   File "C:\Users\OMEN\Desktop\Local Marketplace Order Synchronization Platform\src\didar\activity_client.py", line 137, in create_post_sale_checklist
@@ -8607,7 +8607,7 @@ Traceback (most recent call last):
     ~~~~^^^^^^^^^^
   File "C:\Users\OMEN\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\respx\router.py", line 250, in resolver
     raise AllMockedAssertionError(f"RESPX: {request!r} not mocked!")
-respx.models.AllMockedAssertionError: RESPX: <Request('POST', 'https://app.didar.me/api/activity/save?apikey=h0xv02a1yxvvzzked09caf1bfu3avdv3')> not mocked!
+respx.models.AllMockedAssertionError: RESPX: <Request('POST', 'https://app.didar.me/api/activity/save?apikey=<redacted>')> not mocked!
 2026-08-28 20:30:29,746 | ERROR    | src.didar.activity_client | didar: failed to create checklist activity 'پیامک 1' on deal d-42 - continuing with the rest of the checklist
 Traceback (most recent call last):
   File "C:\Users\OMEN\Desktop\Local Marketplace Order Synchronization Platform\src\didar\activity_client.py", line 137, in create_post_sale_checklist
@@ -8691,7 +8691,7 @@ Traceback (most recent call last):
     ~~~~^^^^^^^^^^
   File "C:\Users\OMEN\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\respx\router.py", line 250, in resolver
     raise AllMockedAssertionError(f"RESPX: {request!r} not mocked!")
-respx.models.AllMockedAssertionError: RESPX: <Request('POST', 'https://app.didar.me/api/activity/save?apikey=h0xv02a1yxvvzzked09caf1bfu3avdv3')> not mocked!
+respx.models.AllMockedAssertionError: RESPX: <Request('POST', 'https://app.didar.me/api/activity/save?apikey=<redacted>')> not mocked!
 2026-08-28 20:30:29,750 | ERROR    | src.didar.activity_client | didar: failed to create checklist activity 'ارسال محصول' on deal d-42 - continuing with the rest of the checklist
 Traceback (most recent call last):
   File "C:\Users\OMEN\Desktop\Local Marketplace Order Synchronization Platform\src\didar\activity_client.py", line 137, in create_post_sale_checklist
@@ -8775,7 +8775,7 @@ Traceback (most recent call last):
     ~~~~^^^^^^^^^^
   File "C:\Users\OMEN\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\respx\router.py", line 250, in resolver
     raise AllMockedAssertionError(f"RESPX: {request!r} not mocked!")
-respx.models.AllMockedAssertionError: RESPX: <Request('POST', 'https://app.didar.me/api/activity/save?apikey=h0xv02a1yxvvzzked09caf1bfu3avdv3')> not mocked!
+respx.models.AllMockedAssertionError: RESPX: <Request('POST', 'https://app.didar.me/api/activity/save?apikey=<redacted>')> not mocked!
 2026-08-28 20:30:29,755 | ERROR    | src.didar.activity_client | didar: failed to create checklist activity 'پیامک 3' on deal d-42 - continuing with the rest of the checklist
 Traceback (most recent call last):
   File "C:\Users\OMEN\Desktop\Local Marketplace Order Synchronization Platform\src\didar\activity_client.py", line 137, in create_post_sale_checklist
@@ -8859,7 +8859,7 @@ Traceback (most recent call last):
     ~~~~^^^^^^^^^^
   File "C:\Users\OMEN\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\respx\router.py", line 250, in resolver
     raise AllMockedAssertionError(f"RESPX: {request!r} not mocked!")
-respx.models.AllMockedAssertionError: RESPX: <Request('POST', 'https://app.didar.me/api/activity/save?apikey=h0xv02a1yxvvzzked09caf1bfu3avdv3')> not mocked!
+respx.models.AllMockedAssertionError: RESPX: <Request('POST', 'https://app.didar.me/api/activity/save?apikey=<redacted>')> not mocked!
 2026-08-28 20:30:29,760 | ERROR    | src.didar.activity_client | didar: failed to create checklist activity 'تماس رضایت' on deal d-42 - continuing with the rest of the checklist
 Traceback (most recent call last):
   File "C:\Users\OMEN\Desktop\Local Marketplace Order Synchronization Platform\src\didar\activity_client.py", line 137, in create_post_sale_checklist
@@ -8943,7 +8943,7 @@ Traceback (most recent call last):
     ~~~~^^^^^^^^^^
   File "C:\Users\OMEN\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\respx\router.py", line 250, in resolver
     raise AllMockedAssertionError(f"RESPX: {request!r} not mocked!")
-respx.models.AllMockedAssertionError: RESPX: <Request('POST', 'https://app.didar.me/api/activity/save?apikey=h0xv02a1yxvvzzked09caf1bfu3avdv3')> not mocked!
+respx.models.AllMockedAssertionError: RESPX: <Request('POST', 'https://app.didar.me/api/activity/save?apikey=<redacted>')> not mocked!
 2026-08-28 20:30:32,807 | WARNING  | src.marketplaces.snappshop | snappshop: order field schema is UNCONFIRMED (no populated response has been inspected yet - only prose docs, no JSON example). Normalized output may be missing fields until this is verified - see src/marketplaces/snappshop.py module docstring.
 2026-08-28 20:30:32,808 | INFO     | src.marketplaces.snappshop | snappshop: fetched 0 new orders since 2026-08-01T00:00:00+00:00
 2026-08-28 20:30:35,950 | WARNING  | src.marketplaces.snappshop | snappshop: order field schema is UNCONFIRMED (no populated response has been inspected yet - only prose docs, no JSON example). Normalized output may be missing fields until this is verified - see src/marketplaces/snappshop.py module docstring.
@@ -9062,7 +9062,7 @@ Traceback (most recent call last):
     ~~~~^^^^^^^^^^
   File "C:\Users\OMEN\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\respx\router.py", line 250, in resolver
     raise AllMockedAssertionError(f"RESPX: {request!r} not mocked!")
-respx.models.AllMockedAssertionError: RESPX: <Request('POST', 'https://app.didar.me/api/activity/save?apikey=h0xv02a1yxvvzzked09caf1bfu3avdv3')> not mocked!
+respx.models.AllMockedAssertionError: RESPX: <Request('POST', 'https://app.didar.me/api/activity/save?apikey=<redacted>')> not mocked!
 2026-08-28 20:31:12,505 | ERROR    | src.didar.activity_client | didar: failed to create checklist activity 'پیامک 2' on deal d-42 - continuing with the rest of the checklist
 Traceback (most recent call last):
   File "C:\Users\OMEN\Desktop\Local Marketplace Order Synchronization Platform\src\didar\activity_client.py", line 137, in create_post_sale_checklist
@@ -9146,7 +9146,7 @@ Traceback (most recent call last):
     ~~~~^^^^^^^^^^
   File "C:\Users\OMEN\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\respx\router.py", line 250, in resolver
     raise AllMockedAssertionError(f"RESPX: {request!r} not mocked!")
-respx.models.AllMockedAssertionError: RESPX: <Request('POST', 'https://app.didar.me/api/activity/save?apikey=h0xv02a1yxvvzzked09caf1bfu3avdv3')> not mocked!
+respx.models.AllMockedAssertionError: RESPX: <Request('POST', 'https://app.didar.me/api/activity/save?apikey=<redacted>')> not mocked!
 2026-08-28 20:31:12,510 | ERROR    | src.didar.activity_client | didar: failed to create checklist activity 'پیامک 1' on deal d-42 - continuing with the rest of the checklist
 Traceback (most recent call last):
   File "C:\Users\OMEN\Desktop\Local Marketplace Order Synchronization Platform\src\didar\activity_client.py", line 137, in create_post_sale_checklist
@@ -9230,7 +9230,7 @@ Traceback (most recent call last):
     ~~~~^^^^^^^^^^
   File "C:\Users\OMEN\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\respx\router.py", line 250, in resolver
     raise AllMockedAssertionError(f"RESPX: {request!r} not mocked!")
-respx.models.AllMockedAssertionError: RESPX: <Request('POST', 'https://app.didar.me/api/activity/save?apikey=h0xv02a1yxvvzzked09caf1bfu3avdv3')> not mocked!
+respx.models.AllMockedAssertionError: RESPX: <Request('POST', 'https://app.didar.me/api/activity/save?apikey=<redacted>')> not mocked!
 2026-08-28 20:31:12,514 | ERROR    | src.didar.activity_client | didar: failed to create checklist activity 'ارسال محصول' on deal d-42 - continuing with the rest of the checklist
 Traceback (most recent call last):
   File "C:\Users\OMEN\Desktop\Local Marketplace Order Synchronization Platform\src\didar\activity_client.py", line 137, in create_post_sale_checklist
@@ -9314,7 +9314,7 @@ Traceback (most recent call last):
     ~~~~^^^^^^^^^^
   File "C:\Users\OMEN\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\respx\router.py", line 250, in resolver
     raise AllMockedAssertionError(f"RESPX: {request!r} not mocked!")
-respx.models.AllMockedAssertionError: RESPX: <Request('POST', 'https://app.didar.me/api/activity/save?apikey=h0xv02a1yxvvzzked09caf1bfu3avdv3')> not mocked!
+respx.models.AllMockedAssertionError: RESPX: <Request('POST', 'https://app.didar.me/api/activity/save?apikey=<redacted>')> not mocked!
 2026-08-28 20:31:12,519 | ERROR    | src.didar.activity_client | didar: failed to create checklist activity 'پیامک 3' on deal d-42 - continuing with the rest of the checklist
 Traceback (most recent call last):
   File "C:\Users\OMEN\Desktop\Local Marketplace Order Synchronization Platform\src\didar\activity_client.py", line 137, in create_post_sale_checklist
@@ -9398,7 +9398,7 @@ Traceback (most recent call last):
     ~~~~^^^^^^^^^^
   File "C:\Users\OMEN\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\respx\router.py", line 250, in resolver
     raise AllMockedAssertionError(f"RESPX: {request!r} not mocked!")
-respx.models.AllMockedAssertionError: RESPX: <Request('POST', 'https://app.didar.me/api/activity/save?apikey=h0xv02a1yxvvzzked09caf1bfu3avdv3')> not mocked!
+respx.models.AllMockedAssertionError: RESPX: <Request('POST', 'https://app.didar.me/api/activity/save?apikey=<redacted>')> not mocked!
 2026-08-28 20:31:12,524 | ERROR    | src.didar.activity_client | didar: failed to create checklist activity 'تماس رضایت' on deal d-42 - continuing with the rest of the checklist
 Traceback (most recent call last):
   File "C:\Users\OMEN\Desktop\Local Marketplace Order Synchronization Platform\src\didar\activity_client.py", line 137, in create_post_sale_checklist
@@ -9482,7 +9482,7 @@ Traceback (most recent call last):
     ~~~~^^^^^^^^^^
   File "C:\Users\OMEN\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\respx\router.py", line 250, in resolver
     raise AllMockedAssertionError(f"RESPX: {request!r} not mocked!")
-respx.models.AllMockedAssertionError: RESPX: <Request('POST', 'https://app.didar.me/api/activity/save?apikey=h0xv02a1yxvvzzked09caf1bfu3avdv3')> not mocked!
+respx.models.AllMockedAssertionError: RESPX: <Request('POST', 'https://app.didar.me/api/activity/save?apikey=<redacted>')> not mocked!
 2026-08-28 20:31:13,020 | INFO     | src.didar.product_client | didar: no keyword in category_mapping.py matched item title 'یک محصول کاملا نامرتبط' - falling back to the default category
 2026-08-28 20:31:16,010 | INFO     | src.didar.product_client | didar: no keyword in category_mapping.py matched item title 'محصول بدون کلیدواژه مرتبط' - falling back to the default category
 2026-08-28 20:31:18,761 | INFO     | src.didar.product_client | didar: created product Code=SKU-C Title=جعبه خاتم CategoryId=cat-mina -> Id=p-2

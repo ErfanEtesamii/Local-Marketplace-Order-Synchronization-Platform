@@ -40,7 +40,7 @@ Traceback (most recent call last):
     ~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
   File "C:\Users\OMEN\Desktop\Local Marketplace Order Synchronization Platform\src\http_utils.py", line 41, in raise_for_status_with_body
     raise httpx.HTTPStatusError(message, request=resp.request, response=resp)
-httpx.HTTPStatusError: 500 Internal Server Error for url 'https://app.didar.me/api/UploadFile?apikey=test-key': 
+httpx.HTTPStatusError: 500 Internal Server Error for url 'https://app.didar.me/api/UploadFile?apikey=<redacted>': 
 2026-08-30 23:01:01,166 | INFO     | src.didar.activity_client | didar: created activity 'تماس جدید' on deal deal-1 -> Id=a-x
 2026-08-30 23:01:01,167 | INFO     | src.didar.activity_client | didar: created activity 'پیامک 2' on deal deal-1 -> Id=a-x
 2026-08-30 23:01:01,168 | INFO     | src.didar.activity_client | didar: created activity 'پیامک 1' on deal deal-1 -> Id=a-x
@@ -84,7 +84,7 @@ Traceback (most recent call last):
     ~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
   File "C:\Users\OMEN\Desktop\Local Marketplace Order Synchronization Platform\src\http_utils.py", line 41, in raise_for_status_with_body
     raise httpx.HTTPStatusError(message, request=resp.request, response=resp)
-httpx.HTTPStatusError: 400 Bad Request for url 'https://app.didar.me/api/activity/save?apikey=test-key': {"error":"boom"}
+httpx.HTTPStatusError: 400 Bad Request for url 'https://app.didar.me/api/activity/save?apikey=<redacted>': {"error":"boom"}
 2026-08-30 23:01:01,212 | INFO     | src.didar.activity_client | didar: created activity 'پیامک 1' on deal deal-1 -> Id=a-x
 2026-08-30 23:01:01,212 | INFO     | src.didar.activity_client | didar: created activity 'ارسال محصول' on deal deal-1 -> Id=a-x
 2026-08-30 23:01:01,213 | INFO     | src.didar.activity_client | didar: created activity 'پیامک 3' on deal deal-1 -> Id=a-x
@@ -235,7 +235,7 @@ Traceback (most recent call last):
     ~~~~^^^^^^^^^^
   File "C:\Users\OMEN\AppData\Roaming\Python\Python314\site-packages\respx\router.py", line 250, in resolver
     raise AllMockedAssertionError(f"RESPX: {request!r} not mocked!")
-respx.models.AllMockedAssertionError: RESPX: <Request('POST', 'https://app.didar.me/api/activity/save?apikey=h0xv02a1yxvvzzked09caf1bfu3avdv3')> not mocked!
+respx.models.AllMockedAssertionError: RESPX: <Request('POST', 'https://app.didar.me/api/activity/save?apikey=<redacted>')> not mocked!
 2026-08-30 23:01:07,403 | ERROR    | src.didar.activity_client | didar: failed to create checklist activity 'پیامک 2' on deal d-42 - continuing with the rest of the checklist
 Traceback (most recent call last):
   File "C:\Users\OMEN\Desktop\Local Marketplace Order Synchronization Platform\src\didar\activity_client.py", line 260, in create_post_sale_checklist
@@ -319,7 +319,7 @@ Traceback (most recent call last):
     ~~~~^^^^^^^^^^
   File "C:\Users\OMEN\AppData\Roaming\Python\Python314\site-packages\respx\router.py", line 250, in resolver
     raise AllMockedAssertionError(f"RESPX: {request!r} not mocked!")
-respx.models.AllMockedAssertionError: RESPX: <Request('POST', 'https://app.didar.me/api/activity/save?apikey=h0xv02a1yxvvzzked09caf1bfu3avdv3')> not mocked!
+respx.models.AllMockedAssertionError: RESPX: <Request('POST', 'https://app.didar.me/api/activity/save?apikey=<redacted>')> not mocked!
 2026-08-30 23:01:07,408 | ERROR    | src.didar.activity_client | didar: failed to create checklist activity 'پیامک 1' on deal d-42 - continuing with the rest of the checklist
 Traceback (most recent call last):
   File "C:\Users\OMEN\Desktop\Local Marketplace Order Synchronization Platform\src\didar\activity_client.py", line 260, in create_post_sale_checklist
@@ -403,7 +403,7 @@ Traceback (most recent call last):
     ~~~~^^^^^^^^^^
   File "C:\Users\OMEN\AppData\Roaming\Python\Python314\site-packages\respx\router.py", line 250, in resolver
     raise AllMockedAssertionError(f"RESPX: {request!r} not mocked!")
-respx.models.AllMockedAssertionError: RESPX: <Request('POST', 'https://app.didar.me/api/activity/save?apikey=h0xv02a1yxvvzzked09caf1bfu3avdv3')> not mocked!
+respx.models.AllMockedAssertionError: RESPX: <Request('POST', 'https://app.didar.me/api/activity/save?apikey=<redacted>')> not mocked!
 2026-08-30 23:01:07,412 | ERROR    | src.didar.activity_client | didar: failed to create checklist activity 'ارسال محصول' on deal d-42 - continuing with the rest of the checklist
 Traceback (most recent call last):
   File "C:\Users\OMEN\Desktop\Local Marketplace Order Synchronization Platform\src\didar\activity_client.py", line 260, in create_post_sale_checklist
@@ -487,7 +487,7 @@ Traceback (most recent call last):
     ~~~~^^^^^^^^^^
   File "C:\Users\OMEN\AppData\Roaming\Python\Python314\site-packages\respx\router.py", line 250, in resolver
     raise AllMockedAssertionError(f"RESPX: {request!r} not mocked!")
-respx.models.AllMockedAssertionError: RESPX: <Request('POST', 'https://app.didar.me/api/activity/save?apikey=h0xv02a1yxvvzzked09caf1bfu3avdv3')> not mocked!
+respx.models.AllMockedAssertionError: RESPX: <Request('POST', 'https://app.didar.me/api/activity/save?apikey=<redacted>')> not mocked!
 2026-08-30 23:01:07,416 | ERROR    | src.didar.activity_client | didar: failed to create checklist activity 'پیامک 3' on deal d-42 - continuing with the rest of the checklist
 Traceback (most recent call last):
   File "C:\Users\OMEN\Desktop\Local Marketplace Order Synchronization Platform\src\didar\activity_client.py", line 260, in create_post_sale_checklist
@@ -571,7 +571,7 @@ Traceback (most recent call last):
     ~~~~^^^^^^^^^^
   File "C:\Users\OMEN\AppData\Roaming\Python\Python314\site-packages\respx\router.py", line 250, in resolver
     raise AllMockedAssertionError(f"RESPX: {request!r} not mocked!")
-respx.models.AllMockedAssertionError: RESPX: <Request('POST', 'https://app.didar.me/api/activity/save?apikey=h0xv02a1yxvvzzked09caf1bfu3avdv3')> not mocked!
+respx.models.AllMockedAssertionError: RESPX: <Request('POST', 'https://app.didar.me/api/activity/save?apikey=<redacted>')> not mocked!
 2026-08-30 23:01:07,421 | ERROR    | src.didar.activity_client | didar: failed to create checklist activity 'تماس رضایت' on deal d-42 - continuing with the rest of the checklist
 Traceback (most recent call last):
   File "C:\Users\OMEN\Desktop\Local Marketplace Order Synchronization Platform\src\didar\activity_client.py", line 260, in create_post_sale_checklist
@@ -655,7 +655,7 @@ Traceback (most recent call last):
     ~~~~^^^^^^^^^^
   File "C:\Users\OMEN\AppData\Roaming\Python\Python314\site-packages\respx\router.py", line 250, in resolver
     raise AllMockedAssertionError(f"RESPX: {request!r} not mocked!")
-respx.models.AllMockedAssertionError: RESPX: <Request('POST', 'https://app.didar.me/api/activity/save?apikey=h0xv02a1yxvvzzked09caf1bfu3avdv3')> not mocked!
+respx.models.AllMockedAssertionError: RESPX: <Request('POST', 'https://app.didar.me/api/activity/save?apikey=<redacted>')> not mocked!
 2026-08-30 23:01:07,485 | INFO     | src.didar.contact_client | didar: upserted contact CustomerCode=tapsishop-999 -> Id=c-42
 2026-08-30 23:01:07,964 | INFO     | src.didar.product_catalog | didar: loaded 3310 product catalog entries from data\didar_product_catalog.xlsx
 2026-08-30 23:01:07,967 | INFO     | src.didar.product_client | didar: no keyword in category_mapping.py matched item title 'Product A' - falling back to the default category

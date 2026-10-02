@@ -27,7 +27,7 @@ Traceback (most recent call last):
     raise_for_status_with_body(resp)
   File "/home/claude/work/Merged/src/http_utils.py", line 41, in raise_for_status_with_body
     raise httpx.HTTPStatusError(message, request=resp.request, response=resp)
-httpx.HTTPStatusError: 500 Internal Server Error for url 'https://app.didar.me/api/UploadFile?apikey=test-key': 
+httpx.HTTPStatusError: 500 Internal Server Error for url 'https://app.didar.me/api/UploadFile?apikey=<redacted>': 
 2026-08-29 17:27:43,435 | INFO     | src.didar.activity_client | didar: created activity 'تماس جدید' on deal deal-1 -> Id=a-x
 2026-08-29 17:27:43,436 | INFO     | src.didar.activity_client | didar: created activity 'پیامک 2' on deal deal-1 -> Id=a-x
 2026-08-29 17:27:43,436 | INFO     | src.didar.activity_client | didar: created activity 'پیامک 1' on deal deal-1 -> Id=a-x
@@ -67,7 +67,7 @@ Traceback (most recent call last):
     raise_for_status_with_body(resp)
   File "/home/claude/work/Merged/src/http_utils.py", line 41, in raise_for_status_with_body
     raise httpx.HTTPStatusError(message, request=resp.request, response=resp)
-httpx.HTTPStatusError: 400 Bad Request for url 'https://app.didar.me/api/activity/save?apikey=test-key': {"error":"boom"}
+httpx.HTTPStatusError: 400 Bad Request for url 'https://app.didar.me/api/activity/save?apikey=<redacted>': {"error":"boom"}
 2026-08-29 17:27:43,484 | INFO     | src.didar.activity_client | didar: created activity 'پیامک 1' on deal deal-1 -> Id=a-x
 2026-08-29 17:27:43,485 | INFO     | src.didar.activity_client | didar: created activity 'ارسال محصول' on deal deal-1 -> Id=a-x
 2026-08-29 17:27:43,485 | INFO     | src.didar.activity_client | didar: created activity 'پیامک 3' on deal deal-1 -> Id=a-x
@@ -245,7 +245,7 @@ Traceback (most recent call last):
     raise_for_status_with_body(resp)
   File "/home/claude/work/Local Marketplace Order Synchronization Platform/src/http_utils.py", line 41, in raise_for_status_with_body
     raise httpx.HTTPStatusError(message, request=resp.request, response=resp)
-httpx.HTTPStatusError: 500 Internal Server Error for url 'https://app.didar.me/api/UploadFile?apikey=test-key': 
+httpx.HTTPStatusError: 500 Internal Server Error for url 'https://app.didar.me/api/UploadFile?apikey=<redacted>': 
 2026-08-29 18:10:35,318 | INFO     | src.didar.activity_client | didar: created activity 'تماس جدید' on deal deal-1 -> Id=a-x
 2026-08-29 18:10:35,319 | INFO     | src.didar.activity_client | didar: created activity 'پیامک 2' on deal deal-1 -> Id=a-x
 2026-08-29 18:10:35,319 | INFO     | src.didar.activity_client | didar: created activity 'پیامک 1' on deal deal-1 -> Id=a-x
@@ -285,7 +285,7 @@ Traceback (most recent call last):
     raise_for_status_with_body(resp)
   File "/home/claude/work/Local Marketplace Order Synchronization Platform/src/http_utils.py", line 41, in raise_for_status_with_body
     raise httpx.HTTPStatusError(message, request=resp.request, response=resp)
-httpx.HTTPStatusError: 400 Bad Request for url 'https://app.didar.me/api/activity/save?apikey=test-key': {"error":"boom"}
+httpx.HTTPStatusError: 400 Bad Request for url 'https://app.didar.me/api/activity/save?apikey=<redacted>': {"error":"boom"}
 2026-08-29 18:10:35,378 | INFO     | src.didar.activity_client | didar: created activity 'پیامک 1' on deal deal-1 -> Id=a-x
 2026-08-29 18:10:35,379 | INFO     | src.didar.activity_client | didar: created activity 'ارسال محصول' on deal deal-1 -> Id=a-x
 2026-08-29 18:10:35,379 | INFO     | src.didar.activity_client | didar: created activity 'پیامک 3' on deal deal-1 -> Id=a-x
@@ -466,7 +466,7 @@ Traceback (most recent call last):
     raise_for_status_with_body(resp)
   File "/home/claude/work/Local Marketplace Order Synchronization Platform/src/http_utils.py", line 41, in raise_for_status_with_body
     raise httpx.HTTPStatusError(message, request=resp.request, response=resp)
-httpx.HTTPStatusError: 500 Internal Server Error for url 'https://app.didar.me/api/UploadFile?apikey=test-key': 
+httpx.HTTPStatusError: 500 Internal Server Error for url 'https://app.didar.me/api/UploadFile?apikey=<redacted>': 
 2026-08-29 18:13:16,413 | INFO     | src.didar.activity_client | didar: created activity 'تماس جدید' on deal deal-1 -> Id=a-x
 2026-08-29 18:13:16,413 | INFO     | src.didar.activity_client | didar: created activity 'پیامک 2' on deal deal-1 -> Id=a-x
 2026-08-29 18:13:16,414 | INFO     | src.didar.activity_client | didar: created activity 'پیامک 1' on deal deal-1 -> Id=a-x
@@ -506,7 +506,7 @@ Traceback (most recent call last):
     raise_for_status_with_body(resp)
   File "/home/claude/work/Local Marketplace Order Synchronization Platform/src/http_utils.py", line 41, in raise_for_status_with_body
     raise httpx.HTTPStatusError(message, request=resp.request, response=resp)
-httpx.HTTPStatusError: 400 Bad Request for url 'https://app.didar.me/api/activity/save?apikey=test-key': {"error":"boom"}
+httpx.HTTPStatusError: 400 Bad Request for url 'https://app.didar.me/api/activity/save?apikey=<redacted>': {"error":"boom"}
 2026-08-29 18:13:16,470 | INFO     | src.didar.activity_client | didar: created activity 'پیامک 1' on deal deal-1 -> Id=a-x
 2026-08-29 18:13:16,471 | INFO     | src.didar.activity_client | didar: created activity 'ارسال محصول' on deal deal-1 -> Id=a-x
 2026-08-29 18:13:16,472 | INFO     | src.didar.activity_client | didar: created activity 'پیامک 3' on deal deal-1 -> Id=a-x
@@ -690,7 +690,7 @@ Traceback (most recent call last):
     raise_for_status_with_body(resp)
   File "/home/claude/work/Local Marketplace Order Synchronization Platform/src/http_utils.py", line 41, in raise_for_status_with_body
     raise httpx.HTTPStatusError(message, request=resp.request, response=resp)
-httpx.HTTPStatusError: 500 Internal Server Error for url 'https://app.didar.me/api/UploadFile?apikey=test-key': 
+httpx.HTTPStatusError: 500 Internal Server Error for url 'https://app.didar.me/api/UploadFile?apikey=<redacted>': 
 2026-08-29 18:13:36,296 | INFO     | src.didar.activity_client | didar: created activity 'تماس جدید' on deal deal-1 -> Id=a-x
 2026-08-29 18:13:36,297 | INFO     | src.didar.activity_client | didar: created activity 'پیامک 2' on deal deal-1 -> Id=a-x
 2026-08-29 18:13:36,297 | INFO     | src.didar.activity_client | didar: created activity 'پیامک 1' on deal deal-1 -> Id=a-x
@@ -730,7 +730,7 @@ Traceback (most recent call last):
     raise_for_status_with_body(resp)
   File "/home/claude/work/Local Marketplace Order Synchronization Platform/src/http_utils.py", line 41, in raise_for_status_with_body
     raise httpx.HTTPStatusError(message, request=resp.request, response=resp)
-httpx.HTTPStatusError: 400 Bad Request for url 'https://app.didar.me/api/activity/save?apikey=test-key': {"error":"boom"}
+httpx.HTTPStatusError: 400 Bad Request for url 'https://app.didar.me/api/activity/save?apikey=<redacted>': {"error":"boom"}
 2026-08-29 18:13:36,356 | INFO     | src.didar.activity_client | didar: created activity 'پیامک 1' on deal deal-1 -> Id=a-x
 2026-08-29 18:13:36,356 | INFO     | src.didar.activity_client | didar: created activity 'ارسال محصول' on deal deal-1 -> Id=a-x
 2026-08-29 18:13:36,357 | INFO     | src.didar.activity_client | didar: created activity 'پیامک 3' on deal deal-1 -> Id=a-x
