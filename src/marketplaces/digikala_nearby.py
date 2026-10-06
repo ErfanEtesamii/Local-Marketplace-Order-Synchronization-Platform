@@ -30,12 +30,16 @@ Differences from the normal SBS flow (per the official docs):
      ever lists 3-hour orders, and the row's own `isDigiExpress` flag is
      not guaranteed to be true there. This is what triggers the express
      SMS alert / Didar note.
-  5. Auto-confirm (pending -> processing) is OFF by default
-     (NEARBY_AUTO_CONFIRM = False). update-status is only documented for
-     /ship-by-seller-orders, and confirming is a business action, so it
-     must be verified on a real 3-hour order before enabling. With it off,
-     a pending row syncs with whatever customer data it already has (the
-     existing sync_engine fallbacks still apply).
+  5. Auto-confirm (pending -> processing) is ON (NEARBY_AUTO_CONFIRM = True,
+     client request 2026-10). The seller panel / API only reveal the
+     customer's name, mobile and address once the order is confirmed
+     (processing); order 387147242 synced while still pending and landed
+     in Didar with an empty customer ("- -"). After confirming, the row is
+     re-fetched; if customer data is still missing the order is held back
+     for up to _MAX_WAIT_POLLS polls and then synced anyway (placeholder
+     values like "-" are treated as missing so sync_engine's customer
+     fallback still runs). The express SMS / Didar note are triggered by
+     the forced EXPRESS shipping method exactly as before.
 
 Any failure here is logged and swallowed: the 3-hour fetch must never
 block the normal SBS orders of the same poll.
@@ -54,6 +58,23 @@ _NEARBY_OPEN_STATUSES = ("pending", "processing")
 _PAGE_SIZE = 50
 # Hard stop so a misbehaving pager can never loop forever.
 _MAX_PAGES = 20
+# Polls a confirmed order may wait for Digikala to expose customer data
+# before it is synced anyway (so an order / express SMS is never lost).
+_MAX_WAIT_POLLS = 3
+
+
+def _clean(value):
+    """None for empty / placeholder values such as "", "-", "- -"."""
+    if value is None:
+        return None
+    text = str(value).strip()
+    if not text or not text.strip("-–— "):
+        return None
+    return text
+
+
+def _has_customer_data(row: dict) -> bool:
+    return bool(_clean(row.get("customer_name")) and _clean(row.get("customer_phone_number")))
 
 
 def _cold_start_key(name: str) -> str:
@@ -68,7 +89,7 @@ class NearbyStoresMixin:
     _update_status, _normalize_sbs_row, _build_promotion_map."""
 
     # See module docstring, point 5.
-    NEARBY_AUTO_CONFIRM = False
+    NEARBY_AUTO_CONFIRM = True
 
     def _nearby_seen(self) -> set[str]:
         seen = getattr(self, "_nearby_seen_ids", None)
@@ -76,6 +97,13 @@ class NearbyStoresMixin:
             seen = set()
             self._nearby_seen_ids = seen
         return seen
+
+    def _nearby_waits(self) -> dict:
+        waits = getattr(self, "_nearby_wait_counts", None)
+        if waits is None:
+            waits = {}
+            self._nearby_wait_counts = waits
+        return waits
 
     def _fetch_nearby_rows(self, statuses=_NEARBY_OPEN_STATUSES) -> list[dict]:
         rows: list[dict] = []
@@ -164,6 +192,12 @@ class NearbyStoresMixin:
         return refreshed or row
 
     def _normalize_nearby_row(self, row: dict) -> NormalizedOrder:
+        # Placeholder customer values ("-", "- -") -> None so they are not
+        # used as the Didar contact name / CustomerCode.
+        row = dict(row)
+        for key in ("customer_name", "customer_phone_number", "customer_address", "customer_postal_code"):
+            if key in row:
+                row[key] = _clean(row.get(key))
         order = self._normalize_sbs_row(row, promotion_map=self._build_promotion_map(row))
         return replace(order, shipping_method="EXPRESS")
 
@@ -204,6 +238,19 @@ class NearbyStoresMixin:
             sid = str(row["shipmentId"])
             try:
                 row = self._confirm_nearby_if_pending(row)
+                if self.NEARBY_AUTO_CONFIRM and not _has_customer_data(row):
+                    waits = self._nearby_waits()
+                    waits[sid] = waits.get(sid, 0) + 1
+                    if waits[sid] <= _MAX_WAIT_POLLS:
+                        log.info(
+                            "%s: 3-hour shipment %s has no customer data yet - waiting (%d/%d)",
+                            self.name, sid, waits[sid], _MAX_WAIT_POLLS,
+                        )
+                        continue
+                    log.warning(
+                        "%s: 3-hour shipment %s still has no customer data - syncing anyway",
+                        self.name, sid,
+                    )
                 orders.append(self._normalize_nearby_row(row))
                 seen.add(sid)
             except Exception:
