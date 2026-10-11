@@ -760,7 +760,17 @@ class TelegramNotifier:
         else:
             shipping = order.shipping_cost if order.shipping_cost is not None else Decimal("0")
             shipping_display = f"{_format_rial(shipping)} ریال"
-            grand_total = order.total_price
+            if order.source == "tapsishop":
+                # Tapsi's total_price is its own finalPrice and it is not
+                # confirmed whether that already includes shipping - kept
+                # as the API reports it.
+                grand_total = order.total_price
+            else:
+                # Client request 2026-10: the grand total is products +
+                # shipping. Every other adapter's total_price is the sum
+                # of the items only (no shipping), which made "مبلغ کل"
+                # equal "مبلغ محصولات" (seen on a Digikala order).
+                grand_total = products_total + shipping
 
         when = self._format_jalali_datetime(order.created_at)
 
