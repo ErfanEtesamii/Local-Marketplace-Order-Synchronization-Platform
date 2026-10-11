@@ -327,3 +327,9 @@ def test_discover_vendor_id_helper():
     )
     adapter = SnappShopAdapter(config=_CFG)
     assert adapter.discover_vendor_id() == "v-42"
+
+def test_normalized_order_exposes_has_delivery_address():
+    from src.marketplaces.snappshop import SnappShopAdapter
+    import inspect
+    # the adapter must pass has_delivery_address (address is populated only for vendor delivery)
+    assert "has_delivery_address=bool(address)" in inspect.getsource(SnappShopAdapter._normalize_order)

@@ -395,3 +395,24 @@ def test_create_note_propagates_a_failed_response():
     client = DidarActivityClient(config=_CFG_WITH_TYPES)
     with pytest.raises(httpx.HTTPStatusError):
         client.create_note(deal_id="bad-deal", text="ارسال به انبار")
+
+
+@respx.mock
+def test_ship_activity_advance_moves_only_ship_item_one_day_earlier():
+    # Client request 2026-10: Digikala orders' "ارسال محصول" is due 1 day earlier.
+    activity_route = respx.post("https://app.didar.me/api/activity/save").mock(
+        return_value=httpx.Response(200, json={"Response": {"Id": "a-x"}})
+    )
+    client = DidarActivityClient(config=_CFG_WITH_TYPES)
+    client.create_post_sale_checklist(
+        deal_id="deal-1", order_registered_at=_REGISTERED, ship_time=_SHIP,
+        ship_activity_advance=timedelta(days=1),
+    )
+    expected = compute_checklist_due_dates(order_registered_at=_REGISTERED, ship_time=_SHIP)
+    expected["ارسال محصول"] = _SHIP - timedelta(days=1)
+    assert activity_route.call_count == 6
+    for call in activity_route.calls:
+        activity = _json.loads(call.request.content)["Activity"]
+        want = expected[activity["Title"]]
+        want_str = want.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.") + f"{want.microsecond // 1000:03d}Z"
+        assert activity["DueDate"] == want_str

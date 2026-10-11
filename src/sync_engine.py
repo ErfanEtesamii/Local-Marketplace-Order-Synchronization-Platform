@@ -60,6 +60,12 @@ from src.express_alert import is_express_order
 from src.logger import get_logger
 from src.marketplaces.base import MarketplaceAdapter, NormalizedOrder
 from src.modir_payamak import ModirPayamakNotifier
+from src.snappshop_order_type import (
+    URGENT_WAREHOUSE,
+    URGENT_WAREHOUSE_NOTE_TEXT,
+    WAREHOUSE_NOTE_TEXT,
+    snappshop_warehouse_kind,
+)
 from src.telegram import TelegramNotifier
 
 log = get_logger(__name__)
@@ -647,7 +653,15 @@ class SyncEngine:
         if self._repo.has_snappshop_note_been_added(order.source, order.source_order_id):
             return
 
-        if is_express_order(order):
+        warehouse_kind = snappshop_warehouse_kind(order)
+        if warehouse_kind is not None:
+            # 2026-10: warehouse orders of the first account (see
+            # src/snappshop_order_type.py).
+            text = (
+                URGENT_WAREHOUSE_NOTE_TEXT if warehouse_kind == URGENT_WAREHOUSE
+                else WAREHOUSE_NOTE_TEXT
+            )
+        elif is_express_order(order):
             text = _SNAPPSHOP_EXPRESS_NOTE_TEXT.get(order.source)
             if text is None:
                 log.warning(

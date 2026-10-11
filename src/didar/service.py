@@ -6,6 +6,7 @@ in isolation while still being trivial to use together.
 """
 from __future__ import annotations
 
+from datetime import timedelta
 from urllib.parse import urlparse
 
 import httpx
@@ -16,8 +17,18 @@ from src.didar.contact_client import DidarContactClient
 from src.didar.deal_client import DidarDealClient
 from src.logger import get_logger
 from src.marketplaces.base import NormalizedOrder
+from src.snappshop_order_type import snappshop_warehouse_kind
 
 log = get_logger(__name__)
+
+# Fallback ship due date for SnappShop warehouse orders with no pickup
+# time (same 2-day default as the post-sale checklist).
+_SNAPPSHOP_DEFAULT_SHIP_DELAY = timedelta(days=2)
+
+# Client request 2026-10: for Digikala customer orders the "ارسال محصول"
+# activity's due date is one day earlier than the normal ship-time rule.
+_DIGIKALA_SOURCES = ("digikala", "digikala2")
+_DIGIKALA_SHIP_ACTIVITY_ADVANCE = timedelta(days=1)
 
 
 class DidarSyncService:
@@ -96,11 +107,24 @@ class DidarSyncService:
         # doesn't expose ship_time yet, create_post_sale_checklist
         # defaults it to order_registered_at + 2 days rather than
         # skipping the checklist (see that method's docstring).
+        if snappshop_warehouse_kind(order) is not None:
+            # Client request 2026-10: SnappShop "ارسال (فوری) به انبار اسنپ"
+            # orders need ONLY the "ارسال محصول" activity, no checklist.
+            self._activities.create_ship_only_activity(
+                deal_id=deal_id,
+                due_date=order.ship_time or (order.created_at + _SNAPPSHOP_DEFAULT_SHIP_DELAY),
+                ship_attachments=_fetch_product_images(order),
+            )
+            return deal_id
+
         self._activities.create_post_sale_checklist(
             deal_id=deal_id,
             order_registered_at=order.created_at,
             ship_time=order.ship_time,
             ship_attachments=_fetch_product_images(order),
+            ship_activity_advance=(
+                _DIGIKALA_SHIP_ACTIVITY_ADVANCE if order.source in _DIGIKALA_SOURCES else None
+            ),
         )
 
         return deal_id

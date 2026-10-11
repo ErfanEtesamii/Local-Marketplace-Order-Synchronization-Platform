@@ -324,6 +324,7 @@ class SnappShopAdapter(MarketplaceAdapter):
             # Nothing is guessed when it's absent - same None-means-
             # "don't touch it" convention as customer_address above.
             shipping_method=raw.get("delivery_type") or None,
+            has_delivery_address=bool(address),
         )
 
     def _load_product_titles(self) -> dict[str, str]:

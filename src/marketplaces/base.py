@@ -139,6 +139,11 @@ class NormalizedOrder:
     # means the adapter doesn't expose a shipping method for this order.
     shipping_method: str | None = None
 
+    # SnappShop only: True/False = whether the order's customer.address was
+    # populated (it is only for vendor-delivered orders - see
+    # src/snappshop_order_type.py). None = unknown / not applicable.
+    has_delivery_address: bool | None = None
+
 
 class MarketplaceAdapter(ABC):
     """

@@ -399,8 +399,15 @@ class DidarActivityClient:
         order_registered_at: datetime,
         ship_time: datetime | None,
         ship_attachments: list[tuple[bytes, str, str]] | None = None,
+        ship_activity_advance: timedelta | None = None,
     ) -> None:
         """
+        ship_activity_advance, when given, moves ONLY the "ارسال محصول"
+        item's due date that much EARLIER than the normal ship-time rule
+        (client request 2026-10: Digikala orders' ship activity must be
+        due one day earlier). Every other checklist item keeps its
+        normal due date.
+
         Creates every item in POST_SALE_CHECKLIST on the given deal, each
         with its own due date computed by
         src.didar.scheduling.compute_checklist_due_dates from
@@ -454,6 +461,8 @@ class DidarActivityClient:
         due_dates = compute_checklist_due_dates(
             order_registered_at=order_registered_at, ship_time=ship_time,
         )
+        if ship_activity_advance:
+            due_dates[SHIP_ACTIVITY_TITLE] = due_dates[SHIP_ACTIVITY_TITLE] - ship_activity_advance
 
         for title, config_attr in POST_SALE_CHECKLIST:
             try:
