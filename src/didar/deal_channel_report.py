@@ -41,7 +41,7 @@ Didar gave us):
   - Exactly one marketplace label -> that Channel (other, non-marketplace
     labels on the same Deal are ignored).
   - No marketplace label, OR labels of more than one marketplace ->
-    the "سایر" bucket, never guessed into a Channel. Ambiguous Deal Ids
+    the "تلفنی" bucket, never guessed into a Channel. Ambiguous Deal Ids
     and unrecognised label titles are logged, and are returned on the
     report so callers can surface them.
   - The Channel list and its order are the constants below. A label that
@@ -75,7 +75,7 @@ CHANNELS: tuple[tuple[str, str], ...] = (
     ("دیجی‌کالا", "دیجی"),
     ("با سلام", "سلام"),
 )
-OTHER_NAME = "سایر"
+OTHER_NAME = "تلفنی"
 
 # Fixed color-coding for every Telegram report, one circle emoji per
 # marketplace (client request, 2026-09): اسنپ=بنفش, تپسی=نارنجی,
@@ -122,9 +122,9 @@ class DealChannelReport:
     # Always all of CHANNELS, in CHANNELS order (zero rows included).
     channels: tuple[tuple[str, ChannelStat], ...]
     other: ChannelStat = ChannelStat()
-    # Deals carrying labels of more than one marketplace (sent to "سایر").
+    # Deals carrying labels of more than one marketplace (sent to "تلفنی").
     ambiguous_deal_ids: tuple[str, ...] = ()
-    # Titles of labels on "سایر" deals that match no configured Channel.
+    # Titles of labels on "تلفنی" deals that match no configured Channel.
     unrecognized_label_titles: tuple[str, ...] = ()
 
 
@@ -228,7 +228,7 @@ def format_channel_report(
     format_rial: Callable[[object], str],
 ) -> str:
     """The single Telegram text layout for every aggregate report; only
-    `title` ("📊 گزارش ...") and `period_line` ("📅 ...") vary. "سایر"
+    `title` ("📊 گزارش ...") and `period_line` ("📅 ...") vary. "تلفنی"
     is shown only when it is non-empty, so the fixed 5-Channel layout is
     unchanged in the normal case."""
     lines = [
@@ -248,7 +248,7 @@ def format_channel_report(
         rows.append((OTHER_NAME, report.other))
     for name, stat in rows:
         label = f"{CHANNEL_EMOJI.get(name, '')} {name}".strip()
-        lines.extend(["", label, f"└─ {stat.count} سفارش - {format_rial(stat.total)} ریال"])
+        lines.extend(["", label, f"└─ {stat.count} سفارش", f"└─ {format_rial(stat.total)} ریال"])
     lines.extend([
         "",
         _SEPARATOR,
