@@ -1659,6 +1659,22 @@ class TelegramNotifier:
                 )
 
     # ------------------------------------------------------------------
+    # Operational alerts (source outages - see src/source_alerts.py)
+    # ------------------------------------------------------------------
+    def send_alert(self, text: str) -> bool:
+        """Best-effort plain-text alert to every configured recipient.
+        Returns True only if it was actually delivered to at least one
+        chat, so the caller can retry on the next cycle otherwise."""
+        try:
+            if not self.is_configured():
+                return False
+            self._send(text)
+            return True
+        except Exception:
+            log.exception("telegram: failed to send operational alert")
+            return False
+
+    # ------------------------------------------------------------------
     # Low-level sender
     # ------------------------------------------------------------------
     def _send(self, text: str) -> None:

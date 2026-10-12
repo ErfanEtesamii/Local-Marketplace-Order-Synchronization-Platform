@@ -58,6 +58,7 @@ from src.didar.service import DidarSyncService
 from src.didar.warehouse_service import DidarWarehouseSyncService
 from src.express_alert import is_express_order
 from src.logger import get_logger
+from src.source_alerts import SourceStatusTracker
 from src.marketplaces.base import MarketplaceAdapter, NormalizedOrder
 from src.modir_payamak import ModirPayamakNotifier
 from src.snappshop_order_type import (
@@ -116,6 +117,10 @@ class SyncEngine:
         didar_activity_client: DidarActivityClient | None = None,
     ) -> None:
         self._adapters = {a.name: a for a in adapters}
+        # Per-source fetch success/failure history, read by
+        # SourceOutageAlerter (src/source_alerts.py) to raise a Telegram
+        # alert when a source keeps failing.
+        self.source_status = SourceStatusTracker()
         self._repo = repository or Repository()
         self._didar = didar_service or DidarSyncService()
         self._synced_ids_file_path = synced_ids_file_path
@@ -204,9 +209,11 @@ class SyncEngine:
 
         try:
             orders = adapter.fetch_new_orders(since)
-        except Exception:
+        except Exception as exc:
             log.exception("sync_engine: failed to fetch new orders from %s", adapter.name)
+            self.source_status.record_failure(adapter.name, exc)
             return
+        self.source_status.record_success(adapter.name)
 
         # Layer 0: drop anything already on the permanent skip-list before
         # it reaches the window check (or any log line) below.
@@ -407,11 +414,13 @@ class SyncEngine:
         """
         try:
             items = adapter.fetch_new_warehouse_shipments()
-        except Exception:
+        except Exception as exc:
             log.exception(
                 "sync_engine: failed to fetch new FBD shipments from %s", adapter.name
             )
+            self.source_status.record_failure(adapter.name, exc)
             return
+        self.source_status.record_success(adapter.name)
 
         for item in items:
             if self._repo.is_warehouse_shipment_synced(item.source, item.source_shipment_id):

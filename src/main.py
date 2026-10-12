@@ -25,6 +25,7 @@ from src.marketplaces.snappshop2 import SnappShop2Adapter
 from src.marketplaces.tapsishop import TapsiShopAdapter
 from src.modir_payamak import ModirPayamakNotifier
 from src.reporting import check_health, generate_daily_report
+from src.source_alerts import SourceOutageAlerter
 from src.sync_engine import SyncEngine
 from src.telegram import TelegramNotifier
 
@@ -108,8 +109,13 @@ def _poll_cycle(
     sms_notifier: ModirPayamakNotifier,
     deal_poller: DidarDealPoller | None,
     stage_snapshot_client: DidarDealClient,
+    outage_alerter: SourceOutageAlerter | None = None,
 ) -> None:
     engine.run_once()
+    # Telegram alert when a marketplace source has been failing for 30+
+    # minutes (src/source_alerts.py). Never raises.
+    if outage_alerter is not None:
+        outage_alerter.check()
     # Cheap SQLite lookups - safe to run every cycle rather than on a
     # separate schedule. Logs a WARNING for anything that looks stuck;
     # see src/reporting.py for what "stale" means.
@@ -187,6 +193,7 @@ def run_forever() -> None:
     engine, repository = build_engine()
     scheduler = BlockingScheduler(timezone="UTC")
     telegram = TelegramNotifier()
+    outage_alerter = SourceOutageAlerter(engine.source_status, telegram.send_alert)
     # Separate instance from the one SyncEngine builds for itself -
     # same tradeoff (and same reason) as `telegram` above: the object
     # holds nothing but an httpx.Client, all real state lives in the
@@ -213,7 +220,7 @@ def run_forever() -> None:
         seconds=settings.poll_interval_seconds,
         args=[
             engine, repository, telegram, sms_notifier, deal_poller,
-            stage_snapshot_client,
+            stage_snapshot_client, outage_alerter,
         ],
         # NOTE: do NOT pass next_run_time=None here - in APScheduler that
         # means "add this job paused", not "run immediately". It was
@@ -254,7 +261,7 @@ def run_forever() -> None:
     try:
         _poll_cycle(
             engine, repository, telegram, sms_notifier, deal_poller,
-            stage_snapshot_client,
+            stage_snapshot_client, outage_alerter,
         )
     except Exception:
         log.exception("sync_engine: initial run_once failed - will retry on schedule")
