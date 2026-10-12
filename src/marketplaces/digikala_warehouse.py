@@ -105,7 +105,7 @@ import httpx
 from src.config import DigikalaConfig, settings
 from src.currency import to_rial
 from src.db.repository import Repository
-from src.http_utils import default_retry, raise_for_status_with_body
+from src.http_utils import default_retry, raise_for_status_with_body, DIGIKALA_USER_AGENT
 from src.logger import get_logger
 from src.marketplaces.warehouse_base import WarehouseShipmentItem
 from src.token_utils import (
@@ -265,7 +265,7 @@ class DigikalaWarehouseAdapter:
         self._access_token, self._refresh_token = self._load_tokens()
         self._client = httpx.Client(
             base_url=self._config.base_url,
-            headers={"content-type": "application/json"},
+            headers={"content-type": "application/json", "User-Agent": DIGIKALA_USER_AGENT},
             timeout=30.0,
         )
 

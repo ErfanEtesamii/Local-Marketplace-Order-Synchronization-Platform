@@ -10,10 +10,23 @@ only has to happen in one place.
 """
 from __future__ import annotations
 
+import os
+
 import httpx
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception
 
 from src.log_redaction import redact_secrets
+
+
+# Digikala's seller open-api started rejecting httpx's default
+# "python-httpx/x.y" User-Agent with 401 {"message":"Invalid User-Agent!"}
+# (first seen 2026-10-11 ~17:05 Iran time). Send a browser-like UA instead;
+# override with DIGIKALA_USER_AGENT in .env if it ever needs changing.
+DIGIKALA_USER_AGENT = os.environ.get(
+    "DIGIKALA_USER_AGENT",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36",
+)
 
 
 def is_retryable_http_error(exc: BaseException) -> bool:
