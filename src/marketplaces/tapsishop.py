@@ -41,6 +41,7 @@ fulfillment are the sales team's concern here.
 from __future__ import annotations
 
 import time
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 
@@ -176,22 +177,27 @@ class TapsiShopAdapter(MarketplaceAdapter):
         shipments = data.get("shipments") or []
         first_shipment = shipments[0] if shipments else {}
 
-        items = [
-            OrderItem(
-                sku=str(i.get("sku", "")),
-                title=str(i.get("name", "")),
-                # The detail response does not expose a per-item quantity field;
-                # each entry represents one unit. Revisit if the vendor adds one.
-                quantity=1,
-                unit_price=to_rial(_to_decimal(i.get("price")), self._config.price_unit),
-                final_price=to_rial(_to_decimal(i.get("finalPrice")), self._config.price_unit),
-                # CONFIRMED field per docs/TapsiShop.v.0.2.pdf (order-detail
-                # response, items[].picture) - was never read before, so no
-                # Tapsi Shop order ever had a photo to attach.
-                product_image_url=str(i["picture"]) if i.get("picture") else None,
-            )
-            for i in raw_items
-        ]
+        items = _group_identical_units(
+            [
+                OrderItem(
+                    sku=str(i.get("sku", "")),
+                    title=str(i.get("name", "")),
+                    # The detail response does not expose a per-item quantity
+                    # field; each entry represents ONE unit. Identical units
+                    # are merged into a single line (quantity = count) by
+                    # _group_identical_units() below - see its docstring for
+                    # why that matters.
+                    quantity=1,
+                    unit_price=to_rial(_to_decimal(i.get("price")), self._config.price_unit),
+                    final_price=to_rial(_to_decimal(i.get("finalPrice")), self._config.price_unit),
+                    # CONFIRMED field per docs/TapsiShop.v.0.2.pdf (order-detail
+                    # response, items[].picture) - was never read before, so no
+                    # Tapsi Shop order ever had a photo to attach.
+                    product_image_url=str(i["picture"]) if i.get("picture") else None,
+                )
+                for i in raw_items
+            ]
+        )
 
         return NormalizedOrder(
             source=self.name,
@@ -244,3 +250,35 @@ def _parse_date(value: str | None) -> datetime:
         return datetime.fromisoformat(value.replace("Z", "+00:00"))
     except ValueError:
         return datetime.now(timezone.utc)
+
+
+def _group_identical_units(units: list[OrderItem]) -> list[OrderItem]:
+    """
+    Merge per-unit entries of the same product into one line with quantity=N.
+
+    WHY: Tapsi's order-detail returns one entry PER UNIT (an order of 4
+    identical products arrives as 4 entries, quantity unknown). Sent to Didar
+    as 4 DealItems with the same ProductId, only ONE line landed in the CRM
+    (production incident 2026-10-12, order 1559032414072168456 - Telegram,
+    built from the same list, correctly showed 4). One line per distinct
+    product with Quantity=N is unambiguous for Didar.
+
+    Grouping key: (sku, title, unit_price) - units differing in price stay
+    separate lines. final_price becomes the LINE total (sum), matching the
+    unit_price*quantity convention _build_deal_item() and telegram.py expect.
+    First-seen order is preserved.
+    """
+    grouped: dict[tuple, OrderItem] = {}
+    for unit in units:
+        key = (unit.sku, unit.title, unit.unit_price)
+        existing = grouped.get(key)
+        if existing is None:
+            grouped[key] = unit
+            continue
+        grouped[key] = replace(
+            existing,
+            quantity=existing.quantity + unit.quantity,
+            final_price=existing.final_price + unit.final_price,
+            product_image_url=existing.product_image_url or unit.product_image_url,
+        )
+    return list(grouped.values())

@@ -285,3 +285,28 @@ def test_throttle_enforces_minimum_interval_between_requests(mock_monotonic, moc
     adapter._throttle()  # second call: only 1s elapsed, must wait out the remaining 4.5s
 
     mock_sleep.assert_called_once_with(4.5)
+
+@respx.mock
+def test_fetch_order_detail_merges_identical_units_into_one_line():
+    """Tapsi returns one entry per unit; 4 identical units must become ONE
+    item with quantity=4 (Didar kept only one line out of 4 same-ProductId
+    DealItems - incident 2026-10-12)."""
+    unit = {"sku": "SKU-1", "name": "Product A", "price": "150000", "finalPrice": "125000"}
+    respx.get("https://vendorgw.tapsi.shop/Web/Hub/vendors/v1/orders/333").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "success": True,
+                "data": {
+                    "order": {"orderNumber": "ORD-333", "orderDate": "2026-08-10T09:00:00Z",
+                              "amountAfterDiscount": "600000", "status": "confirmed"},
+                    "items": [dict(unit), dict(unit), dict(unit), dict(unit),
+                              {"sku": "SKU-2", "name": "Product B", "price": "10000", "finalPrice": "10000"}],
+                },
+            },
+        )
+    )
+    order = TapsiShopAdapter(config=_CFG).fetch_order_detail("333")
+    assert [(i.sku, i.quantity) for i in order.items] == [("SKU-1", 4), ("SKU-2", 1)]
+    assert order.items[0].unit_price * 4 == order.items[0].unit_price * order.items[0].quantity
+    assert order.items[0].final_price == 4 * 125000
