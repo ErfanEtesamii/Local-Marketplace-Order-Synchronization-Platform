@@ -28,6 +28,12 @@ DIGIKALA_USER_AGENT = os.environ.get(
     "DIGIKALA_USER_AGENT",
     "DigikalaTrustedBot/SelfToken/570891",
 )
+# The second store (digikala2, "دیجی کالا سریع") is a separate seller panel
+# with its own seller code (1385180), so it needs its own User-Agent.
+DIGIKALA2_USER_AGENT = os.environ.get(
+    "DIGIKALA2_USER_AGENT",
+    "DigikalaTrustedBot/SelfToken/1385180",
+)
 
 
 def is_retryable_http_error(exc: BaseException) -> bool:
