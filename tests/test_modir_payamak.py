@@ -112,6 +112,8 @@ _ENV_VARS = (
     "EXPRESS_ALERT_SMS_RECIPIENT_5_NAME",
     "EXPRESS_ALERT_SMS_RECIPIENT_6",
     "EXPRESS_ALERT_SMS_RECIPIENT_6_NAME",
+    "EXPRESS_ALERT_SMS_RECIPIENT_7",
+    "EXPRESS_ALERT_SMS_RECIPIENT_7_NAME",
 )
 
 
@@ -1130,3 +1132,24 @@ def test_sms_failure_never_breaks_the_sync(monkeypatch, repo, tmp_path):
     assert repo.is_already_synced(order.source, order.source_order_id) is True
     assert repo.get_pending_failures() == []
     assert len(repo.get_pending_sms_failures()) == len(_RECIPIENTS)
+
+@respx.mock
+def test_notify_if_express_includes_seventh_recipient(monkeypatch, repo):
+    recipients = _SIX_RECIPIENTS + [("+989127777777", "Seventh colleague")]
+    route = respx.post(_SEND_URL).mock(return_value=_ok_send_response())
+    notifier = _configured_notifier(monkeypatch, recipients=recipients)
+    order = _express_order()
+
+    notifier.notify_if_express(order, repo)
+
+    assert route.call_count == 7
+    body = json.loads(route.calls[-1].request.content)
+    assert body["params"]["recipients"] == [recipients[-1][0]]
+    assert body["message"] == notifier._format_message(recipients[-1][1], order)
+
+
+def test_is_configured_collects_seventh_recipient(monkeypatch):
+    recipients = _SIX_RECIPIENTS + [("+989127777777", "Seventh colleague")]
+    notifier = _configured_notifier(monkeypatch, recipients=recipients)
+    assert notifier._recipients == recipients
+    notifier.close()

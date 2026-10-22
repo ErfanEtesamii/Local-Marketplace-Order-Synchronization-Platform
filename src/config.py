@@ -308,7 +308,7 @@ class ModirPayamakConfig:
     """Express-order warehouse SMS, via Modir Payamak's IPPanel Edge API
     (see src/modir_payamak.py).
 
-    NOTE: src/modir_payamak.py reads these same five env vars directly
+    NOTE: src/modir_payamak.py reads the same env vars directly
     with os.getenv rather than through this object. That is the existing
     notifier-module exception to this file's "nothing outside here calls
     os.getenv" rule - src/telegram.py already does exactly the same with
@@ -322,8 +322,8 @@ class ModirPayamakConfig:
     notifier and its httpx client.
 
     `recipients` drops blank entries, matching the notifier's own rule
-    that only non-empty EXPRESS_ALERT_SMS_RECIPIENT_{1,2,3} values are
-    sent to - so one or two configured numbers is valid; zero is not.
+    that only non-empty EXPRESS_ALERT_SMS_RECIPIENT_{1..7} values are
+    sent to - so one to seven configured numbers is valid; zero is not.
     """
 
     token: str = field(default_factory=lambda: _get("MODIR_PAYAMAK_TOKEN"))
@@ -335,6 +335,10 @@ class ModirPayamakConfig:
                 "EXPRESS_ALERT_SMS_RECIPIENT_1",
                 "EXPRESS_ALERT_SMS_RECIPIENT_2",
                 "EXPRESS_ALERT_SMS_RECIPIENT_3",
+                "EXPRESS_ALERT_SMS_RECIPIENT_4",
+                "EXPRESS_ALERT_SMS_RECIPIENT_5",
+                "EXPRESS_ALERT_SMS_RECIPIENT_6",
+                "EXPRESS_ALERT_SMS_RECIPIENT_7",
             )
             if (value := _get(key).strip())
         )

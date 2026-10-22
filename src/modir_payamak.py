@@ -72,8 +72,8 @@ failure belongs to without Repository needing a new column.
 
 Env vars (added to config.py / .env in stage 8 of this feature):
     MODIR_PAYAMAK_TOKEN, MODIR_PAYAMAK_FROM_NUMBER,
-    EXPRESS_ALERT_SMS_RECIPIENT_1.._6,
-    EXPRESS_ALERT_SMS_RECIPIENT_1_NAME.._6_NAME
+    EXPRESS_ALERT_SMS_RECIPIENT_1.._7,
+    EXPRESS_ALERT_SMS_RECIPIENT_1_NAME.._7_NAME
 Read directly via os.getenv here, same as TelegramNotifier does for
 TELEGRAM_BOT_TOKEN/TELEGRAM_CHAT_ID* - config.py's "nothing outside this
 file calls os.getenv" convention is, in this codebase, already the
@@ -126,6 +126,7 @@ _RECIPIENT_ENV_VARS = (
     "EXPRESS_ALERT_SMS_RECIPIENT_4",
     "EXPRESS_ALERT_SMS_RECIPIENT_5",
     "EXPRESS_ALERT_SMS_RECIPIENT_6",
+    "EXPRESS_ALERT_SMS_RECIPIENT_7",
 )
 
 
@@ -166,7 +167,7 @@ class ModirPayamakNotifier:
     # ------------------------------------------------------------------
     def is_configured(self) -> bool:
         """True iff MODIR_PAYAMAK_TOKEN, MODIR_PAYAMAK_FROM_NUMBER and at
-        least one EXPRESS_ALERT_SMS_RECIPIENT_{1..6} are set. Makes NO
+        least one EXPRESS_ALERT_SMS_RECIPIENT_{1..7} are set. Makes NO
         network call (see module docstring for why this differs from
         TelegramNotifier.is_configured()'s getMe() check) and caches the
         result so this is a cheap call on every poll cycle. Returns
@@ -189,7 +190,7 @@ class ModirPayamakNotifier:
             return False
         if not recipients:
             log.warning(
-                "modir_payamak: no EXPRESS_ALERT_SMS_RECIPIENT_{1..6} configured "
+                "modir_payamak: no EXPRESS_ALERT_SMS_RECIPIENT_{1..7} configured "
                 "- SMS alerts disabled"
             )
             return False
