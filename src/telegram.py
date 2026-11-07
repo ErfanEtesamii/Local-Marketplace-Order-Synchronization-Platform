@@ -186,27 +186,30 @@ _MONTH_NAMES_FA = [
     "مهر", "آبان", "آذر", "دی", "بهمن", "اسفند",
 ]
 
-# Platform emoji mapping (distinct color circle per platform), exactly as
-# specified in the feature request. SnappShop isn't one of the four
-# platforms named there (and is disabled by default - see config.py), so
-# it gets a neutral fallback circle rather than an invented color.
+# Platform emoji mapping (distinct color circle per platform). Since
+# 2026-11 these are the SAME colors the aggregate reports use for each
+# Channel (CHANNEL_EMOJI in src/didar/deal_channel_report.py): دیجی‌کالا
+# 🔴, اسنپ 🟣, تپسی 🟠, سایت فرازهنر 🟢, باسلام 🔵 - so an order's message
+# and its line in a report share one color (client request). If a color
+# changes there, change it here too. An unknown source still falls back
+# to a neutral "⚪" (see _format_new_order_message).
 _PLATFORM_DISPLAY = {
-    "digikala": ("🟣", "دیجی‌کالا"),
+    "digikala": ("🔴", "دیجی‌کالا"),
     # Second Digikala store (src/marketplaces/digikala2.py) - same
     # purple circle (same underlying platform), distinct display name
     # so per-order Telegram messages/reports are still distinguishable
     # between the two stores.
-    "digikala2": ("🟣", "دیجی‌کالا (فروشگاه دوم)"),
-    "basalam": ("🟢", "باسلام"),
+    "digikala2": ("🔴", "دیجی‌کالا (فروشگاه دوم)"),
+    "basalam": ("🔵", "باسلام"),
     "tapsishop": ("🟠", "تپسی‌شاپ"),
-    "farazhonar": ("🔵", "فرازهنر"),
-    "snappshop": ("⚪", "اسنپ‌شاپ"),
+    "farazhonar": ("🟢", "فرازهنر"),
+    "snappshop": ("🟣", "اسنپ‌شاپ"),
     # Second SnappShop vendor account (src/marketplaces/snappshop2.py) -
-    # same neutral circle (same underlying platform), distinct display
+    # same purple circle (same underlying platform), distinct display
     # name so per-order Telegram messages/reports are still
     # distinguishable between the two accounts - same reasoning as
     # "digikala2" above.
-    "snappshop2": ("⚪", "اسنپ‌شاپ (فروشگاه دوم)"),
+    "snappshop2": ("🟣", "اسنپ‌شاپ (فروشگاه دوم)"),
 }
 
 # Reverse lookup (Didar Deal Label title -> emoji) so the manual-deal
@@ -250,6 +253,38 @@ _REPORT_CALLBACK_PREFIX = "rpt:"
 # command text - so this string must stay in sync between the keyboard
 # builder and the handler.
 _REPORT_MENU_BUTTON_TEXT = "📊 دریافت گزارش بازه دلخواه"
+
+# Three fixed "quick report" buttons on the persistent bottom menu (client
+# request 2026-11): one tap, no date picker. Same mechanism as
+# _REPORT_MENU_BUTTON_TEXT above - the label comes back as plain message
+# text, so these strings must stay in sync between _report_reply_keyboard()
+# and _handle_report_message().
+#
+# ROLLING windows ending "now" (24h = exactly 24 hours back, 7d = 7*24h,
+# 30d = 30*24h), NOT calendar days - the buttons say "گذشته" (past), and a
+# rolling window is what that literally means at any time of day. Calendar
+# periods are what the automatic daily/weekly/monthly reports and the
+# custom-range picker are for. They go through the same single report path
+# (_build_channel_report -> Didar, Deal-level, per-Channel) as every other
+# aggregate report, so Total == sum of Channels holds here too.
+_REPORT_LAST_24H_BUTTON_TEXT = "🕐 دریافت گزارش ۲۴ ساعت گذشته"
+_REPORT_LAST_7D_BUTTON_TEXT = "📅 دریافت گزارش ۷ روز گذشته"
+_REPORT_LAST_30D_BUTTON_TEXT = "🗓 دریافت گزارش ۳۰ روز گذشته"
+
+# button text -> (report title, window length)
+_ROLLING_REPORTS = {
+    _REPORT_LAST_24H_BUTTON_TEXT: ("📊 گزارش ۲۴ ساعت گذشته", timedelta(hours=24)),
+    _REPORT_LAST_7D_BUTTON_TEXT: ("📊 گزارش ۷ روز گذشته", timedelta(days=7)),
+    _REPORT_LAST_30D_BUTTON_TEXT: ("📊 گزارش ۳۰ روز گذشته", timedelta(days=30)),
+}
+
+# Appended to every ON-DEMAND report (the three quick buttons and the
+# custom-range picker) so whoever pulls a report knows they don't need to
+# pull today's by hand. True because check_and_send_reports() sends the
+# daily report on the first poll cycle after Iran-local midnight (see
+# _check_daily_rollover). Worded "every night" rather than "tonight" so it
+# is still correct when someone pulls a report at 00:30.
+_AUTO_DAILY_REPORT_NOTE = "🕛 گزارش روزانه هر شب ساعت ۱۲ به‌صورت خودکار ارسال می‌شود."
 
 # Key under which the getUpdates offset is persisted, via Repository's
 # report_progress table (see get/set_report_marker) - reused as the
@@ -361,8 +396,10 @@ def _report_start_keyboard() -> dict:
 
 
 def _report_reply_keyboard() -> dict:
-    """Persistent bottom-of-chat menu (Telegram ReplyKeyboardMarkup) with
-    the same single button as _report_start_keyboard(), but pinned above
+    """Persistent bottom-of-chat menu (Telegram ReplyKeyboardMarkup): a
+    2x2 grid - 24h / 7d on the first row, 30d / custom range on the second
+    (2026-11; before that it was the single custom-range button, the same
+    one _report_start_keyboard() offers inline), pinned above
     the message box on every screen instead of attached to one message -
     client request 2026-09: wants this bot's home screen to look like
     the button-grid on the Price Manager bot instead of relying on
@@ -371,9 +408,19 @@ def _report_reply_keyboard() -> dict:
     for every later message in the chat until it's explicitly replaced
     or removed, so nothing needs to re-send it on each reply."""
     return {
-        "keyboard": [[{"text": _REPORT_MENU_BUTTON_TEXT}]],
+        "keyboard": [
+            [
+                {"text": _REPORT_LAST_24H_BUTTON_TEXT},
+                {"text": _REPORT_LAST_7D_BUTTON_TEXT},
+            ],
+            [
+                {"text": _REPORT_LAST_30D_BUTTON_TEXT},
+                {"text": _REPORT_MENU_BUTTON_TEXT},
+            ],
+        ],
         "resize_keyboard": True,
         "is_persistent": True,
+        "input_field_placeholder": "یکی از گزارش‌ها را انتخاب کنید 👇",
     }
 
 
@@ -838,9 +885,9 @@ class TelegramNotifier:
         total = item.unit_price * item.quantity
         when = self._format_jalali_datetime(item.created_at)
         lines = [
-            "🟣 سفارش جدید ارسال به انبار دیجی‌کالا در دیدار ثبت شد",
+            "🔴 سفارش جدید ارسال به انبار دیجی‌کالا در دیدار ثبت شد",
             "🛍 پلتفرم:",
-            "🟣 دیجی‌کالا (ارسال به انبار)",
+            "🔴 دیجی‌کالا (ارسال به انبار)",
             "📦 محصول:",
             f"{item.product_title}",
             f"   └─ {_format_rial(item.unit_price)} ریال × {item.quantity}",
@@ -1357,26 +1404,35 @@ class TelegramNotifier:
             self._send_message_with_keyboard(
                 chat_id, "📅 سال شروع بازه را انتخاب کنید:", reply_markup
             )
+        elif text in _ROLLING_REPORTS:
+            self._send_rolling_report(chat_id, text)
         elif command == "/start":
-            # Pin the persistent bottom menu first (its own sendMessage,
-            # since a ReplyKeyboardMarkup and an inline keyboard can't
-            # share one message) so the button-grid look is there from
-            # the very first screen, then send the welcome text with
-            # its usual inline "begin" button as a second, immediate
-            # way in.
-            self._send_message_with_keyboard(
-                chat_id, "منوی بات:", _report_reply_keyboard()
-            )
-            self._send_message_with_keyboard(
-                chat_id,
-                "👋 سلام و خوش‌آمدید!\n\n"
-                "این بات گزارش فروش هر بازه‌ی دلخواه رو به‌صورت زنده و لحظه‌ای "
-                "از سیستم براتون می‌سازه.\n\n"
-                "برای شروع، کافیه روی دکمه‌ی زیر بزنید 👇\n"
-                "(یا هر زمان که خواستید، دکمه‌ی «📊 دریافت گزارش بازه دلخواه» "
-                "پایین صفحه رو بزنید)",
-                _report_start_keyboard(),
-            )
+            self._send_start_menu(chat_id)
+
+    def _send_start_menu(self, chat_id) -> None:
+        """What /start does - also what the "🚀 شروع" button under the
+        update announcement (scripts/send_update_announcement.py,
+        callback "rpt:start") does, so pressing that button is exactly
+        the same as typing /start.
+
+        Pins the persistent bottom menu first (its own sendMessage,
+        since a ReplyKeyboardMarkup and an inline keyboard can't share
+        one message) so the button-grid look is there from the very
+        first screen, then sends the welcome text with its usual inline
+        "begin" button as a second, immediate way in."""
+        self._send_message_with_keyboard(
+            chat_id, "منوی بات:", _report_reply_keyboard()
+        )
+        self._send_message_with_keyboard(
+            chat_id,
+            "👋 سلام و خوش‌آمدید!\n\n"
+            "این بات گزارش فروش رو به‌صورت زنده و لحظه‌ای "
+            "از سیستم براتون می‌سازه.\n\n"
+            "از دکمه‌های پایین صفحه، گزارش ۲۴ ساعت، ۷ روز یا ۳۰ روز گذشته "
+            "رو بگیرید، یا با «📊 دریافت گزارش بازه دلخواه» هر بازه‌ای که "
+            "خواستید انتخاب کنید 👇",
+            _report_start_keyboard(),
+        )
 
     def _handle_report_callback(
         self, query: dict, repository: Repository, source_names: list[str]
@@ -1400,6 +1456,13 @@ class TelegramNotifier:
                     chat_id, message_id, "📅 سال شروع بازه را انتخاب کنید:",
                     _report_year_keyboard(f"{_REPORT_CALLBACK_PREFIX}sy"),
                 )
+            elif action == "start":
+                # "🚀 شروع" under the update announcement == /start.
+                # The announcement's own button is removed (an edit
+                # without reply_markup drops the inline keyboard) so
+                # it can't be pressed twice.
+                self._edit_message(chat_id, message_id, "✅ منوی جدید فعال شد 👇")
+                self._send_start_menu(chat_id)
             elif action == "cancel":
                 self._edit_message(
                     chat_id, message_id,
@@ -1524,7 +1587,10 @@ class TelegramNotifier:
                 _report_start_keyboard(),
             )
             return
-        self._edit_message(chat_id, message_id, message, _report_start_keyboard())
+        self._edit_message(
+            chat_id, message_id, f"{message}\n\n{_AUTO_DAILY_REPORT_NOTE}",
+            _report_start_keyboard(),
+        )
         log.info(
             "telegram: sent live custom-range report %s..%s (source: Didar CRM, "
             "%d deal(s) total)",
@@ -1533,6 +1599,62 @@ class TelegramNotifier:
         # Let every other admin know who just pulled this report -
         # client request 2026-09 (see _broadcast_report_notice()).
         self._broadcast_report_notice(chat_id, self._display_name(chat_id), period_line)
+
+    def _send_rolling_report(self, chat_id, button_text: str) -> None:
+        """One of the three quick-report buttons (24h / 7d / 30d): a
+        rolling window ending now, built by the same single path as every
+        other aggregate report (_build_channel_report) and followed by
+        _AUTO_DAILY_REPORT_NOTE. Fetching from Didar can take a few
+        seconds, so a short "please wait" message goes out first and is
+        edited into the report (or into an error) when done - it must
+        ALWAYS end up as one of those two, never stay as "please wait".
+        Never raises (called from poll_updates()'s update loop)."""
+        title, window = _ROLLING_REPORTS[button_text]
+        until = datetime.now(timezone.utc)
+        since = until - window
+        period_line = (
+            f"📅 از {self._format_jalali_datetime(since)} "
+            f"تا {self._format_jalali_datetime(until)}"
+        )
+        wait_id = self._send_message_with_keyboard(
+            chat_id, "⏳ در حال دریافت گزارش از دیدار…", _report_reply_keyboard()
+        )
+        try:
+            message, report = self._build_channel_report(title, period_line, since, until)
+            final_text = f"{message}\n\n{_AUTO_DAILY_REPORT_NOTE}"
+        except DealReportError as exc:
+            log.error("telegram: %s NOT sent - Didar data incomplete: %s", title, exc)
+            self._finish_reply(
+                chat_id, wait_id,
+                "⚠️ دریافت کامل اطلاعات از دیدار ناموفق بود؛ گزارش ارسال نشد.\n\n"
+                "لطفاً کمی بعد دوباره تلاش کنید.",
+            )
+            return
+        except Exception:
+            log.exception("telegram: unexpected error building %s", title)
+            self._finish_reply(
+                chat_id, wait_id, "⚠️ خطایی رخ داد؛ لطفاً کمی بعد دوباره تلاش کنید."
+            )
+            return
+        self._finish_reply(chat_id, wait_id, final_text)
+        log.info(
+            "telegram: sent live %s (source: Didar CRM, %d deal(s) total)",
+            title, report.total.count,
+        )
+        # Same "who pulled a report" notice as the custom-range report.
+        self._broadcast_report_notice(chat_id, self._display_name(chat_id), f"{title}\n{period_line}")
+
+    def _finish_reply(self, chat_id, message_id, text: str) -> None:
+        """Edit the "please wait" message into `text`; if that message
+        never got sent (message_id is None), send `text` as a new message
+        so the result is never lost."""
+        if message_id is not None:
+            self._edit_message(chat_id, message_id, text)
+            return
+        try:
+            self._post_message(chat_id, text)
+        except TelegramError as exc:
+            log.error("telegram: failed to send report to chat_id=%r: %s", chat_id, exc)
 
     def _send_message_with_keyboard(
         self, chat_id: Union[int, str], text: str, reply_markup: dict
