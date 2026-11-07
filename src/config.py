@@ -497,6 +497,9 @@ class Settings:
     telegram_report_picker_poll_seconds: int = field(
         default_factory=lambda: int(_get("TELEGRAM_REPORT_PICKER_POLL_SECONDS", "3"))
     )
+    bale_report_picker_poll_seconds: int = field(
+        default_factory=lambda: int(_get("BALE_REPORT_PICKER_POLL_SECONDS", "3"))
+    )
     # Digikala FBD - "ارسال به انبار دیجی‌کالا" (2026-09). Opt-in, same
     # pattern as SNAPPSHOP_ENABLED / DIGIKALA2_ENABLED: when false (the
     # default) main.py never constructs the adapter, so the feature

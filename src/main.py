@@ -28,6 +28,7 @@ from src.reporting import check_health, generate_daily_report
 from src.source_alerts import SourceOutageAlerter
 from src.sync_engine import SyncEngine
 from src.telegram import TelegramNotifier
+from src.bale import BaleNotifier
 
 log = get_logger(__name__)
 
@@ -106,6 +107,7 @@ def _poll_cycle(
     engine: SyncEngine,
     repository: Repository,
     telegram: TelegramNotifier,
+    bale: BaleNotifier,
     sms_notifier: ModirPayamakNotifier,
     deal_poller: DidarDealPoller | None,
     stage_snapshot_client: DidarDealClient,
@@ -126,11 +128,13 @@ def _poll_cycle(
     # boundaries). Best-effort - logs and swallows its own errors, so a
     # Telegram outage can never break the poll cycle itself.
     telegram.check_and_send_reports(repository, engine.adapter_names)
+    bale.check_and_send_reports(repository, engine.adapter_names)
     # Retry any Telegram notification that failed to send on a previous
     # cycle (2026-09 - see telegram.py's module docstring for the
     # "orders sync but Telegram never fires" incident this closes).
     # Best-effort like every other telegram.* call here.
     telegram.retry_pending_notifications(repository)
+    bale.retry_pending_notifications(repository)
     # The SMS-side counterpart of the line above: re-attempt every
     # express-order alert that failed to send on a previous cycle
     # (2026-09 - see src/modir_payamak.py's module docstring). Its own
@@ -144,7 +148,7 @@ def _poll_cycle(
     # src/didar/deal_poller.py's module docstring. None when
     # DIDAR_DEAL_POLL_ENABLED=false.
     if deal_poller is not None:
-        _poll_new_deals(deal_poller, repository, telegram)
+        _poll_new_deals(deal_poller, repository, telegram, bale)
     # "مشتری جدید" pipeline-stage history (client request, 2026-09 -
     # see the "تفکیک سفارش‌های مرحله «مشتری جدید»" prompt / src/db/
     # repository.py's new_customer_stage_deals docstring). Every poll
@@ -176,7 +180,8 @@ def _record_new_stage_deals(deal_client: DidarDealClient, repository: Repository
 
 
 def _poll_new_deals(
-    deal_poller: DidarDealPoller, repository: Repository, telegram: TelegramNotifier
+    deal_poller: DidarDealPoller, repository: Repository, telegram: TelegramNotifier,
+    bale: BaleNotifier,
 ) -> None:
     """One step of the "any deal" poller, isolated in its own try/except
     (same "each source isolated" philosophy as _sync_source() in
@@ -185,6 +190,7 @@ def _poll_new_deals(
     try:
         for deal in deal_poller.poll_new_deals(repository):
             telegram.notify_new_deal(deal, repository)
+            bale.notify_new_deal(deal, repository)
     except Exception:
         log.exception("didar: deal poller cycle failed - will retry next cycle")
 
@@ -193,7 +199,13 @@ def run_forever() -> None:
     engine, repository = build_engine()
     scheduler = BlockingScheduler(timezone="UTC")
     telegram = TelegramNotifier()
-    outage_alerter = SourceOutageAlerter(engine.source_status, telegram.send_alert)
+    bale = BaleNotifier()
+    outage_alerter = SourceOutageAlerter(
+        engine.source_status,
+        # Bitwise-or intentionally evaluates both sides, unlike ``or``:
+        # an alert must be attempted on Bale even after Telegram succeeds.
+        lambda text: bool(telegram.send_alert(text) | bale.send_alert(text)),
+    )
     # Separate instance from the one SyncEngine builds for itself -
     # same tradeoff (and same reason) as `telegram` above: the object
     # holds nothing but an httpx.Client, all real state lives in the
@@ -219,7 +231,7 @@ def run_forever() -> None:
         "interval",
         seconds=settings.poll_interval_seconds,
         args=[
-            engine, repository, telegram, sms_notifier, deal_poller,
+            engine, repository, telegram, bale, sms_notifier, deal_poller,
             stage_snapshot_client, outage_alerter,
         ],
         # NOTE: do NOT pass next_run_time=None here - in APScheduler that
@@ -251,6 +263,12 @@ def run_forever() -> None:
         seconds=settings.telegram_report_picker_poll_seconds,
         args=[repository, engine.adapter_names],
     )
+    scheduler.add_job(
+        bale.poll_updates,
+        "interval",
+        seconds=settings.bale_report_picker_poll_seconds,
+        args=[repository, engine.adapter_names],
+    )
 
     log.info(
         "order-sync-platform starting - polling every %d seconds",
@@ -260,7 +278,7 @@ def run_forever() -> None:
     # Run once immediately on startup rather than waiting a full interval.
     try:
         _poll_cycle(
-            engine, repository, telegram, sms_notifier, deal_poller,
+            engine, repository, telegram, bale, sms_notifier, deal_poller,
             stage_snapshot_client, outage_alerter,
         )
     except Exception:

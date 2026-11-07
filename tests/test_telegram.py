@@ -220,7 +220,7 @@ def test_format_new_order_message_matches_exact_template():
     assert message == (
         "🟢 سفارش جدید در دیدار به صورت اتوماتیک ثبت شد\n"
         "🛍 پلتفرم:\n"
-        "🟣 دیجی‌کالا\n"
+        "🔴 دیجی‌کالا\n"
         "👤 مشتری:\n"
         "علی رضایی\n"
         "📦 محصولات:\n"
@@ -258,7 +258,7 @@ def test_format_new_order_message_numbers_multiple_products():
     assert "   └─ 10,000 ریال × 1" in message
     assert "2️⃣ Product B" in message
     assert "   └─ 20,000 ریال × 3" in message
-    assert "🛍 پلتفرم:\n🟢 باسلام" in message
+    assert "🛍 پلتفرم:\n🔵 باسلام" in message
 
 
 def test_format_new_order_message_missing_customer_name_shows_placeholder():
@@ -275,7 +275,7 @@ def test_format_new_order_message_farazhonar_platform_emoji():
     notifier = TelegramNotifier()
     order = _order_with_items("farazhonar", "1")
     message = notifier._format_new_order_message(order)
-    assert "🛍 پلتفرم:\n🔵 فرازهنر" in message
+    assert "🛍 پلتفرم:\n🟢 فرازهنر" in message
 
 
 # ---------------------------------------------------------------------
@@ -288,13 +288,16 @@ def test_format_new_order_message_farazhonar_platform_emoji():
 def test_digikala_shows_real_shipping_cost_not_a_flat_fee():
     """REMOVED 2026-09 (see src/shipping_fees.py's module docstring):
     Digikala's real shipping_cost varies per order, so it must be shown
-    as-is, and the grand total must be the order's own total_price
-    rather than products_total + a fixed fee."""
+    as-is, not replaced by a flat fee. Updated 2026-10 (client request,
+    see _format_new_order_message): the grand total is products +
+    shipping - Digikala's total_price is the items only (no shipping) -
+    so with a 100,000 item and 999,999 shipping the total is 1,099,999."""
     notifier = TelegramNotifier()
-    order = _order_with_items("digikala", "1", total="999999", shipping_cost="999999")
+    order = _order_with_items("digikala", "1", total="100000", shipping_cost="999999")
     message = notifier._format_new_order_message(order)
     assert "🚚 هزینه ارسال:\n999,999 ریال\n" in message
-    assert "💳 مبلغ کل:\n999,999 ریال\n" in message
+    assert "💰 مبلغ محصولات:\n100,000 ریال\n" in message
+    assert "💳 مبلغ کل:\n1,099,999 ریال\n" in message
 
 
 def test_farazhonar_shows_real_shipping_cost_not_a_flat_courier_fee():

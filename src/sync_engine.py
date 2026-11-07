@@ -68,6 +68,7 @@ from src.snappshop_order_type import (
     snappshop_warehouse_kind,
 )
 from src.telegram import TelegramNotifier
+from src.bale import BaleNotifier
 
 log = get_logger(__name__)
 
@@ -131,6 +132,7 @@ class SyncEngine:
         # each currently-pending order once more, which is harmless.
         self._recheck_skip_logged: set[tuple[str, str]] = set()
         self._telegram = TelegramNotifier()
+        self._bale = BaleNotifier()
         # Express-order SMS alert (2026-09 - see src/modir_payamak.py).
         # Injectable, unlike self._telegram above, purely so tests can
         # pass a fake without touching env vars or the network; the
@@ -466,6 +468,7 @@ class SyncEngine:
             # retry_pending_notifications(), same contract as
             # notify_new_order() in _sync_one_order().
             self._telegram.notify_new_warehouse_shipment(item, deal_id, self._repo)
+            self._bale.notify_new_warehouse_shipment(item, deal_id, self._repo)
 
         # Same reasoning as the "completed poll" line in _sync_source:
         # this fires every poll regardless of activity, so only promote
@@ -613,6 +616,7 @@ class SyncEngine:
             # docstring), so a Telegram outage can never break the sync
             # itself.
             self._telegram.notify_new_order(order, deal_id, self._repo)
+            self._bale.notify_new_order(order, deal_id, self._repo)
             # Same fire-and-forget contract (notify_if_express catches,
             # logs and queues its own failures - see
             # src/modir_payamak.py's module docstring), and a no-op for
@@ -950,6 +954,7 @@ class SyncEngine:
                 # same reasoning applies to the retry path.
                 self._repo.mark_deal_notified(deal_id)
                 self._telegram.notify_new_order(order, deal_id, self._repo)
+                self._bale.notify_new_order(order, deal_id, self._repo)
                 # Deliberately called on the retry path too: an order
                 # whose FIRST sync attempt failed is exactly the one
                 # most likely to be running late, so it must not lose

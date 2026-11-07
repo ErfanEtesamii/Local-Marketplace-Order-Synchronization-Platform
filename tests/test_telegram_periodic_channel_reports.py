@@ -105,10 +105,15 @@ def test_every_periodic_report_uses_shared_path_and_layout(repo, sender, arg, ti
     for leaked in ("ZZ-PRODUCT", "DealItems", "Quantity", "╔"):
         assert leaked not in text
 
-    # Total == sum of channel lines (+ "سایر").
+    # Total == online subtotal + تلفنی, and the online subtotal == the sum
+    # of the 5 channel lines printed under it.
     total_line = text.split("📦 کل معاملات\n└─ ")[1].split(" معامله")[0]
-    per_channel = [int(x) for x in _findall_counts(text.split("━" * 20)[2])]
-    assert int(total_line) == sum(per_channel)
+    blocks = text.split("━" * 20)
+    online = [int(x) for x in _findall_counts(blocks[2])]   # [subtotal, ch1..ch5]
+    phone = int(_findall_counts(blocks[3])[0])
+    assert "🌐 پلتفرم‌های آنلاین" in blocks[2] and "تلفنی" in blocks[3]
+    assert len(online) == 6 and online[0] == sum(online[1:])
+    assert int(total_line) == online[0] + phone
 
 
 def _findall_counts(block: str):
