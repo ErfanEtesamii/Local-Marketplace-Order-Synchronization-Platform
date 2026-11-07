@@ -1616,9 +1616,13 @@ class TelegramNotifier:
             f"📅 از {self._format_jalali_datetime(since)} "
             f"تا {self._format_jalali_datetime(until)}"
         )
-        wait_id = self._send_message_with_keyboard(
-            chat_id, "⏳ در حال دریافت گزارش از دیدار…", _report_reply_keyboard()
-        )
+        # Plain message, deliberately WITHOUT the reply keyboard: it is
+        # edited into the report below, and a message that carries a
+        # ReplyKeyboardMarkup is not reliably editable on Telegram's side
+        # (the 2026-11 rollout showed "please wait" never turning into the
+        # report). _finish_reply() also falls back to a new message if an
+        # edit is refused for any reason.
+        wait_id = self._send_plain_message(chat_id, "⏳ در حال دریافت گزارش از دیدار…")
         try:
             message, report = self._build_channel_report(title, period_line, since, until)
             final_text = f"{message}\n\n{_AUTO_DAILY_REPORT_NOTE}"
@@ -1644,12 +1648,22 @@ class TelegramNotifier:
         # Same "who pulled a report" notice as the custom-range report.
         self._broadcast_report_notice(chat_id, self._display_name(chat_id), f"{title}\n{period_line}")
 
+    def _send_plain_message(self, chat_id, text: str) -> Optional[int]:
+        """sendMessage with no keyboard; returns the new message_id (needed
+        to edit it later) or None on failure - never raises."""
+        assert self._client is not None  # only called after is_configured()
+        try:
+            payload = self._request(self._client, "sendMessage", chat_id=chat_id, text=text)
+            return payload.get("result", {}).get("message_id")
+        except TelegramError as exc:
+            log.error("telegram: failed to send message to chat_id=%r: %s", chat_id, exc)
+            return None
+
     def _finish_reply(self, chat_id, message_id, text: str) -> None:
         """Edit the "please wait" message into `text`; if that message
-        never got sent (message_id is None), send `text` as a new message
-        so the result is never lost."""
-        if message_id is not None:
-            self._edit_message(chat_id, message_id, text)
+        never got sent (message_id is None) OR Telegram refuses the edit,
+        send `text` as a new message so the result is never lost."""
+        if message_id is not None and self._edit_message(chat_id, message_id, text):
             return
         try:
             self._post_message(chat_id, text)
@@ -1679,22 +1693,27 @@ class TelegramNotifier:
 
     def _edit_message(
         self, chat_id, message_id, text: str, reply_markup: Optional[dict] = None
-    ) -> None:
+    ) -> bool:
         """editMessageText for one picker message - advances the picker
-        in place instead of sending a new message at every step."""
+        in place instead of sending a new message at every step. Returns
+        True if Telegram accepted the edit, False otherwise (never
+        raises) - callers that must not lose the text (see
+        _finish_reply) fall back to a new message on False."""
         if message_id is None:
-            return
+            return False
         assert self._client is not None
         try:
             kwargs = {"chat_id": chat_id, "message_id": message_id, "text": text}
             if reply_markup is not None:
                 kwargs["reply_markup"] = reply_markup
             self._request(self._client, "editMessageText", **kwargs)
+            return True
         except TelegramError as exc:
             log.error(
                 "telegram: failed to edit report-picker message %s in chat_id=%r: %s",
                 message_id, chat_id, exc,
             )
+            return False
 
     def _answer_callback_query(self, callback_query_id: Optional[str]) -> None:
         """Clears the button's loading spinner. Best-effort - a failure

@@ -81,7 +81,7 @@ def test_button_sends_rolling_report_with_note(button, window, title):
     didar = _FakeDidar()
     before = datetime.now(timezone.utc)
 
-    with patch.object(n, "_send_message_with_keyboard", return_value=55) as wait, \
+    with patch.object(n, "_send_plain_message", return_value=55) as wait, \
          patch.object(n, "_edit_message") as edit, \
          patch.object(n, "_get_didar_client", return_value=didar):
         n._handle_report_message({"chat": {"id": CHAT}, "text": button})
@@ -108,7 +108,7 @@ def test_didar_failure_replaces_wait_message_with_error_and_no_report():
         def get_channel_report(self, since, until):
             raise DealReportError("page failed")
 
-    with patch.object(n, "_send_message_with_keyboard", return_value=9), \
+    with patch.object(n, "_send_plain_message", return_value=9), \
          patch.object(n, "_edit_message") as edit, \
          patch.object(n, "_get_didar_client", return_value=_Broken()):
         n._handle_report_message({"chat": {"id": CHAT}, "text": _REPORT_LAST_7D_BUTTON_TEXT})
@@ -119,7 +119,7 @@ def test_didar_failure_replaces_wait_message_with_error_and_no_report():
 
 def test_wait_message_failure_falls_back_to_a_new_message():
     n = _notifier()
-    with patch.object(n, "_send_message_with_keyboard", return_value=None), \
+    with patch.object(n, "_send_plain_message", return_value=None), \
          patch.object(n, "_edit_message") as edit, \
          patch.object(n, "_post_message") as post, \
          patch.object(n, "_get_didar_client", return_value=_FakeDidar()):
@@ -130,9 +130,21 @@ def test_wait_message_failure_falls_back_to_a_new_message():
     assert _AUTO_DAILY_REPORT_NOTE in post.call_args[0][1]
 
 
+def test_refused_edit_falls_back_to_a_new_message():
+    n = _notifier()
+    with patch.object(n, "_send_plain_message", return_value=5), \
+         patch.object(n, "_edit_message", return_value=False), \
+         patch.object(n, "_post_message") as post, \
+         patch.object(n, "_get_didar_client", return_value=_FakeDidar()):
+        n._handle_report_message({"chat": {"id": CHAT}, "text": _REPORT_LAST_24H_BUTTON_TEXT})
+
+    assert post.call_args[0][0] == CHAT
+    assert _AUTO_DAILY_REPORT_NOTE in post.call_args[0][1]
+
+
 def test_button_from_unconfigured_chat_is_ignored():
     n = _notifier()
-    with patch.object(n, "_send_message_with_keyboard") as send, \
+    with patch.object(n, "_send_plain_message") as send, \
          patch.object(n, "_get_didar_client") as get_client:
         n._handle_report_message({"chat": {"id": 999}, "text": _REPORT_LAST_24H_BUTTON_TEXT})
     send.assert_not_called()
@@ -142,7 +154,7 @@ def test_button_from_unconfigured_chat_is_ignored():
 def test_other_admins_are_told_who_pulled_the_report():
     n = _notifier()
     n._chat_ids = [CHAT, 42]
-    with patch.object(n, "_send_message_with_keyboard", return_value=1), \
+    with patch.object(n, "_send_plain_message", return_value=1), \
          patch.object(n, "_edit_message"), \
          patch.object(n, "_post_message") as post, \
          patch.object(n, "_get_didar_client", return_value=_FakeDidar()):
