@@ -14,6 +14,10 @@ import pytest
 from src.didar.deal_channel_report import DealReportError, aggregate_deals
 from src.telegram import (
     _AUTO_DAILY_REPORT_NOTE,
+    _LEGACY_LAST_24H_BUTTON_TEXT,
+    _LEGACY_LAST_30D_BUTTON_TEXT,
+    _LEGACY_LAST_7D_BUTTON_TEXT,
+    _REPORT_CUSTOM_BUTTON_TEXT,
     _REPORT_LAST_24H_BUTTON_TEXT,
     _REPORT_LAST_30D_BUTTON_TEXT,
     _REPORT_LAST_7D_BUTTON_TEXT,
@@ -56,12 +60,47 @@ class _FakeDidar:
 def test_reply_keyboard_is_a_persistent_2x2_grid_with_all_four_buttons():
     kb = _report_reply_keyboard()
     rows = [[b["text"] for b in row] for row in kb["keyboard"]]
+    # Left-to-right as drawn; a Persian reader sees 24h/7d, then 30d/custom.
     assert rows == [
-        [_REPORT_LAST_24H_BUTTON_TEXT, _REPORT_LAST_7D_BUTTON_TEXT],
-        [_REPORT_LAST_30D_BUTTON_TEXT, _REPORT_MENU_BUTTON_TEXT],
+        [_REPORT_LAST_7D_BUTTON_TEXT, _REPORT_LAST_24H_BUTTON_TEXT],
+        [_REPORT_CUSTOM_BUTTON_TEXT, _REPORT_LAST_30D_BUTTON_TEXT],
     ]
     assert kb["is_persistent"] is True
     assert kb["resize_keyboard"] is True
+
+
+def test_button_labels_are_short_enough_to_stay_on_one_line():
+    for row in _report_reply_keyboard()["keyboard"]:
+        for button in row:
+            assert len(button["text"]) <= 18, button["text"]
+
+
+@pytest.mark.parametrize(
+    "legacy, window",
+    [
+        (_LEGACY_LAST_24H_BUTTON_TEXT, timedelta(hours=24)),
+        (_LEGACY_LAST_7D_BUTTON_TEXT, timedelta(days=7)),
+        (_LEGACY_LAST_30D_BUTTON_TEXT, timedelta(days=30)),
+    ],
+)
+def test_old_long_button_labels_still_work(legacy, window):
+    n = _notifier()
+    didar = _FakeDidar()
+    with patch.object(n, "_send_plain_message", return_value=1), \
+         patch.object(n, "_edit_message"), \
+         patch.object(n, "_get_didar_client", return_value=didar):
+        n._handle_report_message({"chat": {"id": CHAT}, "text": legacy})
+    (since, until), = didar.calls
+    assert until - since == window
+
+
+@pytest.mark.parametrize("label", [_REPORT_CUSTOM_BUTTON_TEXT, _REPORT_MENU_BUTTON_TEXT])
+def test_both_custom_report_labels_start_the_picker(label):
+    n = _notifier()
+    with patch.object(n, "_send_message_with_keyboard") as send:
+        n._handle_report_message({"chat": {"id": CHAT}, "text": label})
+    assert send.call_args[0][0] == CHAT
+    assert "inline_keyboard" in send.call_args[0][2]
 
 
 # ---------------------------------------------------------------------
@@ -69,14 +108,14 @@ def test_reply_keyboard_is_a_persistent_2x2_grid_with_all_four_buttons():
 # ---------------------------------------------------------------------
 
 @pytest.mark.parametrize(
-    "button, window, title",
+    "button, window, title, label",
     [
-        (_REPORT_LAST_24H_BUTTON_TEXT, timedelta(hours=24), "📊 گزارش ۲۴ ساعت گذشته"),
-        (_REPORT_LAST_7D_BUTTON_TEXT, timedelta(days=7), "📊 گزارش ۷ روز گذشته"),
-        (_REPORT_LAST_30D_BUTTON_TEXT, timedelta(days=30), "📊 گزارش ۳۰ روز گذشته"),
+        (_REPORT_LAST_24H_BUTTON_TEXT, timedelta(hours=24), "📊 گزارش ۲۴ ساعت گذشته", "۲۴ ساعت"),
+        (_REPORT_LAST_7D_BUTTON_TEXT, timedelta(days=7), "📊 گزارش ۷ روز گذشته", "۷ روز"),
+        (_REPORT_LAST_30D_BUTTON_TEXT, timedelta(days=30), "📊 گزارش ۳۰ روز گذشته", "۳۰ روز"),
     ],
 )
-def test_button_sends_rolling_report_with_note(button, window, title):
+def test_button_sends_rolling_report_with_note(button, window, title, label):
     n = _notifier()
     didar = _FakeDidar()
     before = datetime.now(timezone.utc)
@@ -96,6 +135,10 @@ def test_button_sends_rolling_report_with_note(button, window, title):
     chat_id, message_id, text = edit.call_args[0][:3]
     assert (chat_id, message_id) == (CHAT, 55)
     assert text.startswith(title)
+    # Says in words what the window is, then the exact from/until moments.
+    lines = text.split("\n")
+    assert lines[1] == f"🕐 از {label} پیش تا همین لحظه"
+    assert lines[2].startswith("📅 از ") and lines[3].startswith("📅 تا ")
     assert "└─ 3 معامله\n└─ 250,000 ریال" in text      # Total == sum of Channels
     assert "🔴 دیجی‌کالا\n└─ 2 سفارش\n└─ 200,000 ریال" in text
     assert text.rstrip().endswith(_AUTO_DAILY_REPORT_NOTE)

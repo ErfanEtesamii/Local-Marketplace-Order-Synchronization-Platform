@@ -267,16 +267,38 @@ _REPORT_MENU_BUTTON_TEXT = "📊 دریافت گزارش بازه دلخواه"
 # custom-range picker are for. They go through the same single report path
 # (_build_channel_report -> Didar, Deal-level, per-Channel) as every other
 # aggregate report, so Total == sum of Channels holds here too.
-_REPORT_LAST_24H_BUTTON_TEXT = "🕐 دریافت گزارش ۲۴ ساعت گذشته"
-_REPORT_LAST_7D_BUTTON_TEXT = "📅 دریافت گزارش ۷ روز گذشته"
-_REPORT_LAST_30D_BUTTON_TEXT = "🗓 دریافت گزارش ۳۰ روز گذشته"
+#
+# Labels are SHORT on purpose (2026-11): the first version ("دریافت گزارش
+# ۲۴ ساعت گذشته") wrapped onto two lines in a 2-column grid on phones and
+# looked cramped. The first-version labels are still ACCEPTED (see
+# _LEGACY_* below) because Telegram keeps showing a user's old keyboard
+# until they press /start again - an old button must keep working.
+_REPORT_LAST_24H_BUTTON_TEXT = "🕐 گزارش ۲۴ ساعت"
+_REPORT_LAST_7D_BUTTON_TEXT = "📅 گزارش ۷ روز"
+_REPORT_LAST_30D_BUTTON_TEXT = "🗓 گزارش ۳۰ روز"
+_REPORT_CUSTOM_BUTTON_TEXT = "📊 گزارش دلخواه"
+_LEGACY_LAST_24H_BUTTON_TEXT = "🕐 دریافت گزارش ۲۴ ساعت گذشته"
+_LEGACY_LAST_7D_BUTTON_TEXT = "📅 دریافت گزارش ۷ روز گذشته"
+_LEGACY_LAST_30D_BUTTON_TEXT = "🗓 دریافت گزارش ۳۰ روز گذشته"
 
-# button text -> (report title, window length)
-_ROLLING_REPORTS = {
-    _REPORT_LAST_24H_BUTTON_TEXT: ("📊 گزارش ۲۴ ساعت گذشته", timedelta(hours=24)),
-    _REPORT_LAST_7D_BUTTON_TEXT: ("📊 گزارش ۷ روز گذشته", timedelta(days=7)),
-    _REPORT_LAST_30D_BUTTON_TEXT: ("📊 گزارش ۳۰ روز گذشته", timedelta(days=30)),
-}
+# button text (current AND legacy) -> (report title, window length,
+# human label of the window used in the "from X ago until now" line)
+_ROLLING_REPORTS = {}
+for _texts, _title, _window, _label in (
+    ((_REPORT_LAST_24H_BUTTON_TEXT, _LEGACY_LAST_24H_BUTTON_TEXT),
+     "📊 گزارش ۲۴ ساعت گذشته", timedelta(hours=24), "۲۴ ساعت"),
+    ((_REPORT_LAST_7D_BUTTON_TEXT, _LEGACY_LAST_7D_BUTTON_TEXT),
+     "📊 گزارش ۷ روز گذشته", timedelta(days=7), "۷ روز"),
+    ((_REPORT_LAST_30D_BUTTON_TEXT, _LEGACY_LAST_30D_BUTTON_TEXT),
+     "📊 گزارش ۳۰ روز گذشته", timedelta(days=30), "۳۰ روز"),
+):
+    for _text in _texts:
+        _ROLLING_REPORTS[_text] = (_title, _window, _label)
+
+# Every text that starts the custom-range picker from the bottom menu:
+# the short current label and the original long one (same button, old
+# keyboards).
+_CUSTOM_REPORT_BUTTON_TEXTS = (_REPORT_CUSTOM_BUTTON_TEXT, _REPORT_MENU_BUTTON_TEXT)
 
 # Appended to every ON-DEMAND report (the three quick buttons and the
 # custom-range picker) so whoever pulls a report knows they don't need to
@@ -409,13 +431,16 @@ def _report_reply_keyboard() -> dict:
     or removed, so nothing needs to re-send it on each reply."""
     return {
         "keyboard": [
+            # Each row is listed left-to-right as Telegram draws it, so a
+            # Persian reader (right-to-left) sees 24h then 7d on the first
+            # row and 30d then custom on the second.
             [
-                {"text": _REPORT_LAST_24H_BUTTON_TEXT},
                 {"text": _REPORT_LAST_7D_BUTTON_TEXT},
+                {"text": _REPORT_LAST_24H_BUTTON_TEXT},
             ],
             [
+                {"text": _REPORT_CUSTOM_BUTTON_TEXT},
                 {"text": _REPORT_LAST_30D_BUTTON_TEXT},
-                {"text": _REPORT_MENU_BUTTON_TEXT},
             ],
         ],
         "resize_keyboard": True,
@@ -1399,7 +1424,7 @@ class TelegramNotifier:
         # The persistent bottom-menu button (_report_reply_keyboard())
         # sends its label back as plain message text, not a callback -
         # so it starts the exact same picker as typing /report by hand.
-        if command == "/report" or text == _REPORT_MENU_BUTTON_TEXT:
+        if command == "/report" or text in _CUSTOM_REPORT_BUTTON_TEXTS:
             reply_markup = _report_year_keyboard(f"{_REPORT_CALLBACK_PREFIX}sy")
             self._send_message_with_keyboard(
                 chat_id, "📅 سال شروع بازه را انتخاب کنید:", reply_markup
@@ -1429,7 +1454,7 @@ class TelegramNotifier:
             "این بات گزارش فروش رو به‌صورت زنده و لحظه‌ای "
             "از سیستم براتون می‌سازه.\n\n"
             "از دکمه‌های پایین صفحه، گزارش ۲۴ ساعت، ۷ روز یا ۳۰ روز گذشته "
-            "رو بگیرید، یا با «📊 دریافت گزارش بازه دلخواه» هر بازه‌ای که "
+            "رو بگیرید، یا با «📊 گزارش دلخواه» هر بازه‌ای که "
             "خواستید انتخاب کنید 👇",
             _report_start_keyboard(),
         )
@@ -1609,12 +1634,16 @@ class TelegramNotifier:
         edited into the report (or into an error) when done - it must
         ALWAYS end up as one of those two, never stay as "please wait".
         Never raises (called from poll_updates()'s update loop)."""
-        title, window = _ROLLING_REPORTS[button_text]
+        title, window, window_label = _ROLLING_REPORTS[button_text]
         until = datetime.now(timezone.utc)
         since = until - window
+        # First line says in words what the window is ("from 24 hours ago
+        # until right now"); the two lines under it give the exact
+        # moments, one per line so each stays readable on a phone.
         period_line = (
-            f"📅 از {self._format_jalali_datetime(since)} "
-            f"تا {self._format_jalali_datetime(until)}"
+            f"🕐 از {window_label} پیش تا همین لحظه\n"
+            f"📅 از {self._format_jalali_datetime(since)}\n"
+            f"📅 تا {self._format_jalali_datetime(until)}"
         )
         # Plain message, deliberately WITHOUT the reply keyboard: it is
         # edited into the report below, and a message that carries a
