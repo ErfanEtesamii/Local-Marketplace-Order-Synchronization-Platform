@@ -228,9 +228,18 @@ def format_channel_report(
     format_rial: Callable[[object], str],
 ) -> str:
     """The single Telegram text layout for every aggregate report; only
-    `title` ("📊 گزارش ...") and `period_line` ("📅 ...") vary. "تلفنی"
-    is shown only when it is non-empty, so the fixed 5-Channel layout is
-    unchanged in the normal case."""
+    `title` ("📊 گزارش ...") and `period_line` ("📅 ...") vary.
+
+    Two sections under the grand total (client request, 2026-11):
+      1. "🌐 پلتفرم‌های آنلاین" - a subtotal, then the 5 fixed marketplace
+         Channels in CHANNELS order (zero rows included);
+      2. "⚫ تلفنی" - the OTHER bucket (no marketplace label / ambiguous
+         labels, see the RULES above). Always shown, even when empty, so
+         the report has the same shape every time.
+    The online subtotal is computed from the very Channel rows printed
+    under it, so Total == online subtotal + تلفنی always holds."""
+    online_count = sum(stat.count for _, stat in report.channels)
+    online_total = sum((stat.total for _, stat in report.channels), Decimal("0"))
     lines = [
         title,
         period_line,
@@ -242,14 +251,21 @@ def format_channel_report(
         f"└─ {format_rial(report.total.total)} ریال",
         "",
         _SEPARATOR,
+        "",
+        "🌐 پلتفرم‌های آنلاین",
+        f"└─ {online_count} سفارش",
+        f"└─ {format_rial(online_total)} ریال",
     ]
-    rows = list(report.channels)
-    if report.other.count:
-        rows.append((OTHER_NAME, report.other))
-    for name, stat in rows:
+    for name, stat in report.channels:
         label = f"{CHANNEL_EMOJI.get(name, '')} {name}".strip()
         lines.extend(["", label, f"└─ {stat.count} سفارش", f"└─ {format_rial(stat.total)} ریال"])
     lines.extend([
+        "",
+        _SEPARATOR,
+        "",
+        f"{CHANNEL_EMOJI[OTHER_NAME]} {OTHER_NAME}",
+        f"└─ {report.other.count} سفارش",
+        f"└─ {format_rial(report.other.total)} ریال",
         "",
         _SEPARATOR,
         "🟢 برگرفته از معامله‌های ثبت‌شده در دیدار",

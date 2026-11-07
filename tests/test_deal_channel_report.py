@@ -222,6 +222,10 @@ _EXPECTED_LAYOUT = """\
 
 ━━━━━━━━━━━━━━━━━━━━
 
+🌐 پلتفرم‌های آنلاین
+└─ 2 سفارش
+└─ 300 ریال
+
 🟣 اسنپ
 └─ 1 سفارش
 └─ 100 ریال
@@ -241,6 +245,8 @@ _EXPECTED_LAYOUT = """\
 🔵 با سلام
 └─ 0 سفارش
 └─ 0 ریال
+
+━━━━━━━━━━━━━━━━━━━━
 
 ⚫ تلفنی
 └─ 1 سفارش
@@ -294,11 +300,24 @@ def test_no_status_sections_and_no_product_data_in_any_report(period):
         assert leaked not in text
 
 
-def test_other_row_is_hidden_when_empty():
+def test_phone_section_is_always_shown_even_when_empty():
     since, _ = PERIODS["day"]
     rows = [_row(1, since + timedelta(hours=1), 100, ["L-snapp"])]
     text = format_channel_report("📊 گزارش روزانه", "📅 x", _agg(rows, "day"), _fmt)
-    assert OTHER_NAME not in text
+    assert "⚫ تلفنی\n└─ 0 سفارش\n└─ 0 ریال" in text
+    assert "🌐 پلتفرم‌های آنلاین\n└─ 1 سفارش\n└─ 100 ریال" in text
+
+
+@pytest.mark.parametrize("period", list(PERIODS))
+def test_online_subtotal_plus_phone_equals_total(period):
+    report = _agg(_mixed_rows(period), period)
+    text = format_channel_report(PERIOD_TITLES[period], "📅 x", report, _fmt)
+    online = report.total.count - report.other.count
+    assert f"🌐 پلتفرم‌های آنلاین\n└─ {online} سفارش" in text
+    assert online == sum(s.count for _, s in report.channels)
+    assert report.total.total == (
+        sum((s.total for _, s in report.channels), Decimal("0")) + report.other.total
+    )
 
 
 # ---------------------------------------------------------------------
