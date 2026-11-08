@@ -310,3 +310,18 @@ def test_fetch_order_detail_merges_identical_units_into_one_line():
     assert [(i.sku, i.quantity) for i in order.items] == [("SKU-1", 4), ("SKU-2", 1)]
     assert order.items[0].unit_price * 4 == order.items[0].unit_price * order.items[0].quantity
     assert order.items[0].final_price == 4 * 125000
+
+
+@respx.mock
+def test_requests_use_new_auth_header_name():
+    route = respx.post("https://vendorgw.tapsi.shop/Web/Hub/vendors/v1/orders").mock(
+        return_value=httpx.Response(
+            200, json={"success": True, "data": {"totalItems": 0, "items": []}}
+        )
+    )
+
+    TapsiShopAdapter(config=_CFG).fetch_new_orders(since=None)
+
+    headers = route.calls.last.request.headers
+    assert headers["Tapsi-Shop-Hub-Authorization"] == "test-token"
+    assert "TapsiShop.Hub.Authorization" not in headers
