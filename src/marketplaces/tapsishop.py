@@ -77,7 +77,7 @@ class TapsiShopAdapter(MarketplaceAdapter):
             headers={
                 "accept": "text/plain",
                 "Content-Type": "application/json",
-                "TapsiShop.Hub.Authorization": self._config.auth_token,
+                "Tapsi-Shop-Hub-Authorization": self._config.auth_token,
             },
             timeout=30.0,
         )

@@ -72,7 +72,9 @@ that was fixed).
 
 ### Tapsi Shop (`marketplaces/tapsishop.py`)
 
-- Auth: `TapsiShop.Hub.Authorization` header, vendor-panel token.
+- Auth: `Tapsi-Shop-Hub-Authorization` header, vendor-panel token
+  (renamed from `TapsiShop.Hub.Authorization`; the old name is no longer
+  accepted - 401 "هویت کاربر احراز نشد", seen 2026-11-08).
 - `POST /v1/orders` (list) + `GET /v1/orders/{id}` (detail, has line
   items - list doesn't).
 - **Not in the docs, confirmed live:**
