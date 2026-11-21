@@ -56,6 +56,7 @@ from src.db.repository import Repository
 from src.didar.activity_client import DidarActivityClient
 from src.didar.service import DidarSyncService
 from src.didar.warehouse_service import DidarWarehouseSyncService
+from src.customer_sms import CustomerSmsNotifier
 from src.express_alert import is_express_order
 from src.logger import get_logger
 from src.source_alerts import SourceStatusTracker
@@ -115,6 +116,7 @@ class SyncEngine:
         warehouse_adapters: list | None = None,
         warehouse_service: DidarWarehouseSyncService | None = None,
         didar_activity_client: DidarActivityClient | None = None,
+        customer_sms_notifier: CustomerSmsNotifier | None = None,
     ) -> None:
         self._adapters = {a.name: a for a in adapters}
         # Per-source fetch success/failure history, read by
@@ -137,6 +139,10 @@ class SyncEngine:
         # default is the same "construct our own, it's cheap and
         # config-gated" pattern the Telegram notifier uses.
         self._sms_notifier = sms_notifier or ModirPayamakNotifier()
+        # First customer SMS ("پیامک ۱", 2026-11 - see src/customer_sms.py):
+        # sent from the company's own SIM via an Android SMS gateway, not
+        # via Modir Payamak. Injectable for the same reason as above.
+        self._customer_sms = customer_sms_notifier or CustomerSmsNotifier()
         # SnappShop order-type Didar note (2026-11 - see
         # _add_snappshop_warehouse_note below). Injectable for the same
         # reason as self._sms_notifier: tests can pass a fake without
@@ -174,6 +180,33 @@ class SyncEngine:
         for warehouse_adapter in self._warehouse_adapters.values():
             self._sync_warehouse_source(warehouse_adapter)
         self.retry_pending_failures()
+        # Send any پیامک ۱ whose time has come (no-op unless
+        # CUSTOMER_SMS_ENABLED=true and the gateway is configured).
+        self._customer_sms.process_due(
+            self._repo,
+            alert=self._telegram.send_alert,
+            status_check=self._customer_sms_status_check,
+        )
+
+    def _customer_sms_status_check(self, platform: str, source_order_id: str) -> str | None:
+        """Send-time eligibility check for پیامک ۱ (~5h after the order
+        was synced): re-fetch the order from its marketplace and return a
+        reason if it is no longer valid (cancelled etc.), else None.
+        Raises if the order can't be fetched - the caller then does NOT
+        send. Same status rules as the sync itself (_status_rejection),
+        except for allow-list sources (Faraz Honar), where "processing"
+        is only the *entry* condition: a later "completed" order is still
+        a real order, so only the explicitly dead statuses block the SMS."""
+        adapter = self._adapters.get(platform)
+        if adapter is None:
+            raise LookupError(f"no adapter named {platform!r}")
+        order = adapter.fetch_order_detail(source_order_id)
+        dead = CUSTOMER_SMS_SKIP_STATUSES.get(order.source)
+        if dead is not None:
+            if order.status.lower() in dead:
+                return f"status {order.status} is cancelled/failed"
+            return None
+        return self._status_rejection(order)
 
     def _sync_source(self, adapter: MarketplaceAdapter) -> None:
         # Build a unique platform-specific ID for each order.
@@ -621,6 +654,9 @@ class SyncEngine:
             # an SMS-provider problem can never delay the message every
             # order gets.
             self._sms_notifier.notify_if_express(order, self._repo)
+            # Schedule the customer's first SMS (پیامک ۱, order time + 5h).
+            # Fire-and-forget and idempotent - see src/customer_sms.py.
+            self._customer_sms.enqueue(order, self._repo)
             # Same fire-and-forget contract, immediately after the SMS
             # alert - see _add_snappshop_warehouse_note's docstring.
             # No-op for every source other than snappshop/snappshop2.
@@ -959,6 +995,8 @@ class SyncEngine:
                 # an order that reaches this method twice from paging
                 # the warehouse twice.
                 self._sms_notifier.notify_if_express(order, self._repo)
+                # Idempotent, so safe on the retry path too.
+                self._customer_sms.enqueue(order, self._repo)
                 # See the matching call/comment in _sync_one_order() -
                 # same reasoning applies to the retry path.
                 self._add_snappshop_warehouse_note(order, deal_id)
@@ -1068,4 +1106,12 @@ CANCELLED_OR_FAILED_STATUSES: dict[str, set[str]] = {
 # named here or not, is now rejected by construction.
 ALLOWED_STATUSES: dict[str, set[str]] = {
     "farazhonar": {"processing"},
+}
+
+# Send-time check for the first customer SMS (src/customer_sms.py): for
+# allow-list sources, only these statuses mean "this order is dead, don't
+# text the customer". (An order that moved on from "processing" to
+# "completed" within the 5h is still a real order.)
+CUSTOMER_SMS_SKIP_STATUSES: dict[str, set[str]] = {
+    "farazhonar": {"cancelled", "failed", "refunded", "trash"},
 }

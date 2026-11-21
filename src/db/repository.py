@@ -253,6 +253,32 @@ CREATE TABLE IF NOT EXISTS snappshop_notes_added (
     added_at        TEXT NOT NULL,
     PRIMARY KEY (platform, source_order_id)
 );
+
+-- First customer SMS ("پیامک ۱", 2026-11 - see src/customer_sms.py).
+-- One row per order is simultaneously the dedup guard (PRIMARY KEY +
+-- INSERT OR IGNORE), the schedule (send_after, UTC ISO) and the retry
+-- queue (status/attempt_count). status:
+--   pending  - waiting to be handed to the phone gateway
+--   accepted - the gateway accepted it; waiting to learn the phone's final
+--              state (gateway_id/gateway_route say where to ask)
+--   sent     - final: the phone reported Sent/Delivered (or unverifiable)
+--   failed   - gave up; skipped - order no longer valid (e.g. cancelled).
+CREATE TABLE IF NOT EXISTS customer_sms_queue (
+    platform        TEXT NOT NULL,
+    source_order_id TEXT NOT NULL,
+    phone           TEXT NOT NULL,
+    send_after      TEXT NOT NULL,
+    status          TEXT NOT NULL DEFAULT 'pending',
+    attempt_count   INTEGER NOT NULL DEFAULT 0,
+    last_error      TEXT,
+    last_attempt_at TEXT,
+    sent_at         TEXT,
+    due_at          TEXT,
+    gateway_id      TEXT,
+    gateway_route   TEXT,
+    accepted_at     TEXT,
+    PRIMARY KEY (platform, source_order_id)
+);
 """
 
 
@@ -312,6 +338,14 @@ class Repository:
             for column in ("products_amount", "shipping_amount", "total_amount"):
                 try:
                     conn.execute(f"ALTER TABLE synced_orders ADD COLUMN {column} INTEGER")
+                except sqlite3.OperationalError:
+                    pass
+            # customer_sms_queue.due_at (original due time, never moved by
+            # retry backoff) was added right after the table itself; same
+            # "duplicate column" tolerance as above for fresh/migrated DBs.
+            for column in ("due_at", "gateway_id", "gateway_route", "accepted_at"):
+                try:
+                    conn.execute(f"ALTER TABLE customer_sms_queue ADD COLUMN {column} TEXT")
                 except sqlite3.OperationalError:
                     pass
 
@@ -688,6 +722,179 @@ class Repository:
         """
         with self._connect() as conn:
             conn.execute("DELETE FROM sms_notification_failures WHERE ref_id = ?", (ref_id,))
+
+    # --- first customer SMS queue (2026-11) --------------------------------
+    # See customer_sms_queue in the schema above and src/customer_sms.py.
+
+    def enqueue_customer_sms(
+        self, platform: str, source_order_id: str, phone: str, send_after: datetime
+    ) -> bool:
+        """Schedule the first customer SMS for this order. INSERT OR
+        IGNORE on the (platform, source_order_id) key, so calling this
+        from both the normal and the retry sync path can never queue (or
+        re-send) a second one. Returns True only if a new row was added.
+        `send_after` must be timezone-aware."""
+        with self._connect() as conn:
+            cur = conn.execute(
+                """
+                INSERT OR IGNORE INTO customer_sms_queue
+                    (platform, source_order_id, phone, send_after, status, due_at)
+                VALUES (?, ?, ?, ?, 'pending', ?)
+                """,
+                (platform, source_order_id, phone,
+                 send_after.astimezone(timezone.utc).isoformat(),
+                 send_after.astimezone(timezone.utc).isoformat()),
+            )
+            return cur.rowcount > 0
+
+    def get_due_customer_sms(
+        self, now: datetime, max_attempts: int, limit: int
+    ) -> list[sqlite3.Row | tuple]:
+        """Pending rows whose send_after has passed and that are still
+        under the attempt budget, oldest first:
+        (platform, source_order_id, phone, send_after, attempt_count, due_at)
+        where due_at is the ORIGINAL due time (send_after moves with retry
+        backoff, due_at never does)."""
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT platform, source_order_id, phone, send_after, attempt_count, due_at "
+                "FROM customer_sms_queue "
+                "WHERE status = 'pending' AND send_after <= ? AND attempt_count < ? "
+                "ORDER BY send_after LIMIT ?",
+                (now.astimezone(timezone.utc).isoformat(), max_attempts, limit),
+            ).fetchall()
+        return [tuple(r) for r in rows]
+
+    def mark_customer_sms_sent(self, platform: str, source_order_id: str) -> None:
+        now = datetime.now(timezone.utc).isoformat()
+        with self._connect() as conn:
+            conn.execute(
+                "UPDATE customer_sms_queue SET status = 'sent', sent_at = ?, "
+                "last_attempt_at = ?, attempt_count = attempt_count + 1, last_error = NULL "
+                "WHERE platform = ? AND source_order_id = ?",
+                (now, now, platform, source_order_id),
+            )
+
+    def mark_customer_sms_accepted(
+        self, platform: str, source_order_id: str, route: str, gateway_id: str | None
+    ) -> None:
+        """The gateway accepted the message. Not final: the phone may still
+        fail to send it, so the row waits (status 'accepted') until
+        get_accepted_customer_sms() / finalize / requeue settles it."""
+        now = datetime.now(timezone.utc).isoformat()
+        with self._connect() as conn:
+            conn.execute(
+                "UPDATE customer_sms_queue SET status = 'accepted', sent_at = ?, "
+                "accepted_at = ?, last_attempt_at = ?, gateway_id = ?, gateway_route = ?, "
+                "attempt_count = attempt_count + 1, last_error = NULL "
+                "WHERE platform = ? AND source_order_id = ?",
+                (now, now, now, gateway_id, route, platform, source_order_id),
+            )
+
+    def get_accepted_customer_sms(self, limit: int = 50) -> list[tuple]:
+        """(platform, source_order_id, phone, gateway_route, gateway_id,
+        accepted_at, attempt_count) for rows waiting on the phone's final
+        state, oldest first."""
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT platform, source_order_id, phone, gateway_route, gateway_id, "
+                "accepted_at, attempt_count FROM customer_sms_queue "
+                "WHERE status = 'accepted' ORDER BY accepted_at LIMIT ?",
+                (limit,),
+            ).fetchall()
+        return [tuple(r) for r in rows]
+
+    def finalize_customer_sms(
+        self, platform: str, source_order_id: str, note: str | None = None
+    ) -> None:
+        """accepted -> sent (final). `note` records e.g. "unverified"."""
+        with self._connect() as conn:
+            conn.execute(
+                "UPDATE customer_sms_queue SET status = 'sent', last_error = ? "
+                "WHERE platform = ? AND source_order_id = ?",
+                (note[:500] if note else None, platform, source_order_id),
+            )
+
+    def requeue_customer_sms(
+        self,
+        platform: str,
+        source_order_id: str,
+        reason: str,
+        retry_at: datetime,
+        give_up: bool = False,
+    ) -> None:
+        """The phone reported the message as Failed: put it back in the
+        queue (accepted -> pending) to be sent again at `retry_at`, or mark
+        it 'failed' for good if `give_up`."""
+        with self._connect() as conn:
+            conn.execute(
+                "UPDATE customer_sms_queue SET status = ?, last_error = ?, send_after = ?, "
+                "gateway_id = NULL, gateway_route = NULL "
+                "WHERE platform = ? AND source_order_id = ?",
+                (
+                    "failed" if give_up else "pending",
+                    reason[:500],
+                    retry_at.astimezone(timezone.utc).isoformat(),
+                    platform,
+                    source_order_id,
+                ),
+            )
+
+    def mark_customer_sms_skipped(self, platform: str, source_order_id: str, reason: str) -> None:
+        """Order is no longer eligible at send time (cancelled, ...). The
+        row stays for inspection but is never picked up again."""
+        with self._connect() as conn:
+            conn.execute(
+                "UPDATE customer_sms_queue SET status = 'skipped', last_error = ?, "
+                "last_attempt_at = ? WHERE platform = ? AND source_order_id = ?",
+                (reason[:500], datetime.now(timezone.utc).isoformat(), platform, source_order_id),
+            )
+
+    def record_customer_sms_failure(
+        self,
+        platform: str,
+        source_order_id: str,
+        error_message: str,
+        retry_at: datetime,
+        give_up: bool,
+    ) -> None:
+        """Bump the attempt counter and push send_after out to `retry_at`
+        (backoff). `give_up=True` flips the row to 'failed' so it stays
+        inspectable but is never picked up again."""
+        with self._connect() as conn:
+            conn.execute(
+                "UPDATE customer_sms_queue SET attempt_count = attempt_count + 1, "
+                "last_error = ?, last_attempt_at = ?, send_after = ?, status = ? "
+                "WHERE platform = ? AND source_order_id = ?",
+                (
+                    error_message[:500],
+                    datetime.now(timezone.utc).isoformat(),
+                    retry_at.astimezone(timezone.utc).isoformat(),
+                    "failed" if give_up else "pending",
+                    platform,
+                    source_order_id,
+                ),
+            )
+
+    def count_customer_sms_sent_since(self, since: datetime) -> int:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT COUNT(*) FROM customer_sms_queue "
+                "WHERE status IN ('accepted', 'sent') AND sent_at >= ?",
+                (since.astimezone(timezone.utc).isoformat(),),
+            ).fetchone()
+        return int(row[0])
+
+    def count_overdue_customer_sms(self, before: datetime) -> int:
+        """Pending rows that were due before `before` and still haven't
+        gone out - the signal the gateway/phone has been down a while."""
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT COUNT(*) FROM customer_sms_queue "
+                "WHERE status = 'pending' AND send_after <= ?",
+                (before.astimezone(timezone.utc).isoformat(),),
+            ).fetchone()
+        return int(row[0])
 
     # --- permanent skip-list (out-of-window / never-again orders) ---------
 
