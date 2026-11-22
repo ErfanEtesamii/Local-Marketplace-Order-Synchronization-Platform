@@ -54,6 +54,7 @@ log = get_logger(__name__)
 
 BUTTON_TEXT = "📨 ارسال پیامک مشتریان"
 BUTTON_PANEL = "📱 پنل پیامکی"
+BUTTON_TEST = "🧪 ارسال تست"
 BUTTON_BACK = "🔙 بازگشت به منوی اصلی"
 BUTTON_STATUS = "📊 وضعیت صف پیامک"
 BUTTON_RETRY = "🔁 ارسال مجدد تأییدنشده‌ها"
@@ -177,6 +178,7 @@ class SmsBatchController:
             "keyboard": [
                 [{"text": BUTTON_TEXT}],
                 [{"text": BUTTON_STATUS}, {"text": BUTTON_RETRY}],
+                [{"text": BUTTON_TEST}],
                 [{"text": BUTTON_BACK}],
             ],
             "resize_keyboard": True,
@@ -199,6 +201,15 @@ class SmsBatchController:
         if raw in ("", "cloud"):
             return "cloud" if cloud_ok else "ask"
         return "ask"
+
+    @staticmethod
+    def _ttl_seconds() -> int | None:
+        """Gateway-side expiry of each message: by default the stall time, so
+        a phone that is offline/stopped can never deliver it later (0 = off)."""
+        minutes = _env_int(
+            "CUSTOMER_SMS_TTL_MINUTES", _env_int("CUSTOMER_SMS_BATCH_STALL_MINUTES", 10)
+        )
+        return minutes * 60 if minutes > 0 else None
 
     @staticmethod
     def _confirm_enabled() -> bool:
@@ -297,7 +308,7 @@ class SmsBatchController:
         if not self.is_operator(chat_id) and chat_id != self.ip_chat():
             return False
         with self._lock:
-            if text in (BUTTON_PANEL, BUTTON_BACK, BUTTON_TEXT, BUTTON_STATUS, BUTTON_RETRY):
+            if text in (BUTTON_PANEL, BUTTON_BACK, BUTTON_TEXT, BUTTON_STATUS, BUTTON_RETRY, BUTTON_TEST):
                 if not self.is_operator(chat_id):
                     return False
                 if text == BUTTON_PANEL:
@@ -308,6 +319,8 @@ class SmsBatchController:
                     self._request(chat_id, repo)
                 elif text == BUTTON_STATUS:
                     self._status(chat_id, repo)
+                elif text == BUTTON_TEST:
+                    self._test_send(chat_id, repo)
                 else:
                     self._retry_request(chat_id, repo)
                 return True
@@ -562,6 +575,75 @@ class SmsBatchController:
             lines.append(f"🌙 الان ساعت سکوت ({self._quiet_label()}) است.")
         self._say(chat_id, "\n".join(lines))
 
+    def _test_send(self, chat_id, repo: Repository) -> None:
+        """One message to the admin's own number (CUSTOMER_SMS_TEST_PHONE),
+        outside the queue: checks the whole path without touching customers."""
+        from src.customer_sms import normalize_iran_mobile
+        from src.customer_sms import settings as _settings
+        state = self._load(repo)
+        if state and state.get("state") == "running":
+            self._say(chat_id, "⏳ ارسال دسته در حال انجام است؛ بعد از پایانش تست کنید.")
+            return
+        phone = normalize_iran_mobile(os.getenv("CUSTOMER_SMS_TEST_PHONE", ""))
+        if not phone:
+            self._say(chat_id, "⚠️ CUSTOMER_SMS_TEST_PHONE (شمارهٔ تست) در تنظیمات مشخص نشده.")
+            return
+        if not self._sms.is_enabled():
+            self._say(chat_id, "⚠️ ارسال پیامک مشتری غیرفعال است.")
+            return
+        if _settings.dry_run or os.getenv("CUSTOMER_SMS_DRY_RUN", "false").strip().lower() == "true":
+            self._say(chat_id, "⚠️ حالت آزمایشی (DRY_RUN) روشن است؛ چیزی ارسال نمی‌شود.")
+            return
+        mode = self.route_mode()
+        ip = repo.get_report_marker(_IP_KEY) if mode == "ask" else None
+        route_state = {"ip": "" if mode == "cloud" or (mode == "ask" and not ip) else (ip or None)}
+        self._apply_route(route_state)
+        self._sms._local_down_until = None
+        try:
+            route, gid = self._sms._send(
+                phone, "🧪 پیام آزمایشی سیستم سفارش‌ها (فرازهنر). نیازی به اقدام نیست.", self._now(), ttl=180
+            )
+        except CustomerSmsError as exc:
+            self._say(chat_id, f"❌ تست ارسال نشد: {exc}")
+            return
+        finally:
+            self._sms.local_url_override = None
+            self._sms.local_disabled = False
+        self._say(chat_id, f"📤 پیام تست به گوشی داده شد ({route})؛ منتظر تأیید گوشی هستیم…")
+        if gid:
+            self._start_watch(chat_id, route, gid)
+
+    def _start_watch(self, chat_id, route: str, gid: str) -> None:
+        threading.Thread(
+            target=self._watch_test, args=(chat_id, route, gid), daemon=True
+        ).start()
+
+    def _watch_test(self, chat_id, route: str, gid: str, sleep=None, tries: int = 24) -> None:
+        import time as _time
+        from src.customer_sms import _StateUnavailable
+        sleep = sleep or _time.sleep
+        state = ""
+        for _ in range(tries):  # up to ~2 minutes
+            sleep(5)
+            try:
+                state, reason = self._sms._fetch_state(route, gid)
+            except _StateUnavailable:
+                continue
+            if state in ("Sent", "Delivered"):
+                self._say(chat_id, f"✅ پیام تست از گوشی ارسال شد ({state}).")
+                return
+            if state in ("Failed", "Cancelled", "Cancelling"):
+                self._say(chat_id, f"❌ گوشی پیام تست را نفرستاد: {state} {reason}".strip())
+                return
+        outcome = self._sms.cancel(route, gid)
+        self._say(
+            chat_id,
+            f"⚠️ گوشی تا ۲ دقیقه پیام تست را نفرستاد (وضعیت: {state or 'نامشخص'}). "
+            "گوشی آنلاین و اپ روشن است؟ پیام لغو شد." if outcome == "requested"
+            else f"⚠️ گوشی تا ۲ دقیقه پیام تست را نفرستاد (وضعیت: {state or 'نامشخص'}); "
+            "پیام با ttl منقضی می‌شود.",
+        )
+
     def _retry_request(self, chat_id, repo: Repository) -> None:
         state = self._load(repo)
         if state and state.get("state") == "running":
@@ -682,7 +764,7 @@ class SmsBatchController:
                 return  # next one on the next tick, no waiting
 
         try:
-            route, gateway_id = self._sms._send(phone, MESSAGE_TEXT, now)
+            route, gateway_id = self._sms._send(phone, MESSAGE_TEXT, now, ttl=self._ttl_seconds())
         except CustomerSmsError as exc:
             self._finish(repo, state, f"ارسال سفارش {order_id} ({platform}) ممکن نشد: {exc}")
             return
@@ -696,7 +778,23 @@ class SmsBatchController:
     # ------------------------------------------------------------------
     # Report
     # ------------------------------------------------------------------
+    def _cancel_unconfirmed(self, repo: Repository, state: dict) -> dict[tuple[str, str], str]:
+        """The batch is ending: every message the phone has not confirmed is
+        cancelled at the Cloud so it cannot be delivered hours later. Returns
+        {(platform, order_id): outcome} (see CustomerSmsNotifier.cancel)."""
+        out: dict[tuple[str, str], str] = {}
+        for platform, order_id in state["handed"][-20:]:
+            row = repo.get_customer_sms_details(platform, order_id)
+            if not row or row[0] != "accepted" or not row[4]:
+                continue
+            try:
+                out[(platform, order_id)] = self._sms.cancel(row[2], row[4])
+            except Exception as exc:  # never break the report
+                out[(platform, order_id)] = f"error: {exc}"
+        return out
+
     def _finish(self, repo: Repository, state: dict, stop_reason: str | None) -> None:
+        cancelled = self._cancel_unconfirmed(repo, state)
         ok = 0
         unconfirmed: list[str] = []
         bad: list[str] = []
@@ -707,7 +805,13 @@ class SmsBatchController:
             if status == "sent":
                 ok += 1
             elif status == "accepted":
-                unconfirmed.append(f"{platform} {order_id} — {phone}")
+                outcome = cancelled.get((platform, order_id))
+                note = {
+                    "requested": " (لغو شد؛ خودکار به صف برمی‌گردد)",
+                    "not_pending": " (⚠️ گوشی آن را برداشته؛ ممکن است ارسال شده باشد)",
+                    "unsupported": " (مسیر Local؛ با ttl منقضی می‌شود)",
+                }.get(outcome or "", f" ({outcome})" if outcome else "")
+                unconfirmed.append(f"{platform} {order_id} — {phone}{note}")
             else:
                 bad.append(f"{platform} {order_id} — {phone} ← {(row[1] if row else '') or status}")
         remaining = len(repo.get_batch_pending_customer_sms(state["batch_id"], 10**6))
@@ -734,7 +838,8 @@ class SmsBatchController:
             lines.append("\nنیاز به پیگیری (ناموفق):\n" + "\n".join(bad[:10]))
         if unconfirmed:
             lines.append(
-                "\nنیاز به چک روی گوشی (تأییدنشده؛ دوباره ارسال نمی‌شود مگر با دکمهٔ «ارسال مجدد»):\n"
+                "\nتأییدنشده توسط گوشی (پیام در Cloud لغو می‌شود و نباید بعداً ارسال شود؛ "
+                "مواردی که «ممکن است ارسال شده باشد» را روی گوشی چک کنید):\n"
                 + "\n".join(unconfirmed[:10])
             )
         if state["skipped"]:

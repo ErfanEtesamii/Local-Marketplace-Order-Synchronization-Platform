@@ -534,12 +534,21 @@ class CustomerSmsNotifier:
 
     @staticmethod
     def _post(
-        route: tuple[str, str, str, str], phone: str, text: str, timeout: httpx.Timeout
+        route: tuple[str, str, str, str],
+        phone: str,
+        text: str,
+        timeout: httpx.Timeout,
+        ttl: int | None = None,
     ) -> str | None:
         """POST one message; returns the gateway's message id (None if the
-        response carries none) so its final state can be looked up later."""
+        response carries none) so its final state can be looked up later.
+        `ttl` (seconds): the gateway drops the message if the phone hasn't
+        sent it by then - so an offline/stopped phone can never deliver it
+        hours later (docs.sms-gate.app/features/sending-messages)."""
         base, user, pwd, path = route
         payload: dict = {"textMessage": {"text": text}, "phoneNumbers": [phone]}
+        if ttl and ttl > 0:
+            payload["ttl"] = int(ttl)
         # Dual-SIM phone: pick the SIM explicitly (1-based, per
         # docs.sms-gate.app/features/multi-sim). Without it the app/OS
         # default SIM is used - in the 2026-11-21 field test that was the
@@ -573,7 +582,7 @@ class CustomerSmsNotifier:
         return str(mid) if mid else None
 
     def _send(
-        self, phone: str, text: str, now: datetime | None = None
+        self, phone: str, text: str, now: datetime | None = None, ttl: int | None = None
     ) -> tuple[str, str | None]:
         """Send one message: local route first, cloud route as fallback
         (see module docstring). Returns (route_name, gateway_message_id);
@@ -588,7 +597,7 @@ class CustomerSmsNotifier:
             cloud is not None and self._local_down_until and now < self._local_down_until
         ):
             try:
-                mid = self._post(local, phone, text, httpx.Timeout(15.0, connect=3.0))
+                mid = self._post(local, phone, text, httpx.Timeout(15.0, connect=3.0), ttl)
                 self._local_down_until = None
                 return "local", mid
             except (
@@ -617,7 +626,7 @@ class CustomerSmsNotifier:
 
         if cloud is not None:
             try:
-                mid = self._post(cloud, phone, text, httpx.Timeout(20.0, connect=8.0))
+                mid = self._post(cloud, phone, text, httpx.Timeout(20.0, connect=8.0), ttl)
                 if errors:
                     log.info("customer_sms: sent via cloud route (%s)", errors[0])
                 return "cloud", mid
@@ -679,6 +688,43 @@ class CustomerSmsNotifier:
                 reason = str(rcpt["error"])
                 break
         return state, reason
+
+    def cancel(self, route_name: str, gateway_id: str) -> str:
+        """Ask the gateway to cancel a message that has not been sent yet
+        (Cloud only: DELETE /3rdparty/v1/messages/{id}, scope messages:cancel).
+        Returns "requested" (Pending -> Cancelling; the row is requeued by
+        _reconcile once the state reads Cancelled/Failed), "not_pending" (HTTP
+        409: the phone already took it - it may have been sent), "missing"
+        (404), "unsupported" (local route: rely on the ttl) or "error: ..."."""
+        if route_name != "cloud":
+            return "unsupported"
+        route = self._cloud_route()
+        if route is None:
+            return "error: cloud route not configured"
+        base, user, pwd, _ = route
+        tpl = (
+            os.getenv("SMS_GATEWAY_CLOUD_STATUS_PATH", "").strip()
+            or "/3rdparty/v1/messages/{id}"
+        )
+        try:
+            resp = httpx.delete(
+                base.rstrip("/") + "/" + tpl.format(id=gateway_id).lstrip("/"),
+                auth=(user, pwd),
+                headers={
+                    "User-Agent": os.getenv("SMS_GATEWAY_USER_AGENT", "").strip()
+                    or "FarazHonar-OrderSync/1.0"
+                },
+                timeout=httpx.Timeout(10.0, connect=5.0),
+            )
+        except httpx.HTTPError as exc:
+            return f"error: {exc}"
+        if 200 <= resp.status_code < 300:
+            return "requested"
+        if resp.status_code == 409:
+            return "not_pending"
+        if resp.status_code == 404:
+            return "missing"
+        return f"error: HTTP {resp.status_code}"
 
     def _reconcile(
         self, repository: "Repository", alert: Callable[[str], object] | None, now: datetime

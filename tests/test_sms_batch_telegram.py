@@ -170,7 +170,7 @@ def test_preview_status_and_retry_buttons_through_the_real_bot(setup, monkeypatc
     bot.updates = [_msg(20, BOSS, BUTTON_PANEL)]
     tg.poll_updates(repo, ["digikala"])
     panel = [b["reply_markup"] for b in bot.sent_to(BOSS) if "keyboard" in b["reply_markup"]][-1]
-    assert _buttons(panel) == [BUTTON_TEXT, BUTTON_STATUS, BUTTON_RETRY, BUTTON_BACK]
+    assert _buttons(panel) == [BUTTON_TEXT, BUTTON_STATUS, BUTTON_RETRY, "🧪 ارسال تست", BUTTON_BACK]
     bot.updates = [_msg(21, BOSS, BUTTON_BACK)]
     tg.poll_updates(repo, ["digikala"])
     main = [b["reply_markup"] for b in bot.sent_to(BOSS) if "keyboard" in b["reply_markup"]][-1]

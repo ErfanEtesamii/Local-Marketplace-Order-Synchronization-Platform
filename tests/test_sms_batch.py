@@ -14,7 +14,7 @@ from src.customer_sms import CustomerSmsNotifier
 from src.db.repository import Repository
 from src.marketplaces.base import NormalizedOrder
 from src.sms_batch import (
-    BUTTON_BACK, BUTTON_PANEL, BUTTON_RETRY, BUTTON_STATUS, BUTTON_TEXT, SmsBatchController, parse_ip, parse_ip_checked,
+    BUTTON_BACK, BUTTON_PANEL, BUTTON_RETRY, BUTTON_STATUS, BUTTON_TEST, BUTTON_TEXT, SmsBatchController, parse_ip, parse_ip_checked,
 )
 
 PR, BOSS, OTHER = 222, 111, 999          # IP/PR account, second operator, stranger
@@ -143,7 +143,7 @@ def test_button_only_for_the_two_operators(world):
     assert ctl.keyboard_rows(PR) == [[{"text": BUTTON_PANEL}]]
     assert ctl.keyboard_rows(OTHER) == []
     panel = [b["text"] for row in ctl.panel_keyboard()["keyboard"] for b in row]
-    assert panel == [BUTTON_TEXT, BUTTON_STATUS, BUTTON_RETRY, BUTTON_BACK]
+    assert panel == [BUTTON_TEXT, BUTTON_STATUS, BUTTON_RETRY, BUTTON_TEST, BUTTON_BACK]
 
 
 def test_panel_button_opens_the_three_buttons_and_back_returns(repo, world):
@@ -718,4 +718,131 @@ def test_report_names_the_failed_and_unconfirmed_orders_with_phones(repo, world)
     _go(ctl, repo)
     _run(ctl, repo, minutes=15)
     report = tg.to(BOSS)[-1]
-    assert "digikala 1 — +989121234561" in report and "نیاز به چک روی گوشی" in report
+    assert "digikala 1 — +989121234561" in report and "تأییدنشده توسط گوشی (پیام در Cloud لغو" in report
+
+
+
+# ====================================================================
+# Round 3: ttl on every send, cancel at the Cloud when a batch stops,
+# test button
+# ====================================================================
+def _payloads(route):
+    return [json.loads(c.request.content) for c in route.calls]
+
+
+@respx.mock
+def test_every_batch_message_carries_a_ttl_equal_to_the_stall_time(repo, world, monkeypatch):
+    tg, sms, ctl, _ = world
+    local = respx.post(f"{LOCAL}/message").mock(
+        return_value=httpx.Response(202, json={"id": "m", "state": "Pending"}))
+    respx.get(url__regex=rf"{LOCAL}/message/.*").mock(return_value=httpx.Response(200, json={"state": "Sent"}))
+    _enqueue(sms, repo, n=1)
+    _go(ctl, repo)
+    _run(ctl, repo)
+    assert _payloads(local)[0]["ttl"] == 600                     # default stall = 10 min
+    monkeypatch.setenv("CUSTOMER_SMS_TTL_MINUTES", "0")          # 0 = no ttl
+    assert ctl._ttl_seconds() is None
+    monkeypatch.setenv("CUSTOMER_SMS_TTL_MINUTES", "3")
+    assert ctl._ttl_seconds() == 180
+
+
+@respx.mock
+def test_stalled_cloud_messages_are_cancelled_at_the_cloud(repo, world, monkeypatch):
+    tg, sms, ctl, _ = world
+    monkeypatch.setenv("CUSTOMER_SMS_ROUTE_MODE", "cloud")
+    respx.post(f"{CLOUD}/3rdparty/v1/messages").mock(
+        return_value=httpx.Response(202, json={"id": "c1", "state": "Pending"}))
+    respx.get(f"{CLOUD}/3rdparty/v1/messages/c1").mock(
+        return_value=httpx.Response(200, json={"state": "Pending"}))
+    cancel = respx.delete(f"{CLOUD}/3rdparty/v1/messages/c1").mock(return_value=httpx.Response(204))
+    _enqueue(sms, repo, n=2)
+    ctl.handle_message(BOSS, BUTTON_TEXT, repo)
+    _run(ctl, repo, minutes=15)
+    assert cancel.call_count == 1
+    report = tg.to(BOSS)[-1]
+    assert "لغو شد؛ خودکار به صف برمی‌گردد" in report and "متوقف شد" in report
+
+
+@respx.mock
+def test_if_the_phone_already_took_it_the_report_warns_it_may_have_been_sent(repo, world, monkeypatch):
+    tg, sms, ctl, _ = world
+    monkeypatch.setenv("CUSTOMER_SMS_ROUTE_MODE", "cloud")
+    respx.post(f"{CLOUD}/3rdparty/v1/messages").mock(
+        return_value=httpx.Response(202, json={"id": "c1", "state": "Pending"}))
+    respx.get(f"{CLOUD}/3rdparty/v1/messages/c1").mock(
+        return_value=httpx.Response(200, json={"state": "Processed"}))
+    respx.delete(f"{CLOUD}/3rdparty/v1/messages/c1").mock(return_value=httpx.Response(409))
+    _enqueue(sms, repo, n=1)
+    ctl.handle_message(BOSS, BUTTON_TEXT, repo)
+    _run(ctl, repo, minutes=15)
+    assert "ممکن است ارسال شده باشد" in tg.to(BOSS)[-1]
+    assert repo.get_customer_sms_row("digikala", "1")[0] == "accepted"   # not requeued blindly
+
+
+def test_cancel_outcomes_and_local_route_is_unsupported(monkeypatch):
+    sms = CustomerSmsNotifier()
+    assert sms.cancel("local", "x") == "unsupported"
+    with respx.mock:
+        respx.delete(f"{CLOUD}/3rdparty/v1/messages/a").mock(return_value=httpx.Response(204))
+        respx.delete(f"{CLOUD}/3rdparty/v1/messages/b").mock(return_value=httpx.Response(409))
+        respx.delete(f"{CLOUD}/3rdparty/v1/messages/c").mock(return_value=httpx.Response(404))
+        respx.delete(f"{CLOUD}/3rdparty/v1/messages/d").mock(return_value=httpx.Response(500))
+        respx.delete(f"{CLOUD}/3rdparty/v1/messages/e").mock(side_effect=httpx.ConnectError("x"))
+        got = [sms.cancel("cloud", k) for k in "abcde"]
+    assert got[:3] == ["requested", "not_pending", "missing"]
+    assert got[3].startswith("error: HTTP 500") and got[4].startswith("error:")
+
+
+# ---------------------------------------------------------------- test button
+@respx.mock
+def test_test_button_sends_one_message_to_the_admin_number_only(repo, world, monkeypatch):
+    tg, sms, ctl, _ = world
+    monkeypatch.setenv("CUSTOMER_SMS_ROUTE_MODE", "cloud")
+    monkeypatch.setenv("CUSTOMER_SMS_TEST_PHONE", "09921190031")
+    cloud = respx.post(f"{CLOUD}/3rdparty/v1/messages").mock(
+        return_value=httpx.Response(202, json={"id": "t1", "state": "Pending"}))
+    respx.get(f"{CLOUD}/3rdparty/v1/messages/t1").mock(
+        return_value=httpx.Response(200, json={"state": "Delivered"}))
+    watched = []
+    ctl._start_watch = lambda chat, route, gid: watched.append(
+        ctl._watch_test(chat, route, gid, sleep=lambda s: None))
+    _enqueue(sms, repo, n=2)                                      # real customers stay untouched
+    assert ctl.handle_message(BOSS, BUTTON_TEST, repo)
+    body = _payloads(cloud)[0]
+    assert body["phoneNumbers"] == ["+989921190031"] and body["ttl"] == 180
+    assert "آزمایشی" in body["textMessage"]["text"]
+    assert repo.count_pending_customer_sms() == 2 and cloud.call_count == 1
+    assert any("به گوشی داده شد" in t for t in tg.to(BOSS))
+    assert any("ارسال شد (Delivered)" in t for t in tg.to(BOSS))
+    assert ctl.handle_message(OTHER, BUTTON_TEST, repo) is False
+
+
+@respx.mock
+def test_test_button_reports_a_phone_that_never_sends_and_cancels(repo, world, monkeypatch):
+    tg, sms, ctl, _ = world
+    monkeypatch.setenv("CUSTOMER_SMS_ROUTE_MODE", "cloud")
+    monkeypatch.setenv("CUSTOMER_SMS_TEST_PHONE", "09921190031")
+    respx.post(f"{CLOUD}/3rdparty/v1/messages").mock(
+        return_value=httpx.Response(202, json={"id": "t1", "state": "Pending"}))
+    respx.get(f"{CLOUD}/3rdparty/v1/messages/t1").mock(
+        return_value=httpx.Response(200, json={"state": "Pending"}))
+    cancel = respx.delete(f"{CLOUD}/3rdparty/v1/messages/t1").mock(return_value=httpx.Response(204))
+    ctl._start_watch = lambda chat, route, gid: ctl._watch_test(chat, route, gid, sleep=lambda s: None, tries=3)
+    ctl.handle_message(BOSS, BUTTON_TEST, repo)
+    assert cancel.call_count == 1
+    assert "نفرستاد" in tg.to(BOSS)[-1] and "لغو شد" in tg.to(BOSS)[-1]
+
+
+def test_test_button_refuses_without_phone_dry_run_or_while_running(repo, world, monkeypatch):
+    tg, sms, ctl, _ = world
+    ctl.handle_message(BOSS, BUTTON_TEST, repo)
+    assert "CUSTOMER_SMS_TEST_PHONE" in tg.to(BOSS)[-1]
+    monkeypatch.setenv("CUSTOMER_SMS_TEST_PHONE", "09921190031")
+    monkeypatch.setenv("CUSTOMER_SMS_DRY_RUN", "true")
+    ctl.handle_message(BOSS, BUTTON_TEST, repo)
+    assert "DRY_RUN" in tg.to(BOSS)[-1]
+    monkeypatch.delenv("CUSTOMER_SMS_DRY_RUN")
+    _enqueue(sms, repo, n=1)
+    _go(ctl, repo)                                                # a batch is running
+    ctl.handle_message(BOSS, BUTTON_TEST, repo)
+    assert "در حال انجام" in tg.to(BOSS)[-1]

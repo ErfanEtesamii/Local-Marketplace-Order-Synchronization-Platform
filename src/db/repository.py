@@ -1016,10 +1016,11 @@ class Repository:
         return [tuple(r) for r in rows]
 
     def get_customer_sms_details(self, platform: str, source_order_id: str) -> tuple | None:
-        """(status, last_error, gateway_route, phone) of one queue row."""
+        """(status, last_error, gateway_route, phone, gateway_id) of one row."""
         with self._connect() as conn:
             row = conn.execute(
-                "SELECT status, last_error, gateway_route, phone FROM customer_sms_queue "
+                "SELECT status, last_error, gateway_route, phone, gateway_id "
+                "FROM customer_sms_queue "
                 "WHERE platform = ? AND source_order_id = ?",
                 (platform, source_order_id),
             ).fetchone()
