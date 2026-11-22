@@ -29,6 +29,11 @@ def _env(monkeypatch):
     for k in list(os.environ):
         if k.startswith(("CUSTOMER_SMS_", "SMS_GATEWAY_")):
             monkeypatch.delenv(k, raising=False)
+    # Queue pacing is covered by dedicated tests below; the older tests
+    # exercise other behaviour and assume messages go out back to back.
+    monkeypatch.setenv("CUSTOMER_SMS_MIN_INTERVAL_MINUTES", "0")
+    monkeypatch.setenv("CUSTOMER_SMS_INFLIGHT_BLOCK_HOURS", "0")
+    monkeypatch.setenv("CUSTOMER_SMS_MODE", "auto")   # old tests cover the auto-send mode
     monkeypatch.setenv("CUSTOMER_SMS_ENABLED", "true")
     monkeypatch.setenv("SMS_GATEWAY_URL", GATEWAY)
     monkeypatch.setenv("SMS_GATEWAY_USERNAME", "u")
@@ -110,7 +115,9 @@ def test_process_due_sends_text_once(repo):
 @respx.mock
 def test_failure_backs_off_then_retries_and_gives_up(repo, monkeypatch):
     monkeypatch.setenv("CUSTOMER_SMS_MAX_ATTEMPTS", "2")
-    route = respx.post(f"{GATEWAY}/message").mock(side_effect=httpx.ConnectError("down"))
+    # The gateway ANSWERS with an error (a real failure that counts as an
+    # attempt); plain lack of connectivity is covered by the offline tests.
+    route = respx.post(f"{GATEWAY}/message").mock(return_value=httpx.Response(500))
     alerts: list[str] = []
     n = CustomerSmsNotifier()
     n.enqueue(_order(), repo, now=CREATED)
@@ -526,3 +533,105 @@ def test_cloud_route_state_is_read_from_cloud(repo, both_routes, monkeypatch):
     n.process_due(repo, now=t)
     n.process_due(repo, now=t + timedelta(minutes=2))
     assert cloud_state.call_count == 1 and _status(repo)[0] == "sent"
+
+
+def test_lan_gateway_ignores_environment_proxy():
+    from src.customer_sms import _is_lan
+    assert _is_lan("http://192.168.1.8:8080") and _is_lan("http://127.0.0.1:8080")
+    assert not _is_lan("https://api.sms-gate.app") and not _is_lan("http://8.8.8.8")
+
+
+@respx.mock
+def test_dropped_local_connection_falls_back_to_cloud(repo, both_routes):
+    respx.post(f"{GATEWAY}/message").mock(side_effect=httpx.RemoteProtocolError("Server disconnected"))
+    cloud = respx.post(f"{CLOUD}/3rdparty/v1/messages").mock(side_effect=_sent_ids("c1"))
+    n = CustomerSmsNotifier()
+    assert n._send("+989121234567", "x")[0] == "cloud" and cloud.call_count == 1
+
+
+@respx.mock
+def test_local_read_timeout_still_does_not_fall_back(repo, both_routes):
+    respx.post(f"{GATEWAY}/message").mock(side_effect=httpx.ReadTimeout("slow"))
+    cloud = respx.post(f"{CLOUD}/3rdparty/v1/messages").mock(side_effect=_sent_ids("c1"))
+    with pytest.raises(Exception):
+        CustomerSmsNotifier()._send("+989121234567", "x")
+    assert cloud.call_count == 0
+
+
+
+# --- queue pacing: in order, one at a time, 5 minutes apart, hold when offline
+
+def _enqueue_three(repo, n):
+    for i, minutes in enumerate((0, 1, 2), start=1):
+        n.enqueue(_order(oid=str(i), mobile=f"0912123456{i}",
+                         created=CREATED + timedelta(minutes=minutes)),
+                  repo, now=CREATED + timedelta(minutes=minutes))
+
+
+@respx.mock
+def test_messages_go_out_in_order_one_every_five_minutes(repo, monkeypatch):
+    monkeypatch.setenv("CUSTOMER_SMS_MIN_INTERVAL_MINUTES", "5")
+    post = respx.post(f"{GATEWAY}/message").mock(return_value=httpx.Response(202))
+    n = CustomerSmsNotifier()
+    _enqueue_three(repo, n)
+    t = CREATED + timedelta(hours=6)            # all three are due
+    n.process_due(repo, now=t)
+    assert post.call_count == 1                  # only ONE per cycle
+    n.process_due(repo, now=t + timedelta(minutes=2))
+    n.process_due(repo, now=t + timedelta(minutes=4))
+    assert post.call_count == 1                  # still inside the 5-minute gap
+    n.process_due(repo, now=t + timedelta(minutes=5))
+    assert post.call_count == 2
+    n.process_due(repo, now=t + timedelta(minutes=10))
+    assert post.call_count == 3
+    sent_to = [__import__("json").loads(c.request.content)["phoneNumbers"][0] for c in post.calls]
+    assert sent_to == ["+989121234561", "+989121234562", "+989121234563"]  # registration order
+
+
+@respx.mock
+def test_offline_does_not_count_attempts_and_keeps_order(repo, monkeypatch):
+    monkeypatch.setenv("CUSTOMER_SMS_MIN_INTERVAL_MINUTES", "5")
+    monkeypatch.setenv("CUSTOMER_SMS_MAX_ATTEMPTS", "2")
+    gw = respx.post(f"{GATEWAY}/message").mock(side_effect=httpx.ConnectError("no network"))
+    n = CustomerSmsNotifier()
+    _enqueue_three(repo, n)
+    t = CREATED + timedelta(hours=6)
+    for i in range(10):                          # a long outage, many cycles
+        n.process_due(repo, now=t + timedelta(minutes=2 * i))
+    assert gw.call_count == 10                   # one cheap try per cycle, no hammering
+    with repo._connect() as c:
+        rows = c.execute("SELECT status, attempt_count FROM customer_sms_queue").fetchall()
+    assert all(r[0] == "pending" and r[1] == 0 for r in rows)   # nothing burned or dropped
+    gw.mock(return_value=httpx.Response(202))    # connection is back
+    t2 = t + timedelta(minutes=30)
+    n.process_due(repo, now=t2)
+    n.process_due(repo, now=t2 + timedelta(minutes=5))
+    n.process_due(repo, now=t2 + timedelta(minutes=10))
+    sent_to = [__import__("json").loads(c.request.content)["phoneNumbers"][0] for c in gw.calls[10:]]
+    assert sent_to == ["+989121234561", "+989121234562", "+989121234563"]
+
+
+@respx.mock
+def test_unconfirmed_message_holds_the_queue_until_the_phone_sends_it(repo, monkeypatch):
+    monkeypatch.setenv("CUSTOMER_SMS_MIN_INTERVAL_MINUTES", "5")
+    monkeypatch.setenv("CUSTOMER_SMS_INFLIGHT_BLOCK_HOURS", "6")
+    post = respx.post(f"{GATEWAY}/message").mock(side_effect=_sent_ids("m1", "m2", "m3"))
+    state = respx.get(f"{GATEWAY}/message/m1").mock(
+        return_value=httpx.Response(200, json={"id": "m1", "state": "Pending"}))  # phone offline
+    n = CustomerSmsNotifier()
+    _enqueue_three(repo, n)
+    t = CREATED + timedelta(hours=6)
+    n.process_due(repo, now=t)
+    for i in range(1, 15):                       # hours pass, phone still offline (stay before 21:00 quiet hours)
+        n.process_due(repo, now=t + timedelta(minutes=10 * i))
+    assert post.call_count == 1                  # nothing newer is handed over
+    state.mock(return_value=httpx.Response(200, json={"id": "m1", "state": "Sent"}))
+    respx.get(f"{GATEWAY}/message/m2").mock(
+        return_value=httpx.Response(200, json={"id": "m2", "state": "Sent"}))
+    back = t + timedelta(minutes=170)
+    n.process_due(repo, now=back)                # m1 confirmed now
+    assert post.call_count == 1
+    n.process_due(repo, now=back + timedelta(minutes=3))
+    assert post.call_count == 1                  # 5-minute gap counts from the confirmation
+    n.process_due(repo, now=back + timedelta(minutes=5))
+    assert post.call_count == 2

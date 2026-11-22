@@ -46,6 +46,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import uuid
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
@@ -188,6 +189,14 @@ class SyncEngine:
             status_check=self._customer_sms_status_check,
         )
 
+    @property
+    def customer_sms(self) -> CustomerSmsNotifier:
+        return self._customer_sms
+
+    def customer_sms_status_check(self, platform: str, source_order_id: str) -> str | None:
+        """Public alias used by the Telegram batch flow (src/sms_batch.py)."""
+        return self._customer_sms_status_check(platform, source_order_id)
+
     def _customer_sms_status_check(self, platform: str, source_order_id: str) -> str | None:
         """Send-time eligibility check for پیامک ۱ (~5h after the order
         was synced): re-fetch the order from its marketplace and return a
@@ -201,12 +210,35 @@ class SyncEngine:
         if adapter is None:
             raise LookupError(f"no adapter named {platform!r}")
         order = adapter.fetch_order_detail(source_order_id)
+        return self._customer_sms_order_reason(order)
+
+    @staticmethod
+    def _customer_sms_order_reason(order: NormalizedOrder) -> str | None:
         dead = CUSTOMER_SMS_SKIP_STATUSES.get(order.source)
         if dead is not None:
             if order.status.lower() in dead:
                 return f"status {order.status} is cancelled/failed"
             return None
-        return self._status_rejection(order)
+        return SyncEngine._status_rejection(order)
+
+    def customer_sms_batch_status_check(self, platform: str, source_order_id: str) -> str | None:
+        """Send-time check used by the Telegram batch (src/sms_batch.py):
+        everything _customer_sms_status_check rejects PLUS orders that have
+        already moved on (shipped / delivered / completed - see
+        CUSTOMER_SMS_MOVED_ON_STATUSES, default "completed,shipped,delivered"):
+        the first SMS would be pointless and the shipping SMS follows."""
+        adapter = self._adapters.get(platform)
+        if adapter is None:
+            raise LookupError(f"no adapter named {platform!r}")
+        order = adapter.fetch_order_detail(source_order_id)
+        reason = self._customer_sms_order_reason(order)
+        if reason:
+            return reason
+        raw = os.getenv("CUSTOMER_SMS_MOVED_ON_STATUSES", "completed,shipped,delivered")
+        moved = {s.strip().lower() for s in raw.split(",") if s.strip()}
+        if order.status.lower() in moved:
+            return f"سفارش قبلاً ارسال/تحویل شده ({order.status})"
+        return None
 
     def _sync_source(self, adapter: MarketplaceAdapter) -> None:
         # Build a unique platform-specific ID for each order.

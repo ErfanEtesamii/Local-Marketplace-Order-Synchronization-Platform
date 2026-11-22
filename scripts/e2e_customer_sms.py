@@ -31,6 +31,11 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from src.config import settings  # noqa: E402  (loads .env)
+
+# This rehearsal exercises the timed (auto) sending path; the real service
+# default is the manual Telegram-button mode.
+os.environ["CUSTOMER_SMS_MODE"] = "auto"
+os.environ["CUSTOMER_SMS_MIN_INTERVAL_MINUTES"] = "0"
 from src.customer_sms import CustomerSmsNotifier, normalize_iran_mobile  # noqa: E402
 from src.db.repository import Repository  # noqa: E402
 from src.marketplaces.base import NormalizedOrder  # noqa: E402

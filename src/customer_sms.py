@@ -58,6 +58,7 @@ exception to config.py's rule as src/modir_payamak.py and src/telegram.py).
 from __future__ import annotations
 
 import os
+import threading
 import re
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Callable
@@ -97,6 +98,21 @@ _STATE_SETTLE = timedelta(seconds=45)       # let the phone send before asking
 _PROCESSED_STUCK = timedelta(hours=2)       # "Processed" this long = indeterminate
 
 
+def _is_lan(base_url: str) -> bool:
+    """True for a private/loopback IP host (the phone on the office Wi-Fi).
+    Such requests must never go through a system/VPN HTTP proxy picked up
+    from the environment (httpx honours HTTP(S)_PROXY): a proxy accepts
+    the connection and then drops it - "Server disconnected without
+    sending a response" on every send."""
+    import ipaddress
+    from urllib.parse import urlparse
+    try:
+        ip = ipaddress.ip_address(urlparse(base_url).hostname or "")
+    except ValueError:
+        return False
+    return ip.is_private or ip.is_loopback
+
+
 class _Rejected(Exception):
     """The gateway answered with a non-2xx status."""
 
@@ -134,6 +150,12 @@ class CustomerSmsError(Exception):
     """Gateway unreachable or it rejected the message."""
 
 
+class CustomerSmsOffline(CustomerSmsError):
+    """Every route failed purely for lack of connectivity (no internet /
+    phone unreachable): nothing was sent and nothing is wrong with the
+    message, so the queue just waits - no attempt is counted."""
+
+
 class CustomerSmsNotifier:
     """Schedules and sends the first customer SMS. Every public method is
     best-effort: it logs and swallows errors so an SMS problem can never
@@ -142,11 +164,39 @@ class CustomerSmsNotifier:
     def __init__(self) -> None:
         self._last_overdue_alert: datetime | None = None
         self._last_state_alert: datetime | None = None
+        self._last_offline_log: datetime | None = None
+        self.local_url_override: str | None = None
+        self._reconcile_lock = threading.Lock()
+        self.local_disabled: bool = False
         self._local_down_until: datetime | None = None
 
     # ------------------------------------------------------------------
     # Configuration
     # ------------------------------------------------------------------
+    @staticmethod
+    def mode() -> str:
+        """"manual" (default): orders are only SAVED; messages go out when
+        an operator presses the Telegram button (src/sms_batch.py).
+        "auto": the old behaviour - each message is sent by itself
+        CUSTOMER_SMS_DELAY_HOURS after the order was registered."""
+        m = os.getenv("CUSTOMER_SMS_MODE", "manual").strip().lower()
+        return "auto" if m == "auto" else "manual"
+
+    def _local_route_effective(self) -> tuple[str, str, str, str] | None:
+        """The local route to use right now: the IP the operator gave in the
+        Telegram flow (local_url_override), "no local at all"
+        (local_disabled) or the .env URL."""
+        if self.local_disabled:
+            return None
+        if self.local_url_override:
+            user = os.getenv("SMS_GATEWAY_USERNAME", "").strip()
+            pwd = os.getenv("SMS_GATEWAY_PASSWORD", "").strip()
+            if not (user and pwd):
+                return None
+            path = os.getenv("SMS_GATEWAY_SEND_PATH", "").strip() or "/message"
+            return self.local_url_override, user, pwd, path
+        return self._local_route()
+
     @staticmethod
     def _enabled_flag() -> bool:
         return os.getenv("CUSTOMER_SMS_ENABLED", "false").strip().lower() == "true"
@@ -174,7 +224,15 @@ class CustomerSmsNotifier:
         return url, user, pwd, path
 
     def _gateway_configured(self) -> bool:
-        return self._local_route() is not None or self._cloud_route() is not None
+        if self._local_route() is not None or self._cloud_route() is not None:
+            return True
+        # Manual mode: the operator gives the phone's IP in Telegram each
+        # time, so SMS_GATEWAY_URL may stay empty - the local login is enough.
+        return (
+            self.mode() == "manual"
+            and bool(os.getenv("SMS_GATEWAY_USERNAME", "").strip())
+            and bool(os.getenv("SMS_GATEWAY_PASSWORD", "").strip())
+        )
 
     def is_enabled(self) -> bool:
         """Master switch on AND gateway credentials present. Cheap, no I/O."""
@@ -281,6 +339,10 @@ class CustomerSmsNotifier:
             # reported by the app go back into the queue (before the due-
             # message selection below, so they can be retried right away).
             self._reconcile(repository, alert, now)
+            if self.mode() == "manual":
+                # Manual mode: orders are only saved here. Sending is driven
+                # by the Telegram button (src/sms_batch.py).
+                return
 
             # 0 (default) = never give up on attempt count: a failed message
             # stays queued and is retried every 10 minutes until the phone /
@@ -309,6 +371,24 @@ class CustomerSmsNotifier:
             # outage can leave due rows sitting inside the night window.
             if self._apply_quiet_hours(now) != now:
                 return
+
+            # One message at a time, in order, with a pause between them:
+            #  * a message the phone hasn't confirmed yet (phone offline /
+            #    still sending) HOLDS the queue - nothing newer is handed
+            #    over until it is Sent, so a returning phone doesn't dump a
+            #    burst of messages (SIM throttling) and order is kept;
+            #  * after a send, wait MIN_INTERVAL minutes before the next.
+            interval = timedelta(minutes=_env_int("CUSTOMER_SMS_MIN_INTERVAL_MINUTES", 5))
+            block_hours = _env_int("CUSTOMER_SMS_INFLIGHT_BLOCK_HOURS", 6)
+            if block_hours > 0 and repository.count_inflight_customer_sms(
+                now - timedelta(hours=block_hours)
+            ):
+                return
+            if interval > timedelta(0):
+                last = repository.last_customer_sms_activity()
+                if last is not None and now - last < interval:
+                    return
+                budget = 1
 
             for platform, order_id, phone, send_after, attempts, due_at in (
                 repository.get_due_customer_sms(
@@ -379,6 +459,18 @@ class CustomerSmsNotifier:
                     continue
                 try:
                     route_used, gateway_id = self._send(phone, MESSAGE_TEXT, now)
+                except CustomerSmsOffline as exc:
+                    # No internet / phone unreachable: not a failure of this
+                    # message. Leave the row untouched (no attempt counted,
+                    # no backoff) and try again next cycle; everything
+                    # behind it keeps waiting in order.
+                    if not self._last_offline_log or now - self._last_offline_log >= timedelta(minutes=30):
+                        self._last_offline_log = now
+                        log.warning(
+                            "customer_sms: offline - messages wait in the queue and "
+                            "go out one by one when the connection is back (%s)", exc,
+                        )
+                    break
                 except CustomerSmsError as exc:
                     give_up = not unlimited and attempts + 1 >= max_attempts
                     repository.record_customer_sms_failure(
@@ -399,7 +491,7 @@ class CustomerSmsNotifier:
                     break
                 else:
                     repository.mark_customer_sms_accepted(
-                        platform, order_id, route_used, gateway_id
+                        platform, order_id, route_used, gateway_id, now
                     )
                     log.info(
                         "customer_sms: handed to the phone (%s) for %s order %s -> %s "
@@ -407,14 +499,16 @@ class CustomerSmsNotifier:
                         route_used, platform, order_id, phone,
                         due.astimezone(_TEHRAN).strftime("%H:%M"),
                     )
+                    if interval > timedelta(0):
+                        break  # the next one waits MIN_INTERVAL
         except Exception:
             log.exception("customer_sms: unexpected error in process_due")
 
     def _alert_if_overdue(
         self, repository: "Repository", alert: Callable[[str], object] | None, now: datetime
     ) -> None:
-        if alert is None:
-            return
+        if alert is None or self.mode() == "manual":
+            return  # manual mode: rows waiting for the button are not "overdue"
         minutes = _env_int("CUSTOMER_SMS_ALERT_AFTER_MINUTES", 60)
         # Not while it's legitimately night (rows are held on purpose).
         if self._apply_quiet_hours(now) != now:
@@ -458,6 +552,7 @@ class CustomerSmsNotifier:
             base.rstrip("/") + "/" + path.lstrip("/"),
             json=payload,
             auth=(user, pwd),
+            trust_env=not _is_lan(base),
             # api.sms-gate.app is behind Cloudflare, which refused a plain
             # Python client's default User-Agent with 403 "error code: 1010"
             # in the 2026-11-21 field test. An explicit UA avoids that;
@@ -485,8 +580,9 @@ class CustomerSmsNotifier:
         raises CustomerSmsError if no route worked. No tenacity retry: the
         queue's own backoff is the retry."""
         now = now or datetime.now(timezone.utc)
-        local, cloud = self._local_route(), self._cloud_route()
+        local, cloud = self._local_route_effective(), self._cloud_route()
         errors: list[str] = []
+        offline = True  # stays True only if EVERY failure was a connectivity one
 
         if local is not None and not (
             cloud is not None and self._local_down_until and now < self._local_down_until
@@ -495,17 +591,29 @@ class CustomerSmsNotifier:
                 mid = self._post(local, phone, text, httpx.Timeout(15.0, connect=3.0))
                 self._local_down_until = None
                 return "local", mid
-            except (httpx.ConnectError, httpx.ConnectTimeout) as exc:
+            except (
+                httpx.ConnectError,
+                httpx.ConnectTimeout,
+                httpx.RemoteProtocolError,
+                httpx.ReadError,
+                httpx.WriteError,
+            ) as exc:
+                # Nothing answered at the phone's address: unreachable, or
+                # (DHCP gave the phone a new IP) some other device accepted
+                # the connection and dropped it without a response
+                # ("Server disconnected..."). The app never produced an HTTP
+                # reply, so nothing was sent - safe to use the cloud route.
                 self._local_down_until = now + _LOCAL_DOWN_SKIP
                 errors.append(f"local unreachable: {exc}")
             except _Rejected as exc:
+                offline = False
                 errors.append(f"local {exc}")
             except httpx.HTTPError as exc:
                 # e.g. read timeout: the phone may already have the message.
                 # Falling back could text the customer twice.
                 raise CustomerSmsError(f"local gateway ambiguous failure: {exc}") from exc
             if cloud is None:
-                raise CustomerSmsError("; ".join(errors))
+                raise (CustomerSmsOffline if offline else CustomerSmsError)("; ".join(errors))
 
         if cloud is not None:
             try:
@@ -514,10 +622,16 @@ class CustomerSmsNotifier:
                     log.info("customer_sms: sent via cloud route (%s)", errors[0])
                 return "cloud", mid
             except _Rejected as exc:
+                offline = False
                 errors.append(f"cloud {exc}")
-            except httpx.HTTPError as exc:
+            except (httpx.ConnectError, httpx.ConnectTimeout) as exc:
                 errors.append(f"cloud unreachable: {exc}")
-        raise CustomerSmsError("; ".join(errors) or "no gateway configured")
+            except httpx.HTTPError as exc:
+                offline = False  # e.g. read timeout: the cloud may have it
+                errors.append(f"cloud unreachable: {exc}")
+        if not errors:
+            raise CustomerSmsError("no gateway configured")
+        raise (CustomerSmsOffline if offline else CustomerSmsError)("; ".join(errors))
 
     # ------------------------------------------------------------------
     # Final-state tracking: did the PHONE really send it?
@@ -528,7 +642,7 @@ class CustomerSmsNotifier:
         Pending, Processed, Sent, Delivered, Failed (+ Cancelling/Cancelled).
         Raises _StateUnavailable if it can't be read right now."""
         if route_name == "local":
-            route = self._local_route()
+            route = self._local_route_effective()
             tpl = os.getenv("SMS_GATEWAY_STATUS_PATH", "").strip() or "/message/{id}"
         else:
             route = self._cloud_route()
@@ -543,6 +657,7 @@ class CustomerSmsNotifier:
             resp = httpx.get(
                 base.rstrip("/") + "/" + tpl.format(id=gateway_id).lstrip("/"),
                 auth=(user, pwd),
+                trust_env=not _is_lan(base),
                 headers={
                     "User-Agent": os.getenv("SMS_GATEWAY_USER_AGENT", "").strip()
                     or "FarazHonar-OrderSync/1.0"
@@ -567,8 +682,18 @@ class CustomerSmsNotifier:
 
     def _reconcile(
         self, repository: "Repository", alert: Callable[[str], object] | None, now: datetime
-    ) -> None:
-        """Settle rows the gateway accepted by asking the app what the phone
+    ) -> list[tuple[str, str, str]]:
+        """Serialised: the poll cycle and the Telegram batch tick both call it."""
+        with self._reconcile_lock:
+            return self._reconcile_locked(repository, alert, now)
+
+    def _reconcile_locked(
+        self, repository: "Repository", alert: Callable[[str], object] | None, now: datetime
+    ) -> list[tuple[str, str, str]]:
+        """Returns the (platform, order_id, reason) of messages the phone
+        reported as failed during this pass.
+
+        Settle rows the gateway accepted by asking the app what the phone
         actually did with them:
           Sent / Delivered  -> final 'sent'
           Failed / Cancel*  -> back into the queue, retried (the app's
@@ -581,6 +706,7 @@ class CustomerSmsNotifier:
         verify_window = timedelta(hours=_env_int("CUSTOMER_SMS_VERIFY_HOURS", 24))
         max_failures = _env_int("CUSTOMER_SMS_MAX_APP_FAILURES", 12)
         failure_reasons: list[str] = []
+        failed_rows: list[tuple[str, str, str]] = []
         stuck = 0
 
         for platform, order_id, phone, route, gid, accepted_at, attempts in (
@@ -601,7 +727,12 @@ class CustomerSmsNotifier:
                 continue
 
             if state in ("Sent", "Delivered"):
-                repository.finalize_customer_sms(platform, order_id)
+                # Confirmed long after hand-over = it waited in the phone's
+                # queue; count the pause between messages from now.
+                late = age > timedelta(minutes=_env_int("CUSTOMER_SMS_MIN_INTERVAL_MINUTES", 5))
+                repository.finalize_customer_sms(
+                    platform, order_id, confirmed_at=now if late else None
+                )
                 log.info(
                     "customer_sms: confirmed %s for %s order %s", state, platform, order_id
                 )
@@ -612,6 +743,7 @@ class CustomerSmsNotifier:
                     platform, order_id, why, now + _RETRY_BACKOFF, give_up
                 )
                 failure_reasons.append(why)
+                failed_rows.append((platform, order_id, why))
                 log.error(
                     "customer_sms: %s for %s order %s (attempt %d) - %s",
                     why, platform, order_id, attempts,
@@ -641,6 +773,7 @@ class CustomerSmsNotifier:
                         f"⚠️ {stuck} پیامک ۱ بیش از ۲ ساعت در وضعیت Processed گیر کرده "
                         "(خودکار دوباره ارسال نمی‌شود تا پیامک تکراری نرود).",
                     )
+        return failed_rows
 
     def close(self) -> None:
         """Kept for API symmetry - requests are made per call, nothing to release."""

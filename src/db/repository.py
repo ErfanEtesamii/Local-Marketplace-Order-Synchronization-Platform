@@ -277,6 +277,7 @@ CREATE TABLE IF NOT EXISTS customer_sms_queue (
     gateway_id      TEXT,
     gateway_route   TEXT,
     accepted_at     TEXT,
+    batch_id        TEXT,
     PRIMARY KEY (platform, source_order_id)
 );
 """
@@ -343,7 +344,7 @@ class Repository:
             # customer_sms_queue.due_at (original due time, never moved by
             # retry backoff) was added right after the table itself; same
             # "duplicate column" tolerance as above for fresh/migrated DBs.
-            for column in ("due_at", "gateway_id", "gateway_route", "accepted_at"):
+            for column in ("due_at", "gateway_id", "gateway_route", "accepted_at", "batch_id"):
                 try:
                     conn.execute(f"ALTER TABLE customer_sms_queue ADD COLUMN {column} TEXT")
                 except sqlite3.OperationalError:
@@ -760,7 +761,7 @@ class Repository:
                 "SELECT platform, source_order_id, phone, send_after, attempt_count, due_at "
                 "FROM customer_sms_queue "
                 "WHERE status = 'pending' AND send_after <= ? AND attempt_count < ? "
-                "ORDER BY send_after LIMIT ?",
+                "ORDER BY COALESCE(due_at, send_after), send_after LIMIT ?",
                 (now.astimezone(timezone.utc).isoformat(), max_attempts, limit),
             ).fetchall()
         return [tuple(r) for r in rows]
@@ -776,19 +777,24 @@ class Repository:
             )
 
     def mark_customer_sms_accepted(
-        self, platform: str, source_order_id: str, route: str, gateway_id: str | None
+        self,
+        platform: str,
+        source_order_id: str,
+        route: str,
+        gateway_id: str | None,
+        now: datetime | None = None,
     ) -> None:
         """The gateway accepted the message. Not final: the phone may still
         fail to send it, so the row waits (status 'accepted') until
         get_accepted_customer_sms() / finalize / requeue settles it."""
-        now = datetime.now(timezone.utc).isoformat()
+        stamp = (now or datetime.now(timezone.utc)).astimezone(timezone.utc).isoformat()
         with self._connect() as conn:
             conn.execute(
                 "UPDATE customer_sms_queue SET status = 'accepted', sent_at = ?, "
                 "accepted_at = ?, last_attempt_at = ?, gateway_id = ?, gateway_route = ?, "
                 "attempt_count = attempt_count + 1, last_error = NULL "
                 "WHERE platform = ? AND source_order_id = ?",
-                (now, now, now, gateway_id, route, platform, source_order_id),
+                (stamp, stamp, stamp, gateway_id, route, platform, source_order_id),
             )
 
     def get_accepted_customer_sms(self, limit: int = 50) -> list[tuple]:
@@ -805,15 +811,52 @@ class Repository:
         return [tuple(r) for r in rows]
 
     def finalize_customer_sms(
-        self, platform: str, source_order_id: str, note: str | None = None
+        self,
+        platform: str,
+        source_order_id: str,
+        note: str | None = None,
+        confirmed_at: datetime | None = None,
     ) -> None:
-        """accepted -> sent (final). `note` records e.g. "unverified"."""
+        """accepted -> sent (final). `note` records e.g. "unverified".
+        `confirmed_at`, when given, becomes sent_at: the moment the phone
+        really sent it (matters when it sat in the phone's queue while the
+        phone was offline), so the inter-message spacing counts from it."""
         with self._connect() as conn:
-            conn.execute(
-                "UPDATE customer_sms_queue SET status = 'sent', last_error = ? "
-                "WHERE platform = ? AND source_order_id = ?",
-                (note[:500] if note else None, platform, source_order_id),
-            )
+            if confirmed_at is not None:
+                conn.execute(
+                    "UPDATE customer_sms_queue SET status = 'sent', last_error = ?, "
+                    "sent_at = ? WHERE platform = ? AND source_order_id = ?",
+                    (note[:500] if note else None,
+                     confirmed_at.astimezone(timezone.utc).isoformat(),
+                     platform, source_order_id),
+                )
+            else:
+                conn.execute(
+                    "UPDATE customer_sms_queue SET status = 'sent', last_error = ? "
+                    "WHERE platform = ? AND source_order_id = ?",
+                    (note[:500] if note else None, platform, source_order_id),
+                )
+
+    def last_customer_sms_activity(self) -> datetime | None:
+        """Most recent time a message was handed to (or confirmed by) the
+        phone - the reference point for the minimum gap between sends."""
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT MAX(sent_at) FROM customer_sms_queue "
+                "WHERE status IN ('accepted', 'sent')"
+            ).fetchone()
+        return datetime.fromisoformat(row[0]) if row and row[0] else None
+
+    def count_inflight_customer_sms(self, since: datetime) -> int:
+        """Messages handed to the gateway since `since` whose final state is
+        still unknown (phone offline / still sending)."""
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT COUNT(*) FROM customer_sms_queue "
+                "WHERE status = 'accepted' AND accepted_at >= ?",
+                (since.astimezone(timezone.utc).isoformat(),),
+            ).fetchone()
+        return row[0]
 
     def requeue_customer_sms(
         self,
@@ -839,6 +882,47 @@ class Repository:
                     source_order_id,
                 ),
             )
+
+    # --- manual batch mode (Telegram button) --------------------------
+    def count_pending_customer_sms(self) -> int:
+        """Messages saved in the queue and waiting for the next batch."""
+        with self._connect() as conn:
+            return conn.execute(
+                "SELECT COUNT(*) FROM customer_sms_queue WHERE status = 'pending'"
+            ).fetchone()[0]
+
+    def claim_pending_customer_sms(self, batch_id: str) -> int:
+        """Freeze the current queue as one batch: every pending row gets
+        `batch_id`. Orders that arrive afterwards are NOT part of this
+        batch - they wait for the next button press."""
+        with self._connect() as conn:
+            cur = conn.execute(
+                "UPDATE customer_sms_queue SET batch_id = ? WHERE status = 'pending'",
+                (batch_id,),
+            )
+            return cur.rowcount
+
+    def get_batch_pending_customer_sms(self, batch_id: str, limit: int = 1) -> list[tuple]:
+        """(platform, source_order_id, phone, attempt_count) of this batch's
+        rows still to send, in order registration order."""
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT platform, source_order_id, phone, attempt_count "
+                "FROM customer_sms_queue WHERE status = 'pending' AND batch_id = ? "
+                "ORDER BY COALESCE(due_at, send_after), send_after LIMIT ?",
+                (batch_id, limit),
+            ).fetchall()
+        return [tuple(r) for r in rows]
+
+    def get_customer_sms_row(self, platform: str, source_order_id: str) -> tuple | None:
+        """(status, last_error, gateway_route) of one queue row."""
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT status, last_error, gateway_route FROM customer_sms_queue "
+                "WHERE platform = ? AND source_order_id = ?",
+                (platform, source_order_id),
+            ).fetchone()
+        return tuple(row) if row else None
 
     def mark_customer_sms_skipped(self, platform: str, source_order_id: str, reason: str) -> None:
         """Order is no longer eligible at send time (cancelled, ...). The
@@ -875,6 +959,83 @@ class Repository:
                     source_order_id,
                 ),
             )
+
+    # --- manual batch: preview / staleness / status / retry ---------------
+    def count_stale_pending_customer_sms(self, cutoff: datetime) -> int:
+        """Pending rows whose original due time is older than `cutoff`."""
+        with self._connect() as conn:
+            return conn.execute(
+                "SELECT COUNT(*) FROM customer_sms_queue WHERE status = 'pending' "
+                "AND COALESCE(due_at, send_after) < ?",
+                (cutoff.astimezone(timezone.utc).isoformat(),),
+            ).fetchone()[0]
+
+    def skip_stale_pending_customer_sms(self, cutoff: datetime, reason: str) -> int:
+        """Mark pending rows older than `cutoff` as skipped (never sent)."""
+        with self._connect() as conn:
+            cur = conn.execute(
+                "UPDATE customer_sms_queue SET status = 'skipped', last_error = ?, "
+                "last_attempt_at = ? WHERE status = 'pending' "
+                "AND COALESCE(due_at, send_after) < ?",
+                (
+                    reason[:500],
+                    datetime.now(timezone.utc).isoformat(),
+                    cutoff.astimezone(timezone.utc).isoformat(),
+                ),
+            )
+            return cur.rowcount
+
+    def peek_pending_customer_sms(self, limit: int = 3) -> list[tuple]:
+        """(platform, source_order_id, phone) of the next pending rows, in
+        sending order - for the preview shown before a batch starts."""
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT platform, source_order_id, phone FROM customer_sms_queue "
+                "WHERE status = 'pending' "
+                "ORDER BY COALESCE(due_at, send_after), send_after LIMIT ?",
+                (limit,),
+            ).fetchall()
+        return [tuple(r) for r in rows]
+
+    def count_customer_sms_by_status(self) -> dict[str, int]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT status, COUNT(*) FROM customer_sms_queue GROUP BY status"
+            ).fetchall()
+        return {r[0]: int(r[1]) for r in rows}
+
+    def list_customer_sms_by_status(self, status: str, limit: int = 20) -> list[tuple]:
+        """(platform, source_order_id, phone, last_error) newest first."""
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT platform, source_order_id, phone, last_error "
+                "FROM customer_sms_queue WHERE status = ? "
+                "ORDER BY COALESCE(accepted_at, sent_at, due_at) DESC LIMIT ?",
+                (status, limit),
+            ).fetchall()
+        return [tuple(r) for r in rows]
+
+    def get_customer_sms_details(self, platform: str, source_order_id: str) -> tuple | None:
+        """(status, last_error, gateway_route, phone) of one queue row."""
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT status, last_error, gateway_route, phone FROM customer_sms_queue "
+                "WHERE platform = ? AND source_order_id = ?",
+                (platform, source_order_id),
+            ).fetchone()
+        return tuple(row) if row else None
+
+    def requeue_unconfirmed_customer_sms(self, reason: str) -> int:
+        """Operator decided the 'accepted' (never confirmed) messages really
+        were not sent: put them back to pending for the next batch."""
+        with self._connect() as conn:
+            cur = conn.execute(
+                "UPDATE customer_sms_queue SET status = 'pending', last_error = ?, "
+                "gateway_id = NULL, gateway_route = NULL, batch_id = NULL "
+                "WHERE status = 'accepted'",
+                (reason[:500],),
+            )
+            return cur.rowcount
 
     def count_customer_sms_sent_since(self, since: datetime) -> int:
         with self._connect() as conn:

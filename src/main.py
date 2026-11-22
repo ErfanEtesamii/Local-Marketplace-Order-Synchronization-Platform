@@ -27,6 +27,7 @@ from src.modir_payamak import ModirPayamakNotifier
 from src.reporting import check_health, generate_daily_report
 from src.source_alerts import SourceOutageAlerter
 from src.sync_engine import SyncEngine
+from src.sms_batch import SmsBatchController
 from src.telegram import TelegramNotifier
 
 log = get_logger(__name__)
@@ -250,6 +251,28 @@ def run_forever() -> None:
         "interval",
         seconds=settings.telegram_report_picker_poll_seconds,
         args=[repository, engine.adapter_names],
+    )
+
+    # Manual customer-SMS flow (Telegram button, src/sms_batch.py). The
+    # controller is attached to the SAME TelegramNotifier whose poll_updates()
+    # handles button presses; its tick sends the saved queue one message at a
+    # time (default every 60 s) while a batch is running.
+    sms_batch = SmsBatchController(
+        engine.customer_sms, telegram, engine.customer_sms_batch_status_check
+    )
+    telegram.sms_batch = sms_batch
+    if engine.customer_sms.mode() == "manual" and not sms_batch.operators():
+        log.warning(
+            "customer_sms: manual mode but CUSTOMER_SMS_OPERATOR_CHAT_IDS is empty - "
+            "nobody can start a send (see .env.example)"
+        )
+    scheduler.add_job(
+        sms_batch.tick,
+        "interval",
+        seconds=10,
+        args=[repository],
+        max_instances=1,
+        coalesce=True,
     )
 
     log.info(

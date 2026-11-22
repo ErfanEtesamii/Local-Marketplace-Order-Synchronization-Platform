@@ -417,7 +417,7 @@ def _report_start_keyboard() -> dict:
     return _inline_keyboard([[(_REPORT_MENU_BUTTON_TEXT, f"{_REPORT_CALLBACK_PREFIX}begin")]])
 
 
-def _report_reply_keyboard() -> dict:
+def _report_reply_keyboard(extra_rows: Optional[list] = None) -> dict:
     """Persistent bottom-of-chat menu (Telegram ReplyKeyboardMarkup): a
     2x2 grid - 24h / 7d on the first row, 30d / custom range on the second
     (2026-11; before that it was the single custom-range button, the same
@@ -442,6 +442,7 @@ def _report_reply_keyboard() -> dict:
                 {"text": _REPORT_CUSTOM_BUTTON_TEXT},
                 {"text": _REPORT_LAST_30D_BUTTON_TEXT},
             ],
+            *(extra_rows or []),
         ],
         "resize_keyboard": True,
         "is_persistent": True,
@@ -541,6 +542,8 @@ class TelegramNotifier:
         # instances (e.g. ones only ever used for per-order
         # notifications) never need this at all.
         self._didar_client: Optional["DidarDealClient"] = None
+        # Manual customer-SMS flow (src/sms_batch.py), attached by main.py.
+        self.sms_batch = None
 
     def close(self) -> None:
         """Release the underlying HTTP connection pool. Optional - the
@@ -1359,6 +1362,11 @@ class TelegramNotifier:
         """
         if not self.is_configured():
             return
+        if self.sms_batch is not None:
+            try:
+                self.sms_batch.ensure_menu(repository)
+            except Exception:
+                log.exception("telegram: could not push the SMS menu")
         try:
             marker = repository.get_report_marker(_UPDATE_OFFSET_MARKER)
             if marker is None:
@@ -1404,9 +1412,9 @@ class TelegramNotifier:
         if "callback_query" in update:
             self._handle_report_callback(update["callback_query"], repository, source_names)
         elif "message" in update:
-            self._handle_report_message(update["message"])
+            self._handle_report_message(update["message"], repository)
 
-    def _handle_report_message(self, message: dict) -> None:
+    def _handle_report_message(self, message: dict, repository: Optional[Repository] = None) -> None:
         chat = message.get("chat") or {}
         chat_id = chat.get("id")
         # Only the operator's own configured chat(s) can pull sales
@@ -1420,6 +1428,10 @@ class TelegramNotifier:
         if chat_id not in self._chat_ids:
             return
         text = (message.get("text") or "").strip()
+        # Customer-SMS button / the IP answer (operators only; src/sms_batch.py).
+        if self.sms_batch is not None and repository is not None:
+            if self.sms_batch.handle_message(chat_id, text, repository):
+                return
         command = text.split("@", 1)[0].split()[0] if text else ""
         # The persistent bottom-menu button (_report_reply_keyboard())
         # sends its label back as plain message text, not a callback -
@@ -1434,6 +1446,12 @@ class TelegramNotifier:
         elif command == "/start":
             self._send_start_menu(chat_id)
 
+    def _reply_keyboard_for(self, chat_id) -> dict:
+        """The persistent bottom menu for one chat: the report buttons for
+        everyone, plus the customer-SMS button for its operators only."""
+        extra = self.sms_batch.keyboard_rows(chat_id) if self.sms_batch else []
+        return _report_reply_keyboard(extra)
+
     def _send_start_menu(self, chat_id) -> None:
         """What /start does - also what the "🚀 شروع" button under the
         update announcement (scripts/send_update_announcement.py,
@@ -1446,7 +1464,7 @@ class TelegramNotifier:
         first screen, then sends the welcome text with its usual inline
         "begin" button as a second, immediate way in."""
         self._send_message_with_keyboard(
-            chat_id, "منوی بات:", _report_reply_keyboard()
+            chat_id, "منوی بات:", self._reply_keyboard_for(chat_id)
         )
         self._send_message_with_keyboard(
             chat_id,
@@ -1468,6 +1486,15 @@ class TelegramNotifier:
         chat_id = chat.get("id")
         message_id = message.get("message_id")
         data = query.get("data") or ""
+
+        if (
+            self.sms_batch is not None
+            and chat_id in self._chat_ids
+            and data.startswith("sms:")
+        ):
+            self._answer_callback_query(query_id)
+            self.sms_batch.handle_callback(chat_id, data, repository)
+            return
 
         if chat_id not in self._chat_ids or not data.startswith(_REPORT_CALLBACK_PREFIX):
             self._answer_callback_query(query_id)
