@@ -13,7 +13,7 @@ import respx
 from src.customer_sms import CustomerSmsNotifier
 from src.db.repository import Repository
 from src.marketplaces.base import NormalizedOrder
-from src.sms_batch import BUTTON_TEXT, SmsBatchController
+from src.sms_batch import BUTTON_PANEL, BUTTON_TEXT, SmsBatchController
 from src.telegram import TelegramNotifier
 
 BOSS, PR, OTHER = 775753176, 6978174215, 555
@@ -93,8 +93,8 @@ def test_start_menu_shows_the_button_only_to_operators(setup):
     tg.poll_updates(repo, ["digikala"])
     boss_kb = [b["reply_markup"] for b in bot.sent_to(BOSS) if "keyboard" in b["reply_markup"]]
     other_kb = [b["reply_markup"] for b in bot.sent_to(OTHER) if "keyboard" in b["reply_markup"]]
-    assert BUTTON_TEXT in _buttons(boss_kb[0])
-    assert BUTTON_TEXT not in _buttons(other_kb[0])
+    assert BUTTON_PANEL in _buttons(boss_kb[0]) and BUTTON_TEXT not in _buttons(boss_kb[0])
+    assert BUTTON_PANEL not in _buttons(other_kb[0])
     assert "📊 گزارش دلخواه" in _buttons(other_kb[0])      # normal report menu untouched
 
 
@@ -163,8 +163,18 @@ def test_preview_status_and_retry_buttons_through_the_real_bot(setup, monkeypatc
     tg.poll_updates(repo, ["digikala"])
     boss_kb = [b["reply_markup"] for b in bot.sent_to(BOSS) if "keyboard" in b["reply_markup"]]
     other_kb = [b["reply_markup"] for b in bot.sent_to(OTHER) if "keyboard" in b["reply_markup"]]
-    assert BUTTON_STATUS in _buttons(boss_kb[-1]) and BUTTON_RETRY in _buttons(boss_kb[-1])
-    assert BUTTON_STATUS not in _buttons(other_kb[-1])
+    assert BUTTON_PANEL in _buttons(boss_kb[-1]) and BUTTON_STATUS not in _buttons(boss_kb[-1])
+    assert BUTTON_PANEL not in _buttons(other_kb[-1])
+    # opening the panel shows the three buttons, "back" restores the main menu
+    from src.sms_batch import BUTTON_BACK
+    bot.updates = [_msg(20, BOSS, BUTTON_PANEL)]
+    tg.poll_updates(repo, ["digikala"])
+    panel = [b["reply_markup"] for b in bot.sent_to(BOSS) if "keyboard" in b["reply_markup"]][-1]
+    assert _buttons(panel) == [BUTTON_TEXT, BUTTON_STATUS, BUTTON_RETRY, BUTTON_BACK]
+    bot.updates = [_msg(21, BOSS, BUTTON_BACK)]
+    tg.poll_updates(repo, ["digikala"])
+    main = [b["reply_markup"] for b in bot.sent_to(BOSS) if "keyboard" in b["reply_markup"]][-1]
+    assert BUTTON_PANEL in _buttons(main)
 
     # press -> preview with inline buttons; nothing is sent yet
     bot.updates = [_msg(3, BOSS, BUTTON_TEXT)]

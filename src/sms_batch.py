@@ -32,7 +32,7 @@ saved queue with ONE button:
 State lives in the report_progress key-value table (survives restarts):
   sms_batch_state  - JSON of the current batch
   sms_gateway_ip   - last IP given ("ip:port")
-  sms_menu_v2:<id> - the new bottom menu was already pushed to that chat
+  sms_menu_v3:<id> - the new bottom menu was already pushed to that chat
 """
 from __future__ import annotations
 
@@ -53,13 +53,15 @@ from src.logger import get_logger
 log = get_logger(__name__)
 
 BUTTON_TEXT = "📨 ارسال پیامک مشتریان"
+BUTTON_PANEL = "📱 پنل پیامکی"
+BUTTON_BACK = "🔙 بازگشت به منوی اصلی"
 BUTTON_STATUS = "📊 وضعیت صف پیامک"
 BUTTON_RETRY = "🔁 ارسال مجدد تأییدنشده‌ها"
 CALLBACK_PREFIX = "sms:"
 
 _STATE_KEY = "sms_batch_state"
 _IP_KEY = "sms_gateway_ip"
-_MENU_KEY = "sms_menu_v2:"
+_MENU_KEY = "sms_menu_v3:"
 _IP_WAIT = timedelta(minutes=60)  # how long to wait for the IP answer
 
 _IP_RE = re.compile(
@@ -162,13 +164,23 @@ class SmsBatchController:
         return out
 
     def keyboard_rows(self, chat_id) -> list[list[dict]]:
-        """Extra bottom-menu rows: the buttons are for operators only."""
+        """Extra main-menu rows: ONE "SMS panel" button, operators only. It
+        opens the sub-menu below (panel_keyboard)."""
         if self.is_operator(chat_id) and self._sms.mode() == "manual":
-            return [
+            return [[{"text": BUTTON_PANEL}]]
+        return []
+
+    @staticmethod
+    def panel_keyboard() -> dict:
+        """The SMS panel: the three buttons + a way back to the main menu."""
+        return {
+            "keyboard": [
                 [{"text": BUTTON_TEXT}],
                 [{"text": BUTTON_STATUS}, {"text": BUTTON_RETRY}],
-            ]
-        return []
+                [{"text": BUTTON_BACK}],
+            ],
+            "resize_keyboard": True,
+        }
 
     # ------------------------------------------------------------------
     # Settings
@@ -271,8 +283,8 @@ class SmsBatchController:
             kb = self._tg._reply_keyboard_for(chat_id)
             self._say(
                 chat_id,
-                "✅ منوی بات به‌روز شد: «ارسال پیامک مشتریان»، «وضعیت صف پیامک» و "
-                "«ارسال مجدد تأییدنشده‌ها».",
+                "✅ منوی بات به‌روز شد: دکمهٔ «📱 پنل پیامکی» اضافه شد؛ ارسال پیامک، "
+                "وضعیت صف و ارسال مجدد تأییدنشده‌ها داخل آن است.",
                 kb,
             )
             repo.set_report_marker(key, "1")
@@ -285,10 +297,14 @@ class SmsBatchController:
         if not self.is_operator(chat_id) and chat_id != self.ip_chat():
             return False
         with self._lock:
-            if text in (BUTTON_TEXT, BUTTON_STATUS, BUTTON_RETRY):
+            if text in (BUTTON_PANEL, BUTTON_BACK, BUTTON_TEXT, BUTTON_STATUS, BUTTON_RETRY):
                 if not self.is_operator(chat_id):
                     return False
-                if text == BUTTON_TEXT:
+                if text == BUTTON_PANEL:
+                    self._say(chat_id, "📱 پنل پیامکی مشتریان:", self.panel_keyboard())
+                elif text == BUTTON_BACK:
+                    self._say(chat_id, "منوی اصلی:", self._tg._reply_keyboard_for(chat_id))
+                elif text == BUTTON_TEXT:
                     self._request(chat_id, repo)
                 elif text == BUTTON_STATUS:
                     self._status(chat_id, repo)

@@ -14,7 +14,7 @@ from src.customer_sms import CustomerSmsNotifier
 from src.db.repository import Repository
 from src.marketplaces.base import NormalizedOrder
 from src.sms_batch import (
-    BUTTON_RETRY, BUTTON_STATUS, BUTTON_TEXT, SmsBatchController, parse_ip, parse_ip_checked,
+    BUTTON_BACK, BUTTON_PANEL, BUTTON_RETRY, BUTTON_STATUS, BUTTON_TEXT, SmsBatchController, parse_ip, parse_ip_checked,
 )
 
 PR, BOSS, OTHER = 222, 111, 999          # IP/PR account, second operator, stranger
@@ -139,10 +139,22 @@ def test_orders_are_only_saved_nothing_is_sent_automatically(repo, world):
 # ------------------------------------------------------------------ who sees the button
 def test_button_only_for_the_two_operators(world):
     _, _, ctl, _ = world
-    rows = [[{"text": BUTTON_TEXT}], [{"text": BUTTON_STATUS}, {"text": BUTTON_RETRY}]]
-    assert ctl.keyboard_rows(BOSS) == rows
-    assert ctl.keyboard_rows(PR) == rows
+    assert ctl.keyboard_rows(BOSS) == [[{"text": BUTTON_PANEL}]]   # ONE entry in the main menu
+    assert ctl.keyboard_rows(PR) == [[{"text": BUTTON_PANEL}]]
     assert ctl.keyboard_rows(OTHER) == []
+    panel = [b["text"] for row in ctl.panel_keyboard()["keyboard"] for b in row]
+    assert panel == [BUTTON_TEXT, BUTTON_STATUS, BUTTON_RETRY, BUTTON_BACK]
+
+
+def test_panel_button_opens_the_three_buttons_and_back_returns(repo, world):
+    tg, _, ctl, _ = world
+    assert ctl.handle_message(BOSS, BUTTON_PANEL, repo)
+    chat, text, kb = tg.sent[-1]
+    assert chat == BOSS and "پنل پیامکی" in text
+    assert [b["text"] for row in kb["keyboard"] for b in row][:3] == [BUTTON_TEXT, BUTTON_STATUS, BUTTON_RETRY]
+    assert ctl.handle_message(PR, BUTTON_BACK, repo)
+    assert tg.sent[-1][0] == PR and tg.sent[-1][2] == {"keyboard": []}   # main keyboard again
+    assert ctl.handle_message(OTHER, BUTTON_PANEL, repo) is False        # strangers: nothing
 
 
 def test_stranger_pressing_the_button_does_nothing(repo, world):
