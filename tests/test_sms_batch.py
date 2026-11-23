@@ -14,7 +14,8 @@ from src.customer_sms import CustomerSmsNotifier
 from src.db.repository import Repository
 from src.marketplaces.base import NormalizedOrder
 from src.sms_batch import (
-    BUTTON_BACK, BUTTON_PANEL, BUTTON_RETRY, BUTTON_STATUS, BUTTON_TEST, BUTTON_TEXT, SmsBatchController, parse_ip, parse_ip_checked,
+    BUTTON_BACK, BUTTON_CLEAR, BUTTON_PANEL, BUTTON_RETRY, BUTTON_STATUS, BUTTON_TEST,
+    BUTTON_TEXT, SmsBatchController, parse_ip, parse_ip_checked,
 )
 
 PR, BOSS, OTHER = 222, 111, 999          # IP/PR account, second operator, stranger
@@ -143,7 +144,7 @@ def test_button_only_for_the_two_operators(world):
     assert ctl.keyboard_rows(PR) == [[{"text": BUTTON_PANEL}]]
     assert ctl.keyboard_rows(OTHER) == []
     panel = [b["text"] for row in ctl.panel_keyboard()["keyboard"] for b in row]
-    assert panel == [BUTTON_TEXT, BUTTON_STATUS, BUTTON_RETRY, BUTTON_TEST, BUTTON_BACK]
+    assert panel == [BUTTON_TEXT, BUTTON_STATUS, BUTTON_RETRY, BUTTON_TEST, BUTTON_CLEAR, BUTTON_BACK]
 
 
 def test_panel_button_opens_the_three_buttons_and_back_returns(repo, world):
@@ -846,3 +847,61 @@ def test_test_button_refuses_without_phone_dry_run_or_while_running(repo, world,
     _go(ctl, repo)                                                # a batch is running
     ctl.handle_message(BOSS, BUTTON_TEST, repo)
     assert "در حال انجام" in tg.to(BOSS)[-1]
+
+
+
+# ---------------------------------------------------------------- clear queue
+def test_clear_queue_needs_confirmation_then_skips_everything(repo, world):
+    tg, sms, ctl, _ = world
+    _enqueue(sms, repo, n=3)
+    assert ctl.handle_message(BOSS, BUTTON_CLEAR, repo)
+    chat, text, kb = tg.sent[-1]
+    assert chat == BOSS and "3 پیام" in text and "+989***561" in text
+    assert _buttons(kb) == ["sms:clear", "sms:clearcancel"]
+    assert repo.count_pending_customer_sms() == 3                 # nothing happened yet
+    _cb(ctl, repo, OTHER, "sms:clear")                            # stranger: swallowed
+    assert repo.count_pending_customer_sms() == 3
+    _cb(ctl, repo, BOSS, "sms:clearcancel")
+    assert repo.count_pending_customer_sms() == 3
+    _cb(ctl, repo, BOSS, "sms:clear")
+    assert repo.count_pending_customer_sms() == 0
+    assert repo.get_customer_sms_row("digikala", "1")[0] == "skipped"
+    for chat in (BOSS, PR):
+        assert "صف پیامک مشتریان خالی شد (3 پیام" in tg.to(chat)[-1]
+    assert ctl.handle_message(OTHER, BUTTON_CLEAR, repo) is False
+
+
+@respx.mock
+def test_cleared_orders_are_never_sent_or_queued_again_but_new_ones_are(repo, world):
+    tg, sms, ctl, _ = world
+    route = respx.post(url__regex=r".*").mock(return_value=httpx.Response(202, json={"id": "m"}))
+    _enqueue(sms, repo, n=2)
+    ctl.handle_message(BOSS, BUTTON_CLEAR, repo)
+    _cb(ctl, repo, BOSS, "sms:clear")
+    _enqueue(sms, repo, n=2)                       # the SAME orders arrive again -> dedup lock holds
+    assert repo.count_pending_customer_sms() == 0
+    _enqueue(sms, repo, n=1, start=9)              # a genuinely new order is queued normally
+    assert repo.count_pending_customer_sms() == 1
+    ctl.handle_message(BOSS, BUTTON_TEXT, repo)
+    assert "9" not in str(route.calls)  # no request made by clearing itself
+    assert route.call_count == 0
+
+
+def test_clear_empty_queue_and_while_running_and_voids_a_pending_preview(repo, world, monkeypatch):
+    tg, sms, ctl, _ = world
+    ctl.handle_message(BOSS, BUTTON_CLEAR, repo)
+    assert "از قبل خالی" in tg.to(BOSS)[-1]
+    monkeypatch.setenv("CUSTOMER_SMS_CONFIRM", "true")
+    _enqueue(sms, repo, n=2)
+    ctl.handle_message(BOSS, BUTTON_TEXT, repo)                   # preview waiting
+    assert ctl._load(repo)["state"] == "awaiting_confirm"
+    ctl.handle_message(BOSS, BUTTON_CLEAR, repo)
+    _cb(ctl, repo, BOSS, "sms:clear")
+    assert ctl._load(repo) is None and repo.count_pending_customer_sms() == 0
+    monkeypatch.setenv("CUSTOMER_SMS_CONFIRM", "false")
+    _enqueue(sms, repo, n=1, start=8)
+    _go(ctl, repo)                                                # batch running
+    ctl.handle_message(BOSS, BUTTON_CLEAR, repo)
+    assert "وسط ارسال" in tg.to(BOSS)[-1]
+    _cb(ctl, repo, BOSS, "sms:clear")                             # confirm tap is refused too
+    assert repo.count_pending_customer_sms() == 1 and ctl._load(repo)["state"] == "running"

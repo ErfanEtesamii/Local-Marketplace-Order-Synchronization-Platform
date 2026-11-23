@@ -985,6 +985,18 @@ class Repository:
             )
             return cur.rowcount
 
+    def skip_all_pending_customer_sms(self, reason: str) -> int:
+        """Operator emptied the queue (messages were sent by hand): every
+        pending row becomes 'skipped'. The row stays as the dedup lock, so
+        the same order can never be queued again."""
+        with self._connect() as conn:
+            cur = conn.execute(
+                "UPDATE customer_sms_queue SET status = 'skipped', last_error = ?, "
+                "last_attempt_at = ? WHERE status = 'pending'",
+                (reason[:500], datetime.now(timezone.utc).isoformat()),
+            )
+            return cur.rowcount
+
     def peek_pending_customer_sms(self, limit: int = 3) -> list[tuple]:
         """(platform, source_order_id, phone) of the next pending rows, in
         sending order - for the preview shown before a batch starts."""

@@ -55,6 +55,7 @@ log = get_logger(__name__)
 BUTTON_TEXT = "📨 ارسال پیامک مشتریان"
 BUTTON_PANEL = "📱 پنل پیامکی"
 BUTTON_TEST = "🧪 ارسال تست"
+BUTTON_CLEAR = "🗑 خالی کردن صف"
 BUTTON_BACK = "🔙 بازگشت به منوی اصلی"
 BUTTON_STATUS = "📊 وضعیت صف پیامک"
 BUTTON_RETRY = "🔁 ارسال مجدد تأییدنشده‌ها"
@@ -178,7 +179,7 @@ class SmsBatchController:
             "keyboard": [
                 [{"text": BUTTON_TEXT}],
                 [{"text": BUTTON_STATUS}, {"text": BUTTON_RETRY}],
-                [{"text": BUTTON_TEST}],
+                [{"text": BUTTON_TEST}, {"text": BUTTON_CLEAR}],
                 [{"text": BUTTON_BACK}],
             ],
             "resize_keyboard": True,
@@ -308,7 +309,7 @@ class SmsBatchController:
         if not self.is_operator(chat_id) and chat_id != self.ip_chat():
             return False
         with self._lock:
-            if text in (BUTTON_PANEL, BUTTON_BACK, BUTTON_TEXT, BUTTON_STATUS, BUTTON_RETRY, BUTTON_TEST):
+            if text in (BUTTON_PANEL, BUTTON_BACK, BUTTON_TEXT, BUTTON_STATUS, BUTTON_RETRY, BUTTON_TEST, BUTTON_CLEAR):
                 if not self.is_operator(chat_id):
                     return False
                 if text == BUTTON_PANEL:
@@ -321,6 +322,8 @@ class SmsBatchController:
                     self._status(chat_id, repo)
                 elif text == BUTTON_TEST:
                     self._test_send(chat_id, repo)
+                elif text == BUTTON_CLEAR:
+                    self._clear_request(chat_id, repo)
                 else:
                     self._retry_request(chat_id, repo)
                 return True
@@ -351,6 +354,10 @@ class SmsBatchController:
             if action in ("retry", "retrycancel"):
                 if self.is_operator(chat_id):
                     self._retry_answer(chat_id, repo, action == "retry")
+                return True
+            if action in ("clear", "clearcancel"):
+                if self.is_operator(chat_id):
+                    self._clear_answer(chat_id, repo, action == "clear")
                 return True
             state = self._load(repo)
             if not state or state.get("state") not in ("awaiting_confirm", "awaiting_ip"):
@@ -643,6 +650,43 @@ class SmsBatchController:
             else f"⚠️ گوشی تا ۲ دقیقه پیام تست را نفرستاد (وضعیت: {state or 'نامشخص'}); "
             "پیام با ttl منقضی می‌شود.",
         )
+
+    def _clear_request(self, chat_id, repo: Repository) -> None:
+        """Empty the saved queue (e.g. the messages were sent by hand)."""
+        state = self._load(repo)
+        if state and state.get("state") == "running":
+            self._say(chat_id, "⏳ ارسال در حال انجام است؛ صف را وسط ارسال نمی‌شود خالی کرد.")
+            return
+        n = repo.count_pending_customer_sms()
+        if n == 0:
+            self._say(chat_id, "📭 صف از قبل خالی است.")
+            return
+        lines = [f"🗑 {n} پیام در صف است و با این کار هیچ‌کدام برای مشتری ارسال نمی‌شود."]
+        for platform, order_id, phone in repo.peek_pending_customer_sms(5):
+            phone = str(phone)
+            masked = f"{phone[:4]}***{phone[-3:]}" if len(phone) >= 8 else phone
+            lines.append(f"• {platform} {order_id} — {masked}")
+        if n > 5:
+            lines.append(f"… و {n - 5} مورد دیگر")
+        lines.append("\nسفارش‌هایی که از این به بعد برسند طبق معمول در صف ذخیره می‌شوند.")
+        kb = {"inline_keyboard": [
+            [{"text": f"🗑 بله، {n} پیام را خالی کن", "callback_data": f"{CALLBACK_PREFIX}clear"}],
+            [{"text": "↩️ انصراف", "callback_data": f"{CALLBACK_PREFIX}clearcancel"}],
+        ]}
+        self._say(chat_id, "\n".join(lines), kb)
+
+    def _clear_answer(self, chat_id, repo: Repository, confirmed: bool) -> None:
+        if not confirmed:
+            self._say(chat_id, "انصراف داده شد؛ صف دست‌نخورده ماند.")
+            return
+        state = self._load(repo)
+        if state and state.get("state") == "running":
+            self._say(chat_id, "⏳ ارسال در حال انجام است؛ بعد از پایانش دوباره امتحان کنید.")
+            return
+        if state:  # a preview / IP request waiting on the queue is void now
+            self._save(repo, None)
+        n = repo.skip_all_pending_customer_sms("صف به درخواست اپراتور خالی شد (ارسال دستی)")
+        self._say_all(f"🗑 صف پیامک مشتریان خالی شد ({n} پیام حذف شد و ارسال نمی‌شود).")
 
     def _retry_request(self, chat_id, repo: Repository) -> None:
         state = self._load(repo)
