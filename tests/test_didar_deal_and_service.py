@@ -761,9 +761,11 @@ def test_deal_item_final_amount_equals_goods_total_minus_discount_total():
     """
     _mock_categories()
     _mock_product_search_no_match()
-    respx.post("https://app.didar.me/api/product/save").mock(
-        return_value=httpx.Response(200, json={"Response": {"Product": {"Id": "p-1"}}})
-    )
+    # Distinct Didar products (same ProductId would be merged into one row).
+    respx.post("https://app.didar.me/api/product/save").mock(side_effect=[
+        httpx.Response(200, json={"Response": {"Product": {"Id": "p-1"}}}),
+        httpx.Response(200, json={"Response": {"Product": {"Id": "p-2"}}}),
+    ])
     route = respx.post("https://app.didar.me/api/deal/save_v2").mock(
         return_value=httpx.Response(200, json={"Response": {"Deal": {"Id": "d-1"}}})
     )
@@ -1058,3 +1060,68 @@ def test_sync_service_does_not_recreate_checklist_when_deal_already_exists():
     service.sync_order(_ORDER)
 
     assert not activity_route.called
+
+
+@respx.mock
+def test_order_lines_that_resolve_to_the_same_didar_product_are_merged_not_lost():
+    """Incident 2026-11-23 (Faraz Honar order 50119): 4 order lines, three of
+    them colour variants matched to ONE catalog product -> Didar kept 2 rows.
+    Now the variants become one row with the summed quantity."""
+    _mock_categories()
+    _mock_product_search_no_match()
+    # product/save is called once per line: 1st distinct, the other three "exist"
+    respx.post("https://app.didar.me/api/product/save").mock(side_effect=[
+        httpx.Response(200, json={"Response": {"Product": {"Id": "p-set"}}}),
+        httpx.Response(200, json={"Response": {"Product": {"Id": "p-mat"}}}),
+        httpx.Response(200, json={"Response": {"Product": {"Id": "p-mat"}}}),
+        httpx.Response(200, json={"Response": {"Product": {"Id": "p-mat"}}}),
+    ])
+    route = respx.post("https://app.didar.me/api/deal/save_v2").mock(
+        return_value=httpx.Response(200, json={"Response": {"Deal": {"Id": "d-1"}}})
+    )
+    order = NormalizedOrder(**{
+        **_ORDER.__dict__,
+        "items": [
+            OrderItem(sku="", title="ست 3 تکه سجاده", quantity=1,
+                      unit_price=Decimal("23500000"), final_price=Decimal("23500000")),
+            OrderItem(sku="", title="ست جا نماز و جا مهری 5 رنگ کد 03", quantity=1,
+                      unit_price=Decimal("7500000"), final_price=Decimal("7500000")),
+            OrderItem(sku="", title="ست جا نماز و جا مهری 5 رنگ کد 02", quantity=1,
+                      unit_price=Decimal("7500000"), final_price=Decimal("7500000")),
+            OrderItem(sku="", title="ست جا نماز و جا مهری 5 رنگ کد 01", quantity=1,
+                      unit_price=Decimal("7500000"), final_price=Decimal("7500000")),
+        ],
+    })
+    DidarDealClient(config=_CFG).create_deal(contact_id="c-1", display_name="X", order=order)
+    items = json.loads(route.calls[0].request.content)["DealItems"]
+    assert [i["ProductId"] for i in items] == ["p-set", "p-mat"]          # original order kept
+    assert items[0]["Quantity"] == 1 and items[0]["UnitPrice"] == 23500000
+    assert items[1]["Quantity"] == 3 and items[1]["UnitPrice"] == 7500000
+    total = sum(i["Quantity"] * (i["UnitPrice"] - i["Discount"]) for i in items)
+    assert total == 46_000_000                                              # nothing lost
+    assert "کد 03" in items[1]["Description"] and "کد 01" in items[1]["Description"]
+    assert "شماره سفارش:" in items[1]["Description"]
+    assert "شامل" not in items[0]["Description"]
+
+
+@respx.mock
+def test_merging_different_prices_keeps_the_total_exact_via_weighted_average():
+    _mock_categories()
+    _mock_product_search_no_match()
+    respx.post("https://app.didar.me/api/product/save").mock(
+        return_value=httpx.Response(200, json={"Response": {"Product": {"Id": "same"}}})
+    )
+    route = respx.post("https://app.didar.me/api/deal/save_v2").mock(
+        return_value=httpx.Response(200, json={"Response": {"Deal": {"Id": "d-1"}}})
+    )
+    order = NormalizedOrder(**{
+        **_ORDER.__dict__,
+        "items": [
+            OrderItem(sku="", title="A", quantity=1, unit_price=Decimal("100"), final_price=Decimal("100")),
+            OrderItem(sku="", title="B", quantity=3, unit_price=Decimal("200"), final_price=Decimal("600")),
+        ],
+    })
+    DidarDealClient(config=_CFG).create_deal(contact_id="c-1", display_name="X", order=order)
+    items = json.loads(route.calls[0].request.content)["DealItems"]
+    assert len(items) == 1 and items[0]["Quantity"] == 4
+    assert items[0]["Quantity"] * items[0]["UnitPrice"] == 700               # 100 + 3*200

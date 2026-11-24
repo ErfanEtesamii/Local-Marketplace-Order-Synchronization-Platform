@@ -1291,7 +1291,7 @@ class DidarDealClient:
 
         body = {
             "Deal": deal_body,
-            "DealItems": [self._build_deal_item(item, order) for item in order.items],
+            "DealItems": self._build_deal_items(order),
         }
         payload = self._post("/deal/save_v2", json=body)
         deal_id = _extract_deal_id(payload)
@@ -1308,6 +1308,54 @@ class DidarDealClient:
         # aid, not something needed on every routine sync.
         log.debug("didar: deal/save_v2 raw response for Id=%s: %r", deal_id, payload)
         return deal_id
+
+    def _build_deal_items(self, order: NormalizedOrder) -> list[dict]:
+        """One DealItems row per DISTINCT Didar product.
+
+        Production incident 2026-11-23 (Faraz Honar order 50119): the order
+        had 4 lines - one prayer set and three colour variants of "ست جا نماز
+        و جا مهری 5 رنگ" (کد 01/02/03). The catalog matcher maps all three
+        variants to the SAME Didar product, and Didar keeps a single row per
+        ProductId, so the deal ended up with 2 rows instead of 4 (invoice
+        31,000,000 instead of the real total). Lines that resolve to the same
+        product are therefore merged here, explicitly: quantities add up, the
+        unit price/discount become the quantity-weighted average (identical
+        when the lines have the same price, as variants normally do) and the
+        original line titles are listed in the row's Description."""
+        built = [(self._build_deal_item(item, order), item) for item in order.items]
+        merged: dict[str, tuple[dict, list]] = {}
+        order_ids: list[str] = []
+        for row, item in built:
+            key = str(row["ProductId"])
+            if key not in merged:
+                merged[key] = (dict(row), [(row, item)])
+                order_ids.append(key)
+            else:
+                merged[key][1].append((row, item))
+        out: list[dict] = []
+        for key in order_ids:
+            row, group = merged[key]
+            if len(group) == 1:
+                out.append(group[0][0])
+                continue
+            qtys = [int(r["Quantity"] or 1) for r, _ in group]
+            total_qty = sum(qtys)
+            row["Quantity"] = total_qty
+            row["UnitPrice"] = int(round(sum(r["UnitPrice"] * q for (r, _), q in zip(group, qtys)) / total_qty))
+            row["Discount"] = int(round(sum(r["Discount"] * q for (r, _), q in zip(group, qtys)) / total_qty))
+            titles = []
+            for _, item in group:
+                t = (item.title or "").strip()
+                if t and t not in titles:
+                    titles.append(t)
+            if len(titles) > 1:
+                row["Description"] = (row.get("Description") or "") + "\nشامل: " + " | ".join(titles)
+            log.info(
+                "didar: merged %d order lines of %s order %s into one deal row (ProductId=%s, qty=%d)",
+                len(group), order.source, order.source_order_id, key, total_qty,
+            )
+            out.append(row)
+        return out
 
     def _build_deal_item(self, item, order: NormalizedOrder) -> dict:
         # Prefer the client's Excel catalog: most products already exist
