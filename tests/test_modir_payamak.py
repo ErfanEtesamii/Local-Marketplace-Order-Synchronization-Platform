@@ -120,8 +120,14 @@ _ENV_VARS = (
 @pytest.fixture(autouse=True)
 def _isolate_sms_env(monkeypatch):
     """See the NOTE ON ENV ISOLATION in the module docstring."""
+    import os
+    import re
     for var in _ENV_VARS:
         monkeypatch.delenv(var, raising=False)
+    # any slot number (a real .env may define _8, _9 ...): none may leak in
+    for var in list(os.environ):
+        if re.match(r"^EXPRESS_ALERT_SMS_RECIPIENT_\d+(_NAME)?$", var):
+            monkeypatch.delenv(var, raising=False)
 
 
 @pytest.fixture
@@ -1153,3 +1159,24 @@ def test_is_configured_collects_seventh_recipient(monkeypatch):
     notifier = _configured_notifier(monkeypatch, recipients=recipients)
     assert notifier._recipients == recipients
     notifier.close()
+
+
+
+def test_any_number_of_recipient_slots_is_read_in_numeric_order(monkeypatch):
+    """Adding a person is a .env-only change: slots beyond 7 (and numeric order
+    10 after 9, not after 1) work without touching the code."""
+    from src.config import ModirPayamakConfig
+    from src.recipient_env import express_recipient_vars
+    monkeypatch.setenv("MODIR_PAYAMAK_TOKEN", "t")
+    monkeypatch.setenv("MODIR_PAYAMAK_FROM_NUMBER", "+983000505")
+    for i, phone in [(1, "0911"), (2, "0912"), (8, "0918"), (10, "0920"), (9, "0919")]:
+        monkeypatch.setenv(f"EXPRESS_ALERT_SMS_RECIPIENT_{i}", phone)
+    monkeypatch.setenv("EXPRESS_ALERT_SMS_RECIPIENT_8_NAME", "نفر هشتم")
+    assert express_recipient_vars() == [f"EXPRESS_ALERT_SMS_RECIPIENT_{i}" for i in (1, 2, 8, 9, 10)]
+    assert ModirPayamakConfig().recipients == ("0911", "0912", "0918", "0919", "0920")
+
+    notifier = ModirPayamakNotifier()
+    assert notifier.is_configured()
+    assert [p for p, _ in notifier._recipients] == ["0911", "0912", "0918", "0919", "0920"]
+    assert dict(notifier._recipients)["0918"] == "نفر هشتم"
+    assert dict(notifier._recipients)["0911"] == "همکار"          # blank name -> default

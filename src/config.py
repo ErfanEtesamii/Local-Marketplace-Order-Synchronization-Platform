@@ -14,6 +14,8 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
+from src.recipient_env import express_recipient_vars
+
 # Load .env from the project root regardless of current working directory.
 _ENV_PATH = Path(__file__).resolve().parent.parent / ".env"
 load_dotenv(dotenv_path=_ENV_PATH)
@@ -322,8 +324,8 @@ class ModirPayamakConfig:
     notifier and its httpx client.
 
     `recipients` drops blank entries, matching the notifier's own rule
-    that only non-empty EXPRESS_ALERT_SMS_RECIPIENT_{1..7} values are
-    sent to - so one to seven configured numbers is valid; zero is not.
+    that only non-empty EXPRESS_ALERT_SMS_RECIPIENT_<N> values (any number
+    of slots) are sent to - so one or more configured numbers is valid; zero is not.
     """
 
     token: str = field(default_factory=lambda: _get("MODIR_PAYAMAK_TOKEN"))
@@ -331,15 +333,7 @@ class ModirPayamakConfig:
     recipients: tuple[str, ...] = field(
         default_factory=lambda: tuple(
             value
-            for key in (
-                "EXPRESS_ALERT_SMS_RECIPIENT_1",
-                "EXPRESS_ALERT_SMS_RECIPIENT_2",
-                "EXPRESS_ALERT_SMS_RECIPIENT_3",
-                "EXPRESS_ALERT_SMS_RECIPIENT_4",
-                "EXPRESS_ALERT_SMS_RECIPIENT_5",
-                "EXPRESS_ALERT_SMS_RECIPIENT_6",
-                "EXPRESS_ALERT_SMS_RECIPIENT_7",
-            )
+            for key in express_recipient_vars()
             if (value := _get(key).strip())
         )
     )

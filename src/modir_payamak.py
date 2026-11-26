@@ -72,8 +72,8 @@ failure belongs to without Repository needing a new column.
 
 Env vars (added to config.py / .env in stage 8 of this feature):
     MODIR_PAYAMAK_TOKEN, MODIR_PAYAMAK_FROM_NUMBER,
-    EXPRESS_ALERT_SMS_RECIPIENT_1.._7,
-    EXPRESS_ALERT_SMS_RECIPIENT_1_NAME.._7_NAME
+    EXPRESS_ALERT_SMS_RECIPIENT_<N> (any number of slots, see
+    src/recipient_env.py), EXPRESS_ALERT_SMS_RECIPIENT_<N>_NAME
 Read directly via os.getenv here, same as TelegramNotifier does for
 TELEGRAM_BOT_TOKEN/TELEGRAM_CHAT_ID* - config.py's "nothing outside this
 file calls os.getenv" convention is, in this codebase, already the
@@ -104,6 +104,7 @@ from src.config import settings
 from src.express_alert import is_express_order
 from src.http_utils import default_retry, raise_for_status_with_body
 from src.logger import get_logger
+from src.recipient_env import express_recipient_vars
 from src.telegram import _PLATFORM_DISPLAY
 
 if TYPE_CHECKING:
@@ -119,15 +120,6 @@ _IPPANEL_API_BASE = "https://edge.ippanel.com/v1/api"
 # never parsed out of a free-text name field (Persian names can contain
 # almost anything, including digits/punctuation that would make a
 # packed "name|phone" var ambiguous to split).
-_RECIPIENT_ENV_VARS = (
-    "EXPRESS_ALERT_SMS_RECIPIENT_1",
-    "EXPRESS_ALERT_SMS_RECIPIENT_2",
-    "EXPRESS_ALERT_SMS_RECIPIENT_3",
-    "EXPRESS_ALERT_SMS_RECIPIENT_4",
-    "EXPRESS_ALERT_SMS_RECIPIENT_5",
-    "EXPRESS_ALERT_SMS_RECIPIENT_6",
-    "EXPRESS_ALERT_SMS_RECIPIENT_7",
-)
 
 
 class ModirPayamakError(Exception):
@@ -167,7 +159,7 @@ class ModirPayamakNotifier:
     # ------------------------------------------------------------------
     def is_configured(self) -> bool:
         """True iff MODIR_PAYAMAK_TOKEN, MODIR_PAYAMAK_FROM_NUMBER and at
-        least one EXPRESS_ALERT_SMS_RECIPIENT_{1..7} are set. Makes NO
+        least one EXPRESS_ALERT_SMS_RECIPIENT_<N> are set. Makes NO
         network call (see module docstring for why this differs from
         TelegramNotifier.is_configured()'s getMe() check) and caches the
         result so this is a cheap call on every poll cycle. Returns
@@ -178,7 +170,7 @@ class ModirPayamakNotifier:
         token = os.getenv("MODIR_PAYAMAK_TOKEN", "").strip()
         from_number = os.getenv("MODIR_PAYAMAK_FROM_NUMBER", "").strip()
         recipients: list[tuple[str, str]] = []
-        for var in _RECIPIENT_ENV_VARS:
+        for var in express_recipient_vars():
             phone = os.getenv(var, "").strip()
             if not phone:
                 continue
@@ -190,7 +182,7 @@ class ModirPayamakNotifier:
             return False
         if not recipients:
             log.warning(
-                "modir_payamak: no EXPRESS_ALERT_SMS_RECIPIENT_{1..7} configured "
+                "modir_payamak: no EXPRESS_ALERT_SMS_RECIPIENT_<N> configured "
                 "- SMS alerts disabled"
             )
             return False
