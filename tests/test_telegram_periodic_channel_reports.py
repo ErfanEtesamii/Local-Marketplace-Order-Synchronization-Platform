@@ -187,3 +187,28 @@ def test_custom_range_incomplete_data_shows_error_not_zeros(repo):
         )
     assert "ارسال نشد" in mock_edit.call_args[0][2]
     mock_broadcast.assert_not_called()
+
+
+
+def test_owner_report_pulls_are_not_announced_to_the_other_recipients(monkeypatch):
+    """Client request 2026-11: when the owner (Etesami) pulls a report, the
+    "X received the report" notice is NOT sent to anyone; others still are."""
+    from unittest.mock import patch
+    from src.telegram import TelegramNotifier
+
+    monkeypatch.delenv("TELEGRAM_OWNER_CHAT_IDS", raising=False)   # default = 775753176
+    notifier = TelegramNotifier()
+    notifier._chat_ids = [775753176, 111, 222]
+    with patch.object(notifier, "_post_message") as post:
+        notifier._broadcast_report_notice(775753176, "آقای اعتصامی", "بازه")
+        assert post.call_count == 0
+        notifier._broadcast_report_notice(111, "فلانی", "بازه")
+        assert [c.args[0] for c in post.call_args_list] == [775753176, 222]   # everyone but the requester
+    monkeypatch.setenv("TELEGRAM_OWNER_CHAT_IDS", "")              # blank: announce everyone
+    with patch.object(notifier, "_post_message") as post:
+        notifier._broadcast_report_notice(775753176, "آقای اعتصامی", "بازه")
+        assert post.call_count == 2
+    monkeypatch.setenv("TELEGRAM_OWNER_CHAT_IDS", "222, 111")      # custom list
+    with patch.object(notifier, "_post_message") as post:
+        notifier._broadcast_report_notice(222, "x", "بازه")
+        assert post.call_count == 0

@@ -728,6 +728,16 @@ class TelegramNotifier:
         otherwise the raw chat id itself."""
         return self._chat_names.get(str(chat_id), str(chat_id))
 
+    @staticmethod
+    def _owner_chat_ids() -> set[str]:
+        """Chat ids whose report pulls are NOT announced to the others
+        (TELEGRAM_OWNER_CHAT_IDS, comma-separated; unset = Etesami's
+        775753176; set it blank to announce everyone's reports)."""
+        raw = os.getenv("TELEGRAM_OWNER_CHAT_IDS")
+        if raw is None:
+            raw = "775753176"
+        return {part.strip() for part in raw.split(",") if part.strip()}
+
     def _broadcast_report_notice(
         self, requester_chat_id: Union[int, str], requester_name: str, period_line: str
     ) -> None:
@@ -740,6 +750,11 @@ class TelegramNotifier:
         too. Same per-recipient isolation as _send(): one failed
         broadcast must never block the others, and must never affect
         the report the requester already received."""
+        # The owner pulls reports all the time and doesn't want the others
+        # told each time (client request 2026-11): no notice at all when the
+        # requester is one of TELEGRAM_OWNER_CHAT_IDS (default: Etesami).
+        if str(requester_chat_id) in self._owner_chat_ids():
+            return
         text = f"🔔 {requester_name} گزارش زیر را دریافت کرد:\n{period_line}"
         for chat_id in self._chat_ids:
             if chat_id == requester_chat_id:
