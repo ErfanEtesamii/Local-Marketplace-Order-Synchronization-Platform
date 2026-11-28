@@ -26,3 +26,10 @@ def _no_attach_retry_sleep(monkeypatch):
     """DidarActivityClient waits a few seconds between photo-upload
     retries; tests must never really sleep."""
     monkeypatch.setattr("src.didar.activity_client._sleep", lambda seconds: None)
+
+
+@pytest.fixture(autouse=True)
+def _no_digikala_id_lookback(monkeypatch):
+    """Existing Digikala tests assert min_shipment_id == watermark+1; the
+    lookback has its own tests (tests/test_digikala_lookback.py)."""
+    monkeypatch.setenv("DIGIKALA_ID_LOOKBACK", "0")

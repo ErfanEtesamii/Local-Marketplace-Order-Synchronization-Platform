@@ -143,6 +143,7 @@ detail.
 from __future__ import annotations
 
 import json
+import os
 import time
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
@@ -491,7 +492,22 @@ class Digikala2Adapter(NearbyStoresMixin, MarketplaceAdapter):
             )
             return []
 
-        rows = self._fetch_sbs_rows_since_watermark(watermark + 1)
+        # LOOKBACK (2026-11, real miss: shipment 401560931 never synced
+        # because 401562093 had already moved the watermark past it - SBS
+        # shipment ids are NOT guaranteed to become visible in id order).
+        # Re-read the last DIGIKALA_ID_LOOKBACK ids every poll and drop
+        # the ones already synced BEFORE confirming/enriching them, so only
+        # genuinely late-appearing shipments are processed.
+        lookback = self._id_lookback()
+        rows = self._fetch_sbs_rows_since_watermark(
+            max(1, watermark + 1 - lookback), watermark
+        )
+        if lookback:
+            rows = [
+                row for row in rows
+                if row.get("shipmentId") is None
+                or not self._repo.is_already_synced(self.name, str(row["shipmentId"]))
+            ]
         # Client request (2026-09): auto-confirm every "new" (pending) SBS
         # order the moment it's fetched, mirroring the seller panel's own
         # confirm action - see _confirm_if_pending()'s docstring. Must
@@ -788,7 +804,18 @@ class Digikala2Adapter(NearbyStoresMixin, MarketplaceAdapter):
             )
             return {"tracking_code": None, "shipping_cost": None}
 
-    def _fetch_sbs_rows_since_watermark(self, min_shipment_id: int) -> list[dict]:
+    @staticmethod
+    def _id_lookback() -> int:
+        """DIGIKALA_ID_LOOKBACK: how many shipment ids below the watermark
+        are re-read each poll (default 250000, ~4h; 0 disables)."""
+        try:
+            return max(0, int(os.getenv("DIGIKALA_ID_LOOKBACK", "250000")))
+        except ValueError:
+            return 250000
+
+    def _fetch_sbs_rows_since_watermark(
+        self, min_shipment_id: int, watermark: int | None = None
+    ) -> list[dict]:
         """
         Page through GET /open-api/v1/ship-by-seller-orders starting at
         `min_shipment_id`, sorted ascending by shipment_id (the documented
@@ -823,7 +850,11 @@ class Digikala2Adapter(NearbyStoresMixin, MarketplaceAdapter):
                 int(item["shipmentId"]) for item in items if item.get("shipmentId") is not None
             ]
             if page_shipment_ids:
-                self._repo.set_last_shipment_id(self.name, max(page_shipment_ids))
+                page_max = max(page_shipment_ids)
+                # never move the watermark backwards (lookback re-reads old ids)
+                if watermark is None or page_max > watermark:
+                    self._repo.set_last_shipment_id(self.name, page_max)
+                    watermark = page_max
 
             pager = data.get("pager", {})
             total_pages = pager.get("total_pages", 0)
