@@ -358,6 +358,7 @@ class DidarDealClient:
         self._products = product_client or DidarProductClient(config=self._config)
         self._client = httpx.Client(base_url=self._config.base_url, timeout=30.0)
         self._label_id_by_title: dict[str, str] | None = None  # populated lazily
+        self._stage_id_by_title: dict[str, str] | None = None  # populated lazily
 
     @default_retry()
     def _post(self, path: str, json: dict) -> dict:
@@ -370,6 +371,52 @@ class DidarDealClient:
         resp = self._client.get(path, params={"apikey": self._config.api_key})
         raise_for_status_with_body(resp)
         return resp.json()
+
+    def _stage_id_for_source(self, source: str) -> str:
+        """Pipeline stage (Kanban column) a new deal of `source` lands in.
+
+        Order: DIDAR_PIPELINE_STAGE_ID_<SOURCE> -> stage whose Title equals
+        DIDAR_PIPELINE_STAGE_TITLE_<SOURCE> (looked up in the configured
+        pipeline via POST /pipeline/list/0) -> the default
+        DIDAR_PIPELINE_STAGE_ID. Never raises: a failed lookup logs and
+        falls back to the default stage, so an order is never lost over it.
+        """
+        stage_id, title = self._config.stage_override_for_source(source)
+        if stage_id:
+            return stage_id
+        if not title:
+            return self._config.pipeline_stage_id
+        try:
+            if self._stage_id_by_title is None:
+                resp = self._client.post(
+                    "/pipeline/list/0", params={"apikey": self._config.api_key}
+                )
+                raise_for_status_with_body(resp)
+                found: dict[str, str] = {}
+                for pipeline in resp.json().get("Response", []) or []:
+                    if not isinstance(pipeline, dict):
+                        continue
+                    if str(pipeline.get("Id", "")) != self._config.pipeline_id:
+                        continue
+                    for stage in pipeline.get("Stages", []) or []:
+                        if isinstance(stage, dict) and stage.get("Id") and stage.get("Title"):
+                            found[_normalize_fa(str(stage["Title"]))] = str(stage["Id"])
+                self._stage_id_by_title = found
+            wanted = self._stage_id_by_title.get(_normalize_fa(title))
+        except Exception:
+            log.exception(
+                "didar: failed to look up pipeline stage %r for %s - using the default stage",
+                title, source,
+            )
+            return self._config.pipeline_stage_id
+        if not wanted:
+            log.warning(
+                "didar: no pipeline stage titled %r in pipeline %s for source %r - "
+                "using the default stage",
+                title, self._config.pipeline_id, source,
+            )
+            return self._config.pipeline_stage_id
+        return wanted
 
     def _label_id_by_title_map(self) -> dict[str, str]:
         """Title -> Id map for every Deal Label, built once per client
@@ -1260,7 +1307,7 @@ class DidarDealClient:
             "Title": f"معامله {display_name}".strip(),
             "PersonId": contact_id,
             "PipelineId": self._config.pipeline_id,
-            "PipelineStageId": self._config.pipeline_stage_id,
+            "PipelineStageId": self._stage_id_for_source(order.source),
             "Description": _build_description(order),
             # TAX FIX (client feedback, 2026-09 - "عوارض و مالیات باید صفر
             # باشه، کد 10 درصد میذاره"): the old code only sent

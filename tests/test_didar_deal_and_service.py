@@ -1125,3 +1125,68 @@ def test_merging_different_prices_keeps_the_total_exact_via_weighted_average():
     items = json.loads(route.calls[0].request.content)["DealItems"]
     assert len(items) == 1 and items[0]["Quantity"] == 4
     assert items[0]["Quantity"] * items[0]["UnitPrice"] == 700               # 100 + 3*200
+
+
+def _stage_deal_body(source, monkeypatch, env=None):
+    """Creates a deal for `source` and returns the PipelineStageId sent."""
+    for key in ("DIDAR_PIPELINE_STAGE_ID_SNAPPSHOP", "DIDAR_PIPELINE_STAGE_TITLE_SNAPPSHOP",
+                "DIDAR_PIPELINE_STAGE_ID_SNAPPSHOP2", "DIDAR_PIPELINE_STAGE_TITLE_SNAPPSHOP2",
+                "DIDAR_PIPELINE_STAGE_ID_TAPSISHOP", "DIDAR_PIPELINE_STAGE_TITLE_TAPSISHOP"):
+        monkeypatch.delenv(key, raising=False)
+    for key, value in (env or {}).items():
+        monkeypatch.setenv(key, value)
+    _mock_categories()
+    _mock_deal_labels()
+    _mock_product_search_no_match()
+    respx.post("https://app.didar.me/api/product/save").mock(
+        return_value=httpx.Response(200, json={"Response": {"Product": {"Id": "p-1"}}})
+    )
+    respx.post("https://app.didar.me/api/pipeline/list/0").mock(
+        return_value=httpx.Response(200, json={"Response": [
+            {"Id": "other", "Stages": [{"Id": "x-express", "Title": "اکسپرس"}]},
+            {"Id": "p1", "Stages": [
+                {"Id": "stage-1", "Title": "مشتری جدید"},
+                {"Id": "stage-express", "Title": "اکسپرس"},
+            ]},
+        ]})
+    )
+    route = respx.post("https://app.didar.me/api/deal/save_v2").mock(
+        return_value=httpx.Response(200, json={"Response": {"Deal": {"Id": "d-1"}}})
+    )
+    DidarDealClient(config=_CFG).create_deal(
+        contact_id="c-1", display_name="Someone", order=replace(_ORDER, source=source)
+    )
+    return json.loads(route.calls[0].request.content)["Deal"]["PipelineStageId"]
+
+
+@respx.mock
+def test_snappshop_deals_go_to_the_express_stage(monkeypatch):
+    assert _stage_deal_body("snappshop", monkeypatch) == "stage-express"
+
+
+@respx.mock
+def test_second_snappshop_store_also_goes_to_the_express_stage(monkeypatch):
+    assert _stage_deal_body("snappshop2", monkeypatch) == "stage-express"
+
+
+@respx.mock
+def test_other_sources_keep_the_default_stage(monkeypatch):
+    assert _stage_deal_body("tapsishop", monkeypatch) == "stage-1"
+
+
+@respx.mock
+def test_stage_id_env_overrides_title_lookup(monkeypatch):
+    got = _stage_deal_body("snappshop", monkeypatch, {"DIDAR_PIPELINE_STAGE_ID_SNAPPSHOP": "forced-id"})
+    assert got == "forced-id"
+
+
+@respx.mock
+def test_blank_stage_title_disables_the_snappshop_routing(monkeypatch):
+    got = _stage_deal_body("snappshop", monkeypatch, {"DIDAR_PIPELINE_STAGE_TITLE_SNAPPSHOP": ""})
+    assert got == "stage-1"
+
+
+@respx.mock
+def test_unknown_stage_title_falls_back_to_the_default_stage(monkeypatch):
+    got = _stage_deal_body("snappshop", monkeypatch, {"DIDAR_PIPELINE_STAGE_TITLE_SNAPPSHOP": "ندارد"})
+    assert got == "stage-1"

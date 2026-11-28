@@ -285,6 +285,27 @@ class DidarConfig:
         default_factory=lambda: _get("DIDAR_GET_LOCATIONS_PATH", "/shared/GetLocations")
     )
 
+    def stage_override_for_source(self, source: str) -> tuple[str, str]:
+        """(stage_id, stage_title) configured for one source, either may be "".
+
+        DIDAR_PIPELINE_STAGE_ID_<SOURCE> / DIDAR_PIPELINE_STAGE_TITLE_<SOURCE>
+        (e.g. ..._SNAPPSHOP). SnappShop sources (snappshop, snappshop2) default
+        to the title "اکسپرس" (client request 2026-11: all SnappShop orders go to
+        the "اکسپرس" column); snappshop2 falls back to snappshop's setting,
+        like its Deal Label. Set the TITLE to blank to turn this off.
+        """
+        name = source.upper()
+        stage_id = _get(f"DIDAR_PIPELINE_STAGE_ID_{name}").strip()
+        if not stage_id and source == "snappshop2":
+            stage_id = _get("DIDAR_PIPELINE_STAGE_ID_SNAPPSHOP").strip()
+        key = f"DIDAR_PIPELINE_STAGE_TITLE_{name}"
+        title = os.getenv(key)
+        if title is None and source == "snappshop2":
+            title = os.getenv("DIDAR_PIPELINE_STAGE_TITLE_SNAPPSHOP")
+        if title is None:
+            title = "اکسپرس" if source in ("snappshop", "snappshop2") else ""
+        return stage_id, title.strip()
+
     @property
     def deal_label_title_by_source(self) -> dict[str, str]:
         return {
